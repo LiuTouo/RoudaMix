@@ -1,0 +1,54 @@
+/* RoudaMix 深色主題 — tokens(M2 起機架 UI 全量沿用) */
+:root {
+  --bg: #14161a;
+  --bg-panel: #1c1f24;
+  --bg-raised: #24282e;
+  --border: #33383f;
+  --text: #d8dce2;
+  --text-dim: #8a919b;
+  --accent: #4da3ff;
+  --ok: #3ddc84;
+  --warn: #ffb454;
+  --err: #ff5c5c;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.45 "Segoe UI", system-ui, sans-serif;
+  user-select: none;
+}
+
+#app {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+button {
+  background: var(--bg-raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+button:hover {
+  border-color: var(--accent);
+}
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.mono {
+  font-family: var(--mono);
+}

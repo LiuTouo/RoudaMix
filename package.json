@@ -1,0 +1,15 @@
+{
+  "name": "roudamix",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "tauri": "tauri",
+    "build:engine": "cmake --build engine/build --config Release"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  },
+  "dependencies": {
+    "@tauri-apps/plugin-dialog": "^2.7.2"
+  }
+}

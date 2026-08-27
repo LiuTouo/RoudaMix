@@ -1,0 +1,71 @@
+Start testing: Aug 27 21:03 台北標準時間
+----------------------------------------------------------
+1/4 Testing: protocol_conformance
+1/4 Test: protocol_conformance
+Command: "D:/Administrator/Documents/GitHub/RoudaMix/engine/build/Release/conformance_test.exe" "D:/Administrator/Documents/GitHub/RoudaMix/engine/../fixtures/protocol"
+Directory: D:/Administrator/Documents/GitHub/RoudaMix/engine/build
+"protocol_conformance" start time: Aug 27 21:03 台北標準時間
+Output:
+----------------------------------------------------------
+conformance: all pass
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"protocol_conformance" end time: Aug 27 21:03 台北標準時間
+"protocol_conformance" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2/4 Testing: audio_convert_roundtrip
+2/4 Test: audio_convert_roundtrip
+Command: "D:/Administrator/Documents/GitHub/RoudaMix/engine/build/Release/audio_test.exe"
+Directory: D:/Administrator/Documents/GitHub/RoudaMix/engine/build
+"audio_convert_roundtrip" start time: Aug 27 21:03 台北標準時間
+Output:
+----------------------------------------------------------
+audio_test: all passed
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"audio_convert_roundtrip" end time: Aug 27 21:03 台北標準時間
+"audio_convert_roundtrip" time elapsed: 00:00:00
+----------------------------------------------------------
+
+3/4 Testing: vst3_host
+3/4 Test: vst3_host
+Command: "D:/Administrator/Documents/GitHub/RoudaMix/engine/build/Release/vst3_host_test.exe"
+Directory: D:/Administrator/Documents/GitHub/RoudaMix/engine/build
+"vst3_host" start time: Aug 27 21:03 台北標準時間
+Output:
+----------------------------------------------------------
+using plugin: C:\Program Files\Common Files\VST3\Big Max Zero.vst3
+class: Big Max Zero (Big Man Labs 1.0.1)
+params=10 latency=24
+param 1706566249 (Input Gain) -> 0.000000
+vst3_host_test PASSED (peak=0.993924)
+<end of output>
+Test time =   0.02 sec
+----------------------------------------------------------
+Test Passed.
+"vst3_host" end time: Aug 27 21:03 台北標準時間
+"vst3_host" time elapsed: 00:00:00
+----------------------------------------------------------
+
+4/4 Testing: session
+4/4 Test: session
+Command: "D:/Administrator/Documents/GitHub/RoudaMix/engine/build/Release/session_test.exe"
+Directory: D:/Administrator/Documents/GitHub/RoudaMix/engine/build
+"session" start time: Aug 27 21:03 台北標準時間
+Output:
+----------------------------------------------------------
+session_test PASSED
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"session" end time: Aug 27 21:03 台北標準時間
+"session" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Aug 27 21:03 台北標準時間

@@ -1,0 +1,1 @@
+{"kind": "snapshot", "payload": {"epoch": 0, "engineVersion": "0.1.0", "status": {"running": false, "deviceKey": null, "sampleRate": 0, "bufferSize": null, "inputLatency": null, "outputLatency": null, "xruns": 0, "source": "sine", "sineFreq": 1000, "error": null}, "rack": [], "lastScan": null}}

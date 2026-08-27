@@ -1,0 +1,10 @@
+D:/Administrator/Documents/GitHub/RoudaMix/engine/build/CMakeFiles/asio_sdk.dir
+D:/Administrator/Documents/GitHub/RoudaMix/engine/build/CMakeFiles/vst3_sdk.dir
+D:/Administrator/Documents/GitHub/RoudaMix/engine/build/CMakeFiles/roudamix-engine.dir
+D:/Administrator/Documents/GitHub/RoudaMix/engine/build/CMakeFiles/conformance_test.dir
+D:/Administrator/Documents/GitHub/RoudaMix/engine/build/CMakeFiles/audio_test.dir
+D:/Administrator/Documents/GitHub/RoudaMix/engine/build/CMakeFiles/vst3_host_test.dir
+D:/Administrator/Documents/GitHub/RoudaMix/engine/build/CMakeFiles/session_test.dir
+D:/Administrator/Documents/GitHub/RoudaMix/engine/build/CMakeFiles/RUN_TESTS.dir
+D:/Administrator/Documents/GitHub/RoudaMix/engine/build/CMakeFiles/ALL_BUILD.dir
+D:/Administrator/Documents/GitHub/RoudaMix/engine/build/CMakeFiles/ZERO_CHECK.dir

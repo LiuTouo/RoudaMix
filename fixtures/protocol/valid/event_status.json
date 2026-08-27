@@ -1,0 +1,1 @@
+{"kind": "status", "payload": {"running": true, "deviceKey": "{CLSID-ABCDE}", "sampleRate": 48000, "bufferSize": 256, "inputLatency": 128, "outputLatency": 128, "xruns": 0, "source": "passthrough", "sineFreq": 1000, "error": null}}
