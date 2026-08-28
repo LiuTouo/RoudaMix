@@ -1,0 +1,6 @@
+{
+  "protocolVersion": 1,
+  "id": 71,
+  "kind": "load_preset",
+  "payload": { "instanceId": 3, "path": "C:\\Users\\me\\Documents\\my-patch.vstpreset" }
+}

@@ -12,20 +12,24 @@
 
     "deviceInfo": {
       "type": "object",
-      "required": ["deviceKey", "name", "maxIn", "maxOut", "sampleRates", "preferredBufferSize"],
+      "required": ["deviceKey", "name", "maxIn", "maxOut", "sampleRates", "currentSampleRate", "minBufferSize", "maxBufferSize", "preferredBufferSize", "bufferSizes"],
       "properties": {
         "deviceKey": { "type": "string" },
         "name": { "type": "string" },
         "maxIn": { "$ref": "#/$defs/u16" },
         "maxOut": { "$ref": "#/$defs/u16" },
         "sampleRates": { "type": "array", "items": { "$ref": "#/$defs/u32" } },
-        "preferredBufferSize": { "$ref": "#/$defs/u32" }
+        "currentSampleRate": { "$ref": "#/$defs/u32" },
+        "minBufferSize": { "$ref": "#/$defs/u32" },
+        "maxBufferSize": { "$ref": "#/$defs/u32" },
+        "preferredBufferSize": { "$ref": "#/$defs/u32" },
+        "bufferSizes": { "type": "array", "items": { "$ref": "#/$defs/u32" } }
       }
     },
 
     "engineStatus": {
       "type": "object",
-      "required": ["running", "deviceKey", "sampleRate", "bufferSize", "inputLatency", "outputLatency", "xruns", "source", "sineFreq", "error"],
+      "required": ["running", "deviceKey", "sampleRate", "bufferSize", "inputLatency", "outputLatency", "xruns", "source", "sineFreq", "inputMono", "error"],
       "properties": {
         "running": { "type": "boolean" },
         "deviceKey": { "type": ["string", "null"] },
@@ -36,6 +40,7 @@
         "xruns": { "$ref": "#/$defs/u64" },
         "source": { "enum": ["sine", "passthrough"] },
         "sineFreq": { "$ref": "#/$defs/f32" },
+        "inputMono": { "type": "boolean" },
         "error": { "type": ["string", "null"] }
       }
     },
@@ -96,8 +101,9 @@
       "enum": [
         "unsupported_version", "bad_frame", "bad_command", "not_running",
         "already_running", "device_open_failed", "device_lost",
-        "plugin_not_found", "plugin_load_failed", "param_not_found",
-        "session_io", "internal"
+        "plugin_not_found", "plugin_load_failed", "plugin_no_editor",
+        "param_not_found", "session_io", "preset_io", "plugin_state_failed",
+        "internal"
       ]
     },
 
@@ -145,7 +151,9 @@
               "required": ["deviceKey", "sampleRate"],
               "properties": {
                 "deviceKey": { "type": "string" },
-                "sampleRate": { "oneOf": [ { "$ref": "#/$defs/u32" }, { "type": "null" } ] }
+                "sampleRate": { "oneOf": [ { "$ref": "#/$defs/u32" }, { "type": "null" } ] },
+                "bufferSize": { "oneOf": [ { "$ref": "#/$defs/u32" }, { "type": "null" } ] },
+                "inputMono": { "type": "boolean" }
               }
             }
           }
@@ -157,6 +165,16 @@
             "protocolVersion": { "const": 1 },
             "id": { "$ref": "#/$defs/u64" },
             "kind": { "const": "stop" },
+            "payload": { "type": "object" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["protocolVersion", "id", "kind", "payload"],
+          "properties": {
+            "protocolVersion": { "const": 1 },
+            "id": { "$ref": "#/$defs/u64" },
+            "kind": { "const": "open_device_panel" },
             "payload": { "type": "object" }
           }
         },
@@ -290,13 +308,77 @@
           "properties": {
             "protocolVersion": { "const": 1 },
             "id": { "$ref": "#/$defs/u64" },
+            "kind": { "const": "open_editor" },
+            "payload": {
+              "type": "object",
+              "required": ["instanceId"],
+              "properties": { "instanceId": { "$ref": "#/$defs/u32" } }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["protocolVersion", "id", "kind", "payload"],
+          "properties": {
+            "protocolVersion": { "const": 1 },
+            "id": { "$ref": "#/$defs/u64" },
+            "kind": { "const": "close_editor" },
+            "payload": {
+              "type": "object",
+              "required": ["instanceId"],
+              "properties": { "instanceId": { "$ref": "#/$defs/u32" } }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["protocolVersion", "id", "kind", "payload"],
+          "properties": {
+            "protocolVersion": { "const": 1 },
+            "id": { "$ref": "#/$defs/u64" },
+            "kind": { "const": "save_preset" },
+            "payload": {
+              "type": "object",
+              "required": ["instanceId", "path"],
+              "properties": {
+                "instanceId": { "$ref": "#/$defs/u32" },
+                "path": { "type": "string" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["protocolVersion", "id", "kind", "payload"],
+          "properties": {
+            "protocolVersion": { "const": 1 },
+            "id": { "$ref": "#/$defs/u64" },
+            "kind": { "const": "load_preset" },
+            "payload": {
+              "type": "object",
+              "required": ["instanceId", "path"],
+              "properties": {
+                "instanceId": { "$ref": "#/$defs/u32" },
+                "path": { "type": "string" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["protocolVersion", "id", "kind", "payload"],
+          "properties": {
+            "protocolVersion": { "const": 1 },
+            "id": { "$ref": "#/$defs/u64" },
             "kind": { "const": "save_session" },
             "payload": {
               "type": "object",
               "properties": {
                 "path": { "oneOf": [ { "type": "string" }, { "type": "null" } ] },
                 "deviceKey": { "oneOf": [ { "type": "string" }, { "type": "null" } ] },
-                "sampleRate": { "oneOf": [ { "$ref": "#/$defs/u32" }, { "type": "null" } ] }
+                "sampleRate": { "oneOf": [ { "$ref": "#/$defs/u32" }, { "type": "null" } ] },
+                "bufferSize": { "oneOf": [ { "$ref": "#/$defs/u32" }, { "type": "null" } ] },
+                "inputMono": { "type": "boolean" }
               }
             }
           }
@@ -415,6 +497,18 @@
                 "instanceId": { "$ref": "#/$defs/u32" },
                 "what": { "enum": ["crashed", "recovered"] }
               }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "payload"],
+          "properties": {
+            "kind": { "const": "devices_changed" },
+            "payload": {
+              "type": "object",
+              "required": [],
+              "properties": {}
             }
           }
         }

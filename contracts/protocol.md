@@ -67,18 +67,23 @@ RoudaMix engine(process `roudamix-engine.exe`)與 UI bridge(Tauri/Rust)之間的
 | `ping` | `{}` | `{ "engineVersion": "0.1.0" }` | |
 | `get_snapshot` | `{}` | `Snapshot`(§8) | |
 | `list_devices` | `{}` | `{ "devices": [DeviceInfo] }` | |
-| `start` | `{ "deviceKey": str, "sampleRate": u32? }` | `EngineStatus`(§8) | |
+| `start` | `{ "deviceKey": str, "sampleRate": u32?, "bufferSize": u32?, "inputMono": bool? }` | `EngineStatus`(§8) | sampleRate null/缺 = driver 現行率(硬體面板才是權威,UI 一律傳 null);帶值時換率 = driver 整個重開。bufferSize null/缺 = driver preferred;**ASIO 緩衝是 host 權威**(createBuffers 時決定,driver 面板的緩衝選擇會被蓋掉)= UI 傳使用者選的值。inputMono(預設 true)= 輸入 ch1 複製到 L+R;false = 立體聲 1:1。面板開啟中 start 回 `bad_command`("hardware panel is open") |
 | `stop` | `{}` | `EngineStatus` | |
+| `open_device_panel` | `{}` | `{ "panel": true }` | 開 driver 自帶硬體控制面板(取樣率/緩衝的最終權威);須 running,否則 `not_running`。reply 立即回(非同步):engine 在 detach thread 開面板並等其關閉(driver modal 返回或 vendor 面板 exe 結束),關閉後推 `devices_changed`;面板期間 start 被拒 |
 | `set_source` | `{ "source": "sine"\|"passthrough", "sineFreq": f32 }` | `EngineStatus` | sineFreq 語意範圍 [20, 20000] Hz;engine 界外回 `bad_command` |
-| `scan_plugins` | `{ "roots": [str]? }` | `{ "plugins": [ScanModule] }` | 同步掃描(數秒);空 roots = 預設 `C:\Program Files\Common Files\VST3`、`C:\Program Files\VST3`。載入失敗的 module 略過不 fail |
+| `scan_plugins` | `{ "roots": [str]? }` | `{ "plugins": [ScanModule] }` | 同步掃描(數秒);空 roots = 預設 `C:\Program Files\Common Files\VST3`、`C:\Program Files\VST3`。載入失敗的 module 略過不 fail。**掃描與 `add_plugin` 的 module 載入驗證在隔離 worker process**(`roudamix-worker.exe`)執行:壞 module 崩潰只死 worker,engine 不受污染;worker 掛掉時掃描回報已完成的增量結果 |
 | `add_plugin` | `{ "path": str, "classId": str? }` | `{ "instanceId": u32, "rack": [RackSlot] }` | classId 省 = module 內第一個 Audio Effect class;上限 15 slots;失敗 `plugin_load_failed` |
 | `remove_plugin` | `{ "instanceId": u32 }` | `{ "rack": [RackSlot] }` | |
 | `move_plugin` | `{ "instanceId": u32, "newIndex": u32 }` | `{ "rack": [RackSlot] }` | |
 | `set_bypass` | `{ "instanceId": u32, "bypassed": bool }` | `{ "rack": [RackSlot] }` | |
 | `set_param` | `{ "instanceId": u32, "paramId": u32, "value": f32 }` | `{}` | value normalized [0,1];高頻(旋鈕)—— 成功只 reply、不廣播 status、不動 epoch;權威值見 `status.rack[].params` |
 | `get_params` | `{ "instanceId": u32 }` | `{ "instanceId": u32, "params": [ParamInfo] }` | |
-| `save_session` | `{ "path": str?, "deviceKey": str?, "sampleRate": u32? }` | `{ "savedPath": str }` | path null = `%APPDATA%\RoudaMix\default.rmsession`;deviceKey/sampleRate 帶了就蓋寫進檔(UI 存目前選的裝置,免 start 過);寫 §8 SessionFile;非 mutation(不動 epoch/不廣播) |
-| `load_session` | `{ "path": str }` | `{ "deviceKey": str?, "sampleRate": u32? }` | 重建 rack(壞 slot 略過)+ 套 source/sineFreq;不自動 start;session 的 deviceKey/sampleRate 原樣回傳給 caller 選裝置用;成功 = mutation(廣播 status) |
+| `open_editor` | `{ "instanceId": u32 }` | `{ "instanceId": u32, "editor": true }` | 開 plugin 自帶 GUI(top-level 視窗,住 engine process)。無 editor 回 `plugin_no_editor`。editor 內改參數 = `set_param` 語意(不廣播 status);UI 想同步權威值輪詢 `get_params` |
+| `close_editor` | `{ "instanceId": u32 }` | `{}` | 關 editor 視窗(plugin 視窗自帶 X 關掉也同效) |
+| `save_preset` | `{ "instanceId": u32, "path": str }` | `{ "savedPath": str }` | 寫 `.vstpreset`(VST3 容器:`Comp`=component state + `Cont`=controller state + `RmxP`=host 權威表私有 chunk,其他 host 會略過;class ID 為 32 hex 大寫 ASCII);非 mutation(不動 epoch/不廣播) |
+| `load_preset` | `{ "instanceId": u32, "path": str }` | `{ "rack": [RackSlot] }` | 讀 `.vstpreset` 套用(component setState → controller setComponentState);成功 = mutation(廣播 status)。host 端 param 權威值重同步:檔案帶 `RmxP` chunk 時優先採用;無 `RmxP`(外部 host 存的)且 controller 同步成功時自 controller;皆無 = 保持現值。容器缺 `Comp` chunk 或 class ID 不符回 `preset_io` |
+| `save_session` | `{ "path": str?, "deviceKey": str?, "sampleRate": u32?, "bufferSize": u32?, "inputMono": bool? }` | `{ "savedPath": str }` | path null = `%APPDATA%\RoudaMix\default.rmsession`;deviceKey/sampleRate/bufferSize/inputMono 帶了就蓋寫進檔(UI 存目前選的裝置,免 start 過);寫 §8 SessionFile;非 mutation(不動 epoch/不廣播) |
+| `load_session` | `{ "path": str }` | `{ "deviceKey": str?, "sampleRate": u32?, "bufferSize": u32?, "inputMono": bool? }` | 重建 rack(壞 slot 略過)+ 套 source/sineFreq;不自動 start;session 的 deviceKey/sampleRate/bufferSize/inputMono 原樣回傳給 caller 選裝置用;成功 = mutation(廣播 status) |
 | `shutdown_engine` | `{}` | `{}` | 回 ack 後退出 |
 
 Events:
@@ -87,29 +92,34 @@ Events:
 |---|---|---|
 | `snapshot` | `Snapshot` | 連線建立時 |
 | `status` | `EngineStatus`(含 `rack`) | rack/running/xrun/latency/裝置變更;`set_param` 不觸發 |
+| `devices_changed` | `{}` | 硬體面板關閉後(driver modal 返回或 vendor 面板 exe 結束):driver 現行設定可能已變、現有 stream 可能已失效(driver 面板動緩衝會死流),client 應重新 `list_devices` 並一律 stop→start 重建 |
 
 ## 7. 錯誤碼
 
 `unsupported_version`、`bad_frame`、`bad_command`、`not_running`、`already_running`、
 `device_open_failed`、`device_lost`、`plugin_not_found`、`plugin_load_failed`、
-`param_not_found`、`session_io`、`internal`。
+`plugin_no_editor`、`param_not_found`、`session_io`、`preset_io`、
+`plugin_state_failed`、`internal`。
 
 錯誤碼只增不改語意;client 對未知錯誤碼當 `internal` 顯示。
 
 ## 8. 共用結構
 
 ```
-DeviceInfo   { deviceKey: str, name: str, maxIn: u16, maxOut: u16, sampleRates: [u32], preferredBufferSize: u32 }
-EngineStatus { running: bool, deviceKey: str?, sampleRate: f32, bufferSize: u32?, inputLatency: u32?, outputLatency: u32?, xruns: u64, source: "sine"|"passthrough", sineFreq: f32, pluginFails: u32, rack: [RackSlot], error: str? }
+DeviceInfo   { deviceKey: str, name: str, maxIn: u16, maxOut: u16, sampleRates: [u32], currentSampleRate: u32, minBufferSize: u32, maxBufferSize: u32, preferredBufferSize: u32, bufferSizes: [u32] }
+EngineStatus { running: bool, deviceKey: str?, sampleRate: f32, bufferSize: u32?, inputLatency: u32?, outputLatency: u32?, xruns: u64, source: "sine"|"passthrough", sineFreq: f32, inputMono: bool, pluginFails: u32, rack: [RackSlot], error: str? }
 RackSlot     { instanceId: u32, name: str, pluginPath: str, classId: str, bypassed: bool, params: [{ paramId: u32, normalized: f32 }] }
 ParamInfo    { paramId: u32, name: str, normalized: f32, default: f32, bypass: bool }
 ScanModule   { path: str, classes: [PluginClass] }
 PluginClass  { uid: str, name: str, vendor: str, version: str, subcategories: str }
 Snapshot     { epoch: u64, engineVersion: str, status: EngineStatus, rack: [RackSlot], lastScan: [ScanModule]? }
-SessionFile  { roudamixSession: 1, deviceKey: str?, sampleRate: u32?, source: "sine"|"passthrough", sineFreq: f32, rack: [SessionSlot] }
-SessionFile.deviceKey/sampleRate = 最近一次成功 start 的裝置/取樣率;save_session payload 帶覆寫值時優先。
+SessionFile  { roudamixSession: 1, deviceKey: str?, sampleRate: u32?, bufferSize: u32?, source: "sine"|"passthrough", sineFreq: f32, inputMono: bool?, rack: [SessionSlot] }
+SessionFile.deviceKey/sampleRate/bufferSize/inputMono = 最近一次成功 start 的設定;save_session payload 帶覆寫值時優先。
 SessionSlot  { pluginPath: str, classId: str, name: str, bypassed: bool, params: [{ paramId: u32, normalized: f32 }] }
 ```
+
+`bufferSizes` = driver granularity 展開的合法清單(engine 計算;空 = 用 min/max 過濾常見值)。
+`currentSampleRate` = probe 時 driver 回報的現行率;硬體面板改率後重新 list_devices 可見。
 
 JSON 欄位一律 camelCase;`f32` 序列化為 JSON number;缺項 = null(可 null 欄位見上)。
 

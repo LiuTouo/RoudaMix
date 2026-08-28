@@ -1,6 +1,8 @@
-# RoudaMix Telemetry Shared Memory ABI v1
+# RoudaMix Telemetry Shared Memory ABI v2
 
 儀表/狀態高頻通道(engine → UI 單向)。控制面走 pipe(`protocol.md`);**高頻儀表不走 pipe**。
+
+**v2 變更**:offset 560 起追加頻譜區(`spectrumCount` + `spectrumDb[256]`);v1 既有欄位 offset/語意不變。`abiVersion = 2`。
 
 ## 1. Mapping
 
@@ -13,7 +15,7 @@
 | offset | size | 型別 | 欄位 | 說明 |
 |---|---|---|---|---|
 | 0 | 4 | u32 | `magic` | `0x524D5854`("RMXT") |
-| 4 | 4 | u32 | `abiVersion` | 本版 = 1 |
+| 4 | 4 | u32 | `abiVersion` | 本版 = 2 |
 | 8 | 4 | u32 | `sequence` | seqlock:寫前 odd(寫入中)、寫完 even;讀者比對前後 |
 | 12 | 4 | u32 | `stripCount` | ≤ 16,有效 strip 數 |
 | 16 | 8 | u64 | `xruns` | 累計 XRun |
@@ -24,6 +26,10 @@
 | 40 | 4 | u32 | `outputLatency` | samples |
 | 44 | 4 | u32 | `_reserved0` | 對齊保留,必為 0 |
 | 48 | 16×32 | 見下 | `strips[16]` | 每 strip 32 bytes |
+| 560 | 4 | u32 | `spectrumCount` | 有效頻譜 bin 數,本版 = 256;未啟動 = 0 |
+| 564 | 256×4 | f32 | `spectrumDb[256]` | engine 最終輸出的功率頻譜,**線性等間距** 0 Hz…Nyquist,dB(滿幅 sine ≈ 0,靜音/底下 = -120 floor);UI 自行做 log-freq 映射 |
+
+總計 564 + 256×4 = 1588 bytes ≤ 4096。
 
 每 strip(32 bytes):
 
@@ -50,7 +56,8 @@
 pub struct TelemetryHeader { magic: u32, abi_version: u32, sequence: u32,
     strip_count: u32, xruns: u64, callback_load: f32, sample_rate: f32,
     buffer_size: u32, input_latency: u32, output_latency: u32, _reserved0: u32,
-    strips: [TelemetryStrip; 16] }
+    strips: [TelemetryStrip; 16],
+    spectrum_count: u32, spectrum_db: [f32; 256] }   // v2:offset 560 起
 #[repr(C)]
 pub struct TelemetryStrip { instance_id: u32, _pad0: u32, peak_l: f32,
     peak_r: f32, rms_l: f32, rms_r: f32, _reserved: [u32; 2] }
