@@ -178,7 +178,7 @@ async fn run(app: AppHandle, b: Bridge) {
                 tries += 1;
                 eprintln!("[bridge] connect fail (try {tries}): {e}");
                 if tries == 1 || tries % 20 == 0 {
-                    match spawn::spawn_detached() {
+                    match spawn::spawn_supervised() {
                         Ok(()) => eprintln!("[bridge] spawned engine"),
                         Err(se) => eprintln!("[bridge] spawn engine failed: {se}"),
                     }

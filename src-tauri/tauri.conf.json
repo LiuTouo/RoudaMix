@@ -28,7 +28,8 @@
     "targets": ["nsis"],
     "icon": ["icons/icon.ico"],
     "resources": {
-      "../engine/build/Release/roudamix-engine.exe": "roudamix-engine.exe"
+      "../engine/build/Release/roudamix-engine.exe": "roudamix-engine.exe",
+      "../engine/build/Release/roudamix-worker.exe": "roudamix-worker.exe"
     }
   }
 }

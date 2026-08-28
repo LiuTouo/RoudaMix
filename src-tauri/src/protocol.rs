@@ -107,8 +107,9 @@ fn err<S: Into<String>>(s: S) -> ProtocolError {
 // ---------- per-kind payload(§6)----------
 
 pub const COMMAND_KINDS: &[&str] = &[
-    "ping", "get_snapshot", "list_devices", "start", "stop", "set_source", "scan_plugins",
-    "add_plugin", "remove_plugin", "move_plugin", "set_bypass", "set_param", "get_params",
+    "ping", "get_snapshot", "list_devices", "start", "stop", "set_source", "open_device_panel",
+    "scan_plugins", "add_plugin", "remove_plugin", "move_plugin", "set_bypass", "set_param",
+    "get_params", "open_editor", "close_editor", "save_preset", "load_preset",
     "save_session", "load_session", "shutdown_engine",
 ];
 
@@ -144,7 +145,9 @@ fn validate_command_payload(c: &CommandEnvelope) -> Result<(), ProtocolError> {
             _ => Err(err("payload.roots must be string[] when present")),
         },
         "add_plugin" => s("path"),
-        "remove_plugin" | "get_params" => u32_field(p, "instanceId"),
+        "remove_plugin" | "get_params" | "open_editor" | "close_editor" => {
+            u32_field(p, "instanceId")
+        }
         "move_plugin" => {
             u32_field(p, "instanceId")?;
             u32_field(p, "newIndex")
@@ -182,7 +185,12 @@ fn validate_command_payload(c: &CommandEnvelope) -> Result<(), ProtocolError> {
             }
         }
         "load_session" => s("path"),
-        "ping" | "get_snapshot" | "list_devices" | "stop" | "shutdown_engine" => {
+        "save_preset" | "load_preset" => {
+            u32_field(p, "instanceId")?;
+            s("path")
+        }
+        "ping" | "get_snapshot" | "list_devices" | "stop" | "shutdown_engine"
+        | "open_device_panel" => {
             if p.is_empty() { Ok(()) } else { Err(err("payload must be empty object")) }
         }
         _ => unreachable!(),
@@ -200,13 +208,22 @@ fn known_error_code(c: &str) -> bool {
     [
         "unsupported_version", "bad_frame", "bad_command", "not_running", "already_running",
         "device_open_failed", "device_lost", "plugin_not_found", "plugin_load_failed",
-        "param_not_found", "session_io", "internal",
+        "plugin_no_editor", "param_not_found", "session_io", "preset_io",
+        "plugin_state_failed", "internal",
     ]
     .contains(&c)
 }
 
 fn known_event_kind(k: &str) -> bool {
-    ["snapshot", "status", "scan_done", "rack_changed", "plugin_event"].contains(&k)
+    [
+        "snapshot",
+        "status",
+        "scan_done",
+        "rack_changed",
+        "plugin_event",
+        "devices_changed",
+    ]
+    .contains(&k)
 }
 
 // ---------- 建構 helpers(server→client 方向 bridge 只解析,不建構)----------
