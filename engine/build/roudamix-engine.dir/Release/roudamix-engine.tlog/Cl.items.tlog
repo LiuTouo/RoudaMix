@@ -1,9 +1,0 @@
-D:\Administrator\Documents\GitHub\RoudaMix\engine\main.cpp;D:\Administrator\Documents\GitHub\RoudaMix\engine\build\roudamix-engine.dir\Release\main.obj
-D:\Administrator\Documents\GitHub\RoudaMix\engine\src\protocol.cpp;D:\Administrator\Documents\GitHub\RoudaMix\engine\build\roudamix-engine.dir\Release\protocol.obj
-D:\Administrator\Documents\GitHub\RoudaMix\engine\src\frame_io.cpp;D:\Administrator\Documents\GitHub\RoudaMix\engine\build\roudamix-engine.dir\Release\frame_io.obj
-D:\Administrator\Documents\GitHub\RoudaMix\engine\src\pcm_convert.cpp;D:\Administrator\Documents\GitHub\RoudaMix\engine\build\roudamix-engine.dir\Release\pcm_convert.obj
-D:\Administrator\Documents\GitHub\RoudaMix\engine\src\asio_device.cpp;D:\Administrator\Documents\GitHub\RoudaMix\engine\build\roudamix-engine.dir\Release\asio_device.obj
-D:\Administrator\Documents\GitHub\RoudaMix\engine\src\telemetry.cpp;D:\Administrator\Documents\GitHub\RoudaMix\engine\build\roudamix-engine.dir\Release\telemetry.obj
-D:\Administrator\Documents\GitHub\RoudaMix\engine\src\audio_engine.cpp;D:\Administrator\Documents\GitHub\RoudaMix\engine\build\roudamix-engine.dir\Release\audio_engine.obj
-D:\Administrator\Documents\GitHub\RoudaMix\engine\src\vst3_host.cpp;D:\Administrator\Documents\GitHub\RoudaMix\engine\build\roudamix-engine.dir\Release\vst3_host.obj
-D:\Administrator\Documents\GitHub\RoudaMix\engine\src\session.cpp;D:\Administrator\Documents\GitHub\RoudaMix\engine\build\roudamix-engine.dir\Release\session.obj

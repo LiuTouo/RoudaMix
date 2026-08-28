@@ -1,0 +1,11 @@
+# Build outputs(可重生;NSIS 由 tauri build 當場取用)
+/target/
+/engine/build/
+/ui/dist/
+
+# Dependencies
+node_modules/
+/ui/node_modules/
+
+# Rust
+**/*.rs.bk

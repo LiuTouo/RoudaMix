@@ -1,7 +1,0 @@
-D:\Administrator\Documents\GitHub\RoudaMix\engine\tests\session_test.cpp;D:\Administrator\Documents\GitHub\RoudaMix\engine\build\session_test.dir\Release\session_test.obj
-D:\Administrator\Documents\GitHub\RoudaMix\engine\src\session.cpp;D:\Administrator\Documents\GitHub\RoudaMix\engine\build\session_test.dir\Release\session.obj
-D:\Administrator\Documents\GitHub\RoudaMix\engine\src\audio_engine.cpp;D:\Administrator\Documents\GitHub\RoudaMix\engine\build\session_test.dir\Release\audio_engine.obj
-D:\Administrator\Documents\GitHub\RoudaMix\engine\src\asio_device.cpp;D:\Administrator\Documents\GitHub\RoudaMix\engine\build\session_test.dir\Release\asio_device.obj
-D:\Administrator\Documents\GitHub\RoudaMix\engine\src\pcm_convert.cpp;D:\Administrator\Documents\GitHub\RoudaMix\engine\build\session_test.dir\Release\pcm_convert.obj
-D:\Administrator\Documents\GitHub\RoudaMix\engine\src\telemetry.cpp;D:\Administrator\Documents\GitHub\RoudaMix\engine\build\session_test.dir\Release\telemetry.obj
-D:\Administrator\Documents\GitHub\RoudaMix\engine\src\vst3_host.cpp;D:\Administrator\Documents\GitHub\RoudaMix\engine\build\session_test.dir\Release\vst3_host.obj
