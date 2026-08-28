@@ -50,9 +50,90 @@ void MeterAccumulator::set_runtime(float sample_rate, std::uint32_t buffer_size,
     out_lat_.store(out_lat, std::memory_order_relaxed);
 }
 
+void MeterAccumulator::append_spectrum(const float* l, const float* r,
+                                       std::uint32_t frames) noexcept {
+    std::size_t w = ring_write_.load(std::memory_order_relaxed);
+    for (std::uint32_t i = 0; i < frames; ++i) {
+        spectrum_ring_[w] = 0.5F * ((l != nullptr ? l[i] : 0.0F) + (r != nullptr ? r[i] : 0.0F));
+        w = (w + 1) % kSpectrumRingSize;
+    }
+    ring_write_.store(static_cast<std::uint32_t>(w), std::memory_order_release);
+}
+
+// publish thread 專屬(單一 consumer):取 ring 末 2048 點,Hann + radix-2 FFT,
+// 256 線性 bins(每 bin = 4 個 FFT bins 跨度,涵蓋到 Nyquist),dB 滿幅 sine ≈ 0。
+void MeterAccumulator::compute_spectrum(float* out_db) noexcept {
+    constexpr std::size_t N = kSpectrumFft;
+    static float window[N];
+    static bool window_init = false;
+    if (!window_init) {
+        for (std::size_t n = 0; n < N; ++n)
+            window[n] = 0.5F * (1.0F - std::cos(2.0F * 3.14159265358979323846F *
+                                                static_cast<float>(n) / static_cast<float>(N - 1)));
+        window_init = true;
+    }
+
+    const std::uint32_t w = ring_write_.load(std::memory_order_acquire);
+    // 16KB stack(publish thread,非 RT):float re/im 各 8KB
+    alignas(16) float re[N];
+    alignas(16) float im[N];
+    for (std::size_t n = 0; n < N; ++n) {
+        const std::size_t idx =
+            (static_cast<std::size_t>(w) + kSpectrumRingSize - N + n) % kSpectrumRingSize;
+        re[n] = spectrum_ring_[idx] * window[n];
+        im[n] = 0.0F;
+    }
+
+    for (std::size_t i = 1, j = 0; i < N; ++i) {  // bit-reversal 重排
+        std::size_t bit = N >> 1;
+        for (; (j & bit) != 0; bit >>= 1) j ^= bit;
+        j ^= bit;
+        if (i < j) {
+            // ponytail:std::swap 在此 TU 觸發 LNK2019(工具鏈怪癖),手寫交換繞過
+            const float tr = re[i]; re[i] = re[j]; re[j] = tr;
+            const float ti = im[i]; im[i] = im[j]; im[j] = ti;
+        }
+    }
+    for (std::size_t len = 2; len <= N; len <<= 1) {
+        const double ang = -2.0 * 3.14159265358979323846 / static_cast<double>(len);
+        const double wr = std::cos(ang), wi = std::sin(ang);
+        for (std::size_t i = 0; i < N; i += len) {
+            double cr = 1.0, ci = 0.0;
+            for (std::size_t k = 0; k < len / 2; ++k) {
+                const double ur = re[i + k], ui = im[i + k];
+                const double vr = re[i + k + len / 2] * cr - im[i + k + len / 2] * ci;
+                const double vi = re[i + k + len / 2] * ci + im[i + k + len / 2] * cr;
+                re[i + k] = static_cast<float>(ur + vr);
+                im[i + k] = static_cast<float>(ui + vi);
+                re[i + k + len / 2] = static_cast<float>(ur - vr);
+                im[i + k + len / 2] = static_cast<float>(ui - vi);
+                const double ncr = cr * wr - ci * wi;
+                ci = cr * wi + ci * wr;
+                cr = ncr;
+            }
+        }
+    }
+
+    // Hann 相干增益 0.5:滿幅 sine 的 bin 島 ≈ A*N/2*0.5,除以 N/4 補償 → ≈ 0 dB。
+    // 每 display bin = FFT bins [j*4+1, j*4+4] 取 max(tone 落 span 內任一點都看得到,
+    // 點採樣會因頻率對不齊 sampled bin 而顯示過低)
+    for (std::size_t j = 0; j < kTelemetrySpectrumBins; ++j) {
+        float mag = 0.0F;
+        for (std::size_t k = j * 4 + 1; k <= j * 4 + 4; ++k) {
+            const float m = std::sqrt(re[k] * re[k] + im[k] * im[k]);
+            if (m > mag) mag = m;
+        }
+        mag /= static_cast<float>(N / 4);
+        float db = 20.0F * std::log10(mag > 1e-6F ? mag : 1e-6F);
+        if (db < -120.0F) db = -120.0F;
+        if (db > 0.0F) db = 0.0F;
+        out_db[j] = db;
+    }
+}
+
 void MeterAccumulator::publish(TelemetryBlockShm& block, std::uint64_t xruns_total,
-                                const std::uint32_t* instance_ids,
-                                std::size_t id_count) noexcept {
+                                const std::uint32_t* instance_ids, std::size_t id_count,
+                                bool running) noexcept {
     TelemetryBlockShm next{};
     next.magic = kTelemetryMagic;
     next.abi_version = kTelemetryAbiVersion;
@@ -83,6 +164,13 @@ void MeterAccumulator::publish(TelemetryBlockShm& block, std::uint64_t xruns_tot
         next.strips[s].rms_r = std::sqrt(sq_r / static_cast<float>(n));
     }
 
+    if (running) {
+        next.spectrum_count = kTelemetrySpectrumBins;
+        compute_spectrum(next.spectrum_db);
+    } else {
+        next.spectrum_count = 0;
+    }
+
     // seqlock write:odd → payload → even(release)
     // 注意:sequence 欄位不得被 header memcpy 蓋掉(next 未設 = 0 會把序號歸零)
     const std::uint32_t seq = block.sequence;
@@ -92,6 +180,8 @@ void MeterAccumulator::publish(TelemetryBlockShm& block, std::uint64_t xruns_tot
     std::memcpy(&block.magic, &next.magic,
                 offsetof(TelemetryBlockShm, strips));
     std::memcpy(block.strips, next.strips, sizeof(block.strips));
+    std::memcpy(&block.spectrum_count, &next.spectrum_count,
+                sizeof(next.spectrum_count) + sizeof(next.spectrum_db));
     std::atomic_thread_fence(std::memory_order_release);
     block.sequence = seq + 2;  // even
 }
