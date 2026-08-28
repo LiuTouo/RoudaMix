@@ -44,9 +44,19 @@ std::string guid_text(const CLSID& v) {
     return n > 1 ? std::string(out, n - 1) : std::string{};
 }
 
+std::wstring utf8_to_wide(const std::string& s) {
+    if (s.empty()) return {};
+    const int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()),
+                                      nullptr, 0);
+    std::wstring out(static_cast<std::size_t>(n), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), out.data(), n);
+    return out;
+}
+
 struct EnumeratedDriver {
     std::string name;
     std::string clsid;
+    std::string path;  // driver DLL 完整路徑(vendor 面板 exe fallback 用)
 };
 
 std::vector<EnumeratedDriver> enumerate(AsioDriverList& drivers) {
@@ -60,7 +70,7 @@ std::vector<EnumeratedDriver> enumerate(AsioDriverList& drivers) {
             drivers.asioGetDriverPath(i, path, sizeof(path)) != 0 ||
             drivers.asioGetDriverCLSID(i, &clsid) != 0)
             continue;
-        result.push_back({name, guid_text(clsid)});
+        result.push_back({name, guid_text(clsid), path});
     }
     return result;
 }
@@ -179,6 +189,33 @@ std::vector<DriverEntry> enumerate_drivers() {
     return result;
 }
 
+std::vector<std::uint32_t> DeviceCapability::buffer_options() const {
+    std::vector<std::uint32_t> out;
+    constexpr std::size_t kMaxOptions = 32;  // 下拉夠用;granularity=1 的 driver 截斷
+    if (min_buffer == 0 || max_buffer < min_buffer) return out;
+    auto push = [&](std::uint32_t v) {
+        if (v >= min_buffer && v <= max_buffer && out.size() < kMaxOptions &&
+            std::find(out.begin(), out.end(), v) == out.end())
+            out.push_back(v);
+    };
+    if (buffer_granularity > 0) {
+        for (std::uint64_t v = min_buffer; v <= max_buffer && out.size() < kMaxOptions;
+             v += static_cast<std::uint64_t>(buffer_granularity))
+            push(static_cast<std::uint32_t>(v));
+    } else if (buffer_granularity == 0) {
+        for (std::uint64_t v = min_buffer; v <= max_buffer && out.size() < kMaxOptions; v <<= 1)
+            push(static_cast<std::uint32_t>(v));
+    }
+    // granularity < 0(任意值)或不連續展開:pow2 常見值過濾範圍
+    if (out.empty()) {
+        for (std::uint32_t v = 16; v <= 4096 && out.size() < kMaxOptions; v <<= 1) push(v);
+    }
+    // preferred 沒在清單 = 展開規則沒涵蓋(如 pref=128 但 granularity=0 從 16 起)—— 補進
+    push(preferred_buffer);
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
 AsioDevice::~AsioDevice() { close(); }
 
 bool AsioDevice::probe(const std::string& clsid, std::string& err) {
@@ -249,6 +286,7 @@ bool AsioDevice::probe(const std::string& clsid, std::string& err) {
     cap.min_buffer = static_cast<std::uint32_t>(min_b);
     cap.max_buffer = static_cast<std::uint32_t>(max_b);
     cap.preferred_buffer = static_cast<std::uint32_t>(preferred);
+    cap.buffer_granularity = granularity;
     cap.current_sample_rate = static_cast<std::uint32_t>(std::llround(current));
     for (const auto rate : kCommonSampleRates) {
         if (asio_ok(impl->driver_->canSampleRate(static_cast<double>(rate))))
@@ -297,11 +335,12 @@ bool AsioDevice::probe(const std::string& clsid, std::string& err) {
     cap_ = std::move(cap);
     clsid_ = clsid;
     name_ = found->name;
+    driver_dll_path_ = found->path;
     return true;
 }
 
 bool AsioDevice::prepare(std::uint32_t sample_rate, std::size_t in_count, std::size_t out_count,
-                         std::string& err) {
+                         std::uint32_t buffer_size, std::string& err) {
     if (!impl_ || !impl_->driver_) {
         err = "device not probed";
         return false;
@@ -318,15 +357,33 @@ bool AsioDevice::prepare(std::uint32_t sample_rate, std::size_t in_count, std::s
         err = "unsupported sample rate";
         return false;
     }
+    if (buffer_size != 0 &&
+        (buffer_size < cap_.min_buffer || buffer_size > cap_.max_buffer)) {
+        err = "buffer size out of range [" + std::to_string(cap_.min_buffer) + "," +
+              std::to_string(cap_.max_buffer) + "]";
+        return false;
+    }
     if (impl_->buffers_created_) {
         stop();
         impl_->driver_->disposeBuffers();
         impl_->buffers_created_ = false;
     }
-    if (sample_rate != cap_.current_sample_rate &&
-        !asio_ok(impl_->driver_->setSampleRate(static_cast<double>(sample_rate)))) {
-        err = "setSampleRate failed";
-        return false;
+    if (sample_rate != cap_.current_sample_rate) {
+        if (!asio_ok(impl_->driver_->setSampleRate(static_cast<double>(sample_rate)))) {
+            err = "setSampleRate failed";
+            return false;
+        }
+        // SSL 這類 driver:setSampleRate 回 OK 但硬體沒跟著換(callback 不會來)。
+        // 讀回驗證,沒換成功就明確報錯(UI 顯示、引導用硬體面板改)
+        ASIOSampleRate actual{};
+        if (!asio_ok(impl_->driver_->getSampleRate(&actual)) ||
+            std::llround(actual) != static_cast<long>(sample_rate)) {
+            err = "driver did not apply sample rate " + std::to_string(sample_rate) +
+                  " (actual " + std::to_string(static_cast<long>(std::llround(actual))) +
+                  "); use hardware panel";
+            return false;
+        }
+        cap_.current_sample_rate = sample_rate;
     }
 
     auto* impl = impl_;
@@ -350,7 +407,7 @@ bool AsioDevice::prepare(std::uint32_t sample_rate, std::size_t in_count, std::s
         return false;
     }
 
-    const std::uint32_t frames = cap_.preferred_buffer;
+    const std::uint32_t frames = buffer_size != 0 ? buffer_size : cap_.preferred_buffer;
     const std::size_t actual_in = impl->input_types_.size();
     const std::size_t actual_out = impl->output_types_.size();
     impl->input_scratch_.assign(actual_in * frames, 0.0F);
@@ -435,6 +492,45 @@ void AsioDevice::stop() noexcept {
     }
 }
 
+bool AsioDevice::open_control_panel(std::string& err) {
+    if (!impl_ || !impl_->driver_) {
+        err = "device not open";
+        return false;
+    }
+    // 1) 正規 ASIO controlPanel()。Thesycon 系(SSL 實測)是 stub:回 OK 不開視窗
+    const bool driver_ok = asio_ok(impl_->driver_->controlPanel());
+    // 2) vendor 面板 fallback:driver DLL 同目錄的 *cpl*.exe(如 SSLUsbAudioCpl.exe)
+    if (!driver_dll_path_.empty()) {
+        const std::size_t slash = driver_dll_path_.find_last_of("\\/");
+        if (slash != std::string::npos) {
+            const std::wstring dir = utf8_to_wide(driver_dll_path_.substr(0, slash + 1));
+            WIN32_FIND_DATAW fd{};
+            HANDLE found = FindFirstFileW((dir + L"*cpl*.exe").c_str(), &fd);
+            if (found != INVALID_HANDLE_VALUE) {
+                const std::wstring exe = dir + fd.cFileName;
+                FindClose(found);
+                STARTUPINFOW si{};
+                si.cb = sizeof(si);
+                PROCESS_INFORMATION pi{};
+                // 獨立 process 面板:使用者直接操作,生死與 engine 無關。
+                // 等它結束(呼叫端是 detach thread)= 面板關閉事件 + driver 設定已落地
+                if (CreateProcessW(exe.c_str(), nullptr, nullptr, nullptr, FALSE, 0, nullptr,
+                                   nullptr, &si, &pi)) {
+                    CloseHandle(pi.hThread);
+                    WaitForSingleObject(pi.hProcess, INFINITE);
+                    CloseHandle(pi.hProcess);
+                    return true;
+                }
+            }
+        }
+    }
+    if (!driver_ok) {
+        err = "driver controlPanel failed and no vendor panel exe found";
+        return false;
+    }
+    return true;
+}
+
 // impl_ 的 driver/window 清理(probe 失敗路徑共用;不刪 impl_)
 void AsioDevice::close_impl_part(Impl* impl) noexcept {
     if (impl->buffers_created_ && impl->driver_) {
@@ -460,6 +556,7 @@ void AsioDevice::close() noexcept {
     impl_ = nullptr;
     clsid_.clear();
     name_.clear();
+    driver_dll_path_.clear();
     cap_ = DeviceCapability{};
     block_size_ = 0;
 }

@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -66,6 +67,31 @@ public:
 
     // 控制面讀 normalized 值;無此參數或無 controller 回 NaN
     double param_value(uint32_t id) const noexcept;
+
+    // ---- preset(.vstpreset 檔案式 state 存取;控制面呼叫)----
+    // 寫 VST3 容器:'VST3' header + 'Comp'(component state)+ 'Cntc'(controller
+    // state,controller getState OK 時)+ 'RmxP'(host 權威表,私有 chunk,其他
+    // host 會略過)。成功回 true;err 帶原因
+    bool save_preset(const std::filesystem::path& file,
+                     const std::vector<std::pair<std::uint32_t, double>>& host_params,
+                     std::string& error);
+    // 讀容器套用(component setState → controller setComponentState)。
+    // class ID 不符或缺 Comp chunk 回 false。host_params_inout:檔案帶 RmxP chunk
+    // 時就地更新(save 時的 host 權威值,優先於一切);host_values_from_file =
+    // 已從檔案更新,呼叫端不要再拿 controller 值覆寫(淺實作 plugin 的 controller
+    // setComponentState 回 OK 但值不動,不可信)
+    bool load_preset(const std::filesystem::path& file,
+                     std::vector<std::pair<std::uint32_t, double>>& host_params_inout,
+                     std::string& error, bool& host_values_from_file);
+
+    // ---- editor(plugin 自帶 GUI;top-level 視窗住 engine process)----
+    // performEdit(editor 內改參數)→ cb(paramId, normalized);open_editor 前設定
+    void set_param_callback(std::function<void(uint32_t, double)> cb) noexcept;
+    // 建 editor 視窗 + attach;無 view 或 attach 失敗回 false(err 帶原因)
+    bool open_editor();
+    // 冪等;使用者按視窗 X 或此呼叫同效。remove/析構前必呼
+    void close_editor() noexcept;
+    bool editor_open() const noexcept;
 
 private:
     struct Impl;

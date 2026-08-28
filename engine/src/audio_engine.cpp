@@ -35,6 +35,8 @@ inline void meter_band(MeterAccumulator& m, std::size_t strip, const float* l,
 }  // namespace
 
 AudioEngine::AudioEngine() {
+    // 預設 passthrough(sine 僅測試用,協議 set_source 仍可切)
+    source_passthrough_.store(1u, std::memory_order_relaxed);
     sine_freq_bits_.store(f32_bits(440.0F), std::memory_order_relaxed);
 }
 
@@ -62,8 +64,12 @@ std::vector<AudioEngine::DeviceSummary> AudioEngine::list_devices() {
             const auto& cap = probe_device.capability();
             sum.max_in = cap.max_in;
             sum.max_out = cap.max_out;
+            sum.min_buffer = cap.min_buffer;
+            sum.max_buffer = cap.max_buffer;
             sum.preferred_buffer = cap.preferred_buffer;
             sum.sample_rates = cap.sample_rates;
+            sum.buffer_sizes = cap.buffer_options();
+            sum.current_sample_rate = cap.current_sample_rate;
         }
         probe_device.close();
         result.push_back(std::move(sum));
@@ -72,16 +78,33 @@ std::vector<AudioEngine::DeviceSummary> AudioEngine::list_devices() {
 }
 
 bool AudioEngine::start(const std::string& device_key,
-                        std::optional<std::uint32_t> sample_rate, std::string& err) {
+                        std::optional<std::uint32_t> sample_rate,
+                        std::optional<std::uint32_t> buffer_size,
+                        std::optional<bool> input_mono, std::string& err) {
     if (device_.running()) {
         err = "already running";
         return false;
     }
+    // 面板開著時 driver 不能重開(controlPanel 多為 modal,detach thread 還在裡面)
+    if (panel_open_.load(std::memory_order_acquire) > 0) {
+        err = "hardware panel is open; close it first";
+        return false;
+    }
+    // 換裝置或換取樣率:整個 driver 重開。部分 driver(SSL 實測)在已 init 的
+    // instance 上 setSampleRate 回 OK 但 callback 從此不來 —— 重 init 才是真換率
+    if (!device_.clsid().empty() &&
+        (device_.clsid() != device_key ||
+         (sample_rate.has_value() &&
+          *sample_rate != device_.capability().current_sample_rate))) {
+        device_.close();
+    }
     if (!device_.probe(device_key, err)) return false;
     const auto& cap = device_.capability();
     const std::uint32_t rate = sample_rate.value_or(cap.current_sample_rate);
+    const std::uint32_t buffer = buffer_size.value_or(0);  // 0 = driver preferred
+    input_mono_.store(input_mono.value_or(true) ? 1u : 0u, std::memory_order_relaxed);
 
-    if (!device_.prepare(rate, /*in=*/2, /*out=*/2, err)) {
+    if (!device_.prepare(rate, /*in=*/2, /*out=*/2, buffer, err)) {
         device_.close();
         return false;
     }
@@ -100,9 +123,19 @@ bool AudioEngine::start(const std::string& device_key,
     }
     swap_rack();
 
+    const std::uint64_t callbacks_before = device_.callbacks();
     if (!device_.start(err)) {
         device_.close();
         err = std::string("ASIO start failed after rack ready: ") + err;
+        return false;
+    }
+    // SSL 這類 driver:start() 回 OK 但硬體時脈沒換時 callback 從不來(死流)。
+    // 短等驗證沒 callback 就明確失敗,引導用硬體面板改率(600ms:Start 鍵可感知延遲)
+    Sleep(600);
+    if (device_.callbacks() == callbacks_before) {
+        device_.close();
+        err = "driver did not deliver audio callbacks at " + std::to_string(rate) +
+              " Hz; open hardware panel, set rate there, then Start again";
         return false;
     }
 
@@ -110,6 +143,7 @@ bool AudioEngine::start(const std::string& device_key,
     rt_phase_.store(0, std::memory_order_relaxed);
     last_device_key_ = device_key;  // session 用:stop 後存檔仍記得裝置
     last_sample_rate_ = rate;
+    last_buffer_size_ = device_.block_size();
     meters_.set_runtime(static_cast<float>(rate), device_.block_size(),
                         cap.input_latency, cap.output_latency);
 
@@ -139,7 +173,7 @@ bool AudioEngine::start(const std::string& device_key,
                         ids[count++] = slot.instance_id;
                     }
                 }
-                meters_.publish(*shm_, device_.xruns(), ids, count);
+                meters_.publish(*shm_, device_.xruns(), ids, count, device_.running());
             }
         });
     }
@@ -226,6 +260,9 @@ bool AudioEngine::add_plugin(const std::string& module_path, const std::string& 
 bool AudioEngine::remove_plugin(std::uint32_t instance_id, std::string& err) {
     for (auto it = rack_.begin(); it != rack_.end(); ++it) {
         if (it->instance_id == instance_id) {
+            // editor 視窗先收(同步 DestroyWindow;editor 與 dispatch 同在 main thread,
+            // 無並發——performEdit 回呼不會同時跑)
+            if (it->plugin->editor_open()) it->plugin->close_editor();
             rack_.erase(it);
             swap_rack();
             return true;
@@ -292,6 +329,54 @@ bool AudioEngine::set_param(std::uint32_t instance_id, std::uint32_t param_id, d
     return true;
 }
 
+bool AudioEngine::save_preset(std::uint32_t instance_id, const std::filesystem::path& file,
+                              std::string& err) {
+    const RackSlot* s = find_slot(instance_id);
+    if (s == nullptr) {
+        err = "unknown instanceId " + std::to_string(instance_id);
+        return false;
+    }
+    // getState 與 RT process 不得併發(VST3 契約):掛 bypass 鏈讓 RT 放掉 plugin,
+    // 等在飛的舊鏈 block 跑完再 IO,做完還原
+    RackSlot* mut = find_slot_mut(instance_id);
+    const bool orig_bypass = mut->bypass;
+    mut->bypass = true;
+    swap_rack();
+    Sleep(60);  // > 2 個最大 ASIO block:RT 不再持舊鏈
+    const bool ok = mut->plugin->save_preset(file, mut->param_values, err);
+    mut->bypass = orig_bypass;
+    swap_rack();
+    return ok;
+}
+
+bool AudioEngine::load_preset(std::uint32_t instance_id, const std::filesystem::path& file,
+                              std::string& err) {
+    RackSlot* s = find_slot_mut(instance_id);
+    if (s == nullptr) {
+        err = "unknown instanceId " + std::to_string(instance_id);
+        return false;
+    }
+    // setState 與 RT process 不得併發:同 save_preset,先掛 bypass 鏈
+    const bool orig_bypass = s->bypass;
+    s->bypass = true;
+    swap_rack();
+    Sleep(60);
+    bool host_values_from_file = false;
+    const bool ok = s->plugin->load_preset(file, s->param_values, err, host_values_from_file);
+    s->bypass = orig_bypass;
+    swap_rack();
+    if (!ok) return false;
+    // 檔案無 RmxP(外部 host 存的 preset)且 controller 同步成功:拿 controller
+    // 值重同步 host 權威表。兩者皆無 = 保持現值(component 已套用,UI 值不明)
+    if (!host_values_from_file) {
+        for (auto& [id, v] : s->param_values) {
+            const double fresh = s->plugin->param_value(id);
+            if (std::isfinite(fresh)) v = fresh;
+        }
+    }
+    return true;
+}
+
 bool AudioEngine::set_source(bool passthrough, float sine_freq, std::string& err) {
     if (sine_freq < 20.0F || sine_freq > 20000.0F) {
         err = "sineFreq out of range [20,20000]";
@@ -300,6 +385,19 @@ bool AudioEngine::set_source(bool passthrough, float sine_freq, std::string& err
     source_passthrough_.store(passthrough ? 1u : 0u, std::memory_order_relaxed);
     sine_freq_bits_.store(f32_bits(sine_freq), std::memory_order_relaxed);
     return true;
+}
+
+// controlPanel() 多數 driver 是 modal(關面板才返回)— 呼叫端(detach thread)
+// 會在裡面待到面板關閉;panel_open_ 期間 start() 拒絕(driver 銷毀 race)
+bool AudioEngine::open_control_panel(std::string& err) {
+    if (!device_.running()) {
+        err = "not running";
+        return false;
+    }
+    panel_open_.fetch_add(1, std::memory_order_acq_rel);
+    const bool okp = device_.open_control_panel(err);
+    panel_open_.fetch_sub(1, std::memory_order_acq_rel);
+    return okp;
 }
 
 EngineStatusInfo AudioEngine::status() const {
@@ -318,6 +416,7 @@ EngineStatusInfo AudioEngine::status() const {
     s.source = source_passthrough_.load(std::memory_order_relaxed) ? "passthrough" : "sine";
     s.sine_freq = bits_f32(sine_freq_bits_.load(std::memory_order_relaxed));
     if (s.sine_freq == 0.0F) s.sine_freq = 440.0F;
+    s.input_mono = input_mono_.load(std::memory_order_relaxed) != 0;
     s.plugin_fails = rt_plugin_fails_.load(std::memory_order_relaxed);
     return s;
 }
@@ -327,6 +426,7 @@ void AudioEngine::process(const AudioBlock& block) noexcept {
     const std::uint32_t frames =
         block.frames > kMaxBlockFrames ? kMaxBlockFrames : block.frames;
     const bool passthrough = source_passthrough_.load(std::memory_order_relaxed) != 0;
+    const bool mono = input_mono_.load(std::memory_order_relaxed) != 0;
     const float freq = bits_f32(sine_freq_bits_.load(std::memory_order_relaxed));
     const float rate = static_cast<float>(rt_sample_rate_.load(std::memory_order_relaxed));
 
@@ -350,7 +450,8 @@ void AudioEngine::process(const AudioBlock& block) noexcept {
         float l, r;
         if (passthrough) {
             l = in_l != nullptr ? in_l[i] : 0.0F;
-            r = in_r != nullptr ? in_r[i] : l;
+            // mono:ch1 複製到雙聲道(mic 監聽);stereo:ch2 沒有就補 ch1
+            r = (!mono && in_r != nullptr) ? in_r[i] : l;
         } else {
             // 相位表 sine:2π = 2^32
             const double a = static_cast<double>(phase >> 8) *
@@ -396,6 +497,7 @@ void AudioEngine::process(const AudioBlock& block) noexcept {
         if (out_r != nullptr) out_r[i] = 0.0F;
     }
     meter_band(meters_, 0, cur_l, cur_r, frames);
+    meters_.append_spectrum(cur_l, cur_r, frames);  // 最終輸出進頻譜 ring(RT:純寫+index)
 }
 
 }  // namespace rmx

@@ -46,7 +46,7 @@ int main() {
         CHECK(j["roudamixSession"] == 1);
         CHECK(j["rack"].is_array() && j["rack"].empty());
         CHECK(j["deviceKey"].is_null() && j["sampleRate"].is_null());
-        CHECK(j["source"] == "sine");
+        CHECK(j["source"] == "passthrough"); // sine 已刪:engine 預設直通
         CHECK(j["sineFreq"] == 440.0F);
     }
 

@@ -41,8 +41,12 @@ nlohmann::json serialize(const AudioEngine& engine) {
                           : nlohmann::json(nullptr)},
         {"sampleRate", engine.last_sample_rate() > 0 ? nlohmann::json(engine.last_sample_rate())
                                                      : nlohmann::json(nullptr)},
+        {"bufferSize", engine.last_buffer_size() > 0
+                           ? nlohmann::json(engine.last_buffer_size())
+                           : nlohmann::json(nullptr)},
         {"source", st.source},
         {"sineFreq", st.sine_freq},
+        {"inputMono", st.input_mono},
         {"rack", rack},
     };
 }
@@ -55,6 +59,10 @@ bool save(const AudioEngine& engine, const std::filesystem::path& file, std::str
             j["deviceKey"] = overrides["deviceKey"];
         if (overrides.contains("sampleRate") && overrides["sampleRate"].is_number_unsigned())
             j["sampleRate"] = overrides["sampleRate"];
+        if (overrides.contains("bufferSize") && overrides["bufferSize"].is_number_unsigned())
+            j["bufferSize"] = overrides["bufferSize"];
+        if (overrides.contains("inputMono") && overrides["inputMono"].is_boolean())
+            j["inputMono"] = overrides["inputMono"];
     }
     std::FILE* f = nullptr;
     if (_wfopen_s(&f, file.c_str(), L"wb") != 0 || f == nullptr) {
@@ -140,6 +148,12 @@ bool load(AudioEngine& engine, const std::filesystem::path& file, nlohmann::json
         {"sampleRate", j.contains("sampleRate") && j["sampleRate"].is_number_unsigned()
                            ? j["sampleRate"]
                            : nlohmann::json(nullptr)},
+        {"bufferSize", j.contains("bufferSize") && j["bufferSize"].is_number_unsigned()
+                           ? j["bufferSize"]
+                           : nlohmann::json(nullptr)},
+        {"inputMono", j.contains("inputMono") && j["inputMono"].is_boolean()
+                          ? j["inputMono"]
+                          : nlohmann::json(nullptr)},
     };
     return true;
 }

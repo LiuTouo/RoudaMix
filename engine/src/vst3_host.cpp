@@ -1,13 +1,18 @@
 // VST3 host 縮編實作。依賴 Steinberg hosting(module/plugprovider/hostclasses/
 // parameterchanges/processdata)+ pluginterfaces。ponytail:stereo main bus only,
-// aux bus / Float64 / editor / state 不支援 —— mono-only 或多 bus plugin 進不來,
+// aux bus / Float64 / state 不支援 —— mono-only 或多 bus plugin 進不來,
 // 需要時再開(ProMixArea vst3_adapter.cpp 有全版)。
+// editor:M4a 加 —— top-level popup 視窗住 engine process(VMR 風格),
+// param 變更走 performEdit → host callback(不廣播,set_param 同語意)。
 #include "vst3_host.hpp"
 
+#include "pluginterfaces/gui/iplugview.h"
 #include "pluginterfaces/vst/ivstaudioprocessor.h"
 #include "pluginterfaces/vst/ivstcomponent.h"
 #include "pluginterfaces/vst/ivsteditcontroller.h"
 #include "pluginterfaces/vst/ivstprocesscontext.h"
+#include "pluginterfaces/vst/ivstplugview.h"
+#include "public.sdk/source/common/memorystream.h"
 #include "public.sdk/source/vst/hosting/hostclasses.h"
 #include "public.sdk/source/vst/hosting/module.h"
 #include "public.sdk/source/vst/hosting/parameterchanges.h"
@@ -15,9 +20,14 @@
 #include "public.sdk/source/vst/hosting/processdata.h"
 #include "public.sdk/source/vst/utility/stringconvert.h"
 
+#include <windows.h>
+
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cmath>
+#include <cstdio>
+#include <cstring>
 #include <limits>
 
 namespace rmx {
@@ -29,10 +39,22 @@ using namespace Steinberg::Vst;
 
 constexpr int32 kMaxParamEventsPerBlock = 64;
 
-// IComponentHandler:no-op。RoudaMix 沒有 plugin editor,正常沒有 performEdit 來源;
-// plugin 內部執行緒若呼叫也安全(ref-counted,生命週期歸 plugin 持有)。
-class NullComponentHandler final : public IComponentHandler {
+// UTF-8 → UTF-16(視窗 title 用;StringConvert 只給 u16string,wchar_t 要自轉)
+std::wstring to_wide(const std::string& s) {
+    if (s.empty()) return {};
+    const int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()),
+                                      nullptr, 0);
+    std::wstring w(static_cast<size_t>(n), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), w.data(), n);
+    return w;
+}
+
+// IComponentHandler:editor 內改參數 → performEdit → host callback。
+// beginEdit/endEdit no-op(無 automation 錄製);restartComponent no-op(M4+ 再說)。
+class EditComponentHandler final : public IComponentHandler {
 public:
+    std::function<void(ParamID, ParamValue)> on_edit;  // open_editor 前設定一次
+
     tresult PLUGIN_API queryInterface(const TUID requested_iid, void** obj) override {
         if (obj == nullptr) return kInvalidArgument;
         if (FUnknownPrivate::iidEqual(requested_iid, FUnknown::iid) ||
@@ -51,13 +73,118 @@ public:
         return remaining;
     }
     tresult PLUGIN_API beginEdit(ParamID) override { return kResultOk; }
-    tresult PLUGIN_API performEdit(ParamID, ParamValue) override { return kResultOk; }
+    tresult PLUGIN_API performEdit(ParamID id, ParamValue value) override {
+        if (on_edit) on_edit(id, value);
+        return kResultOk;
+    }
     tresult PLUGIN_API endEdit(ParamID) override { return kResultOk; }
     tresult PLUGIN_API restartComponent(int32) override { return kResultOk; }
 
 private:
     std::atomic<uint32> references_{1};
 };
+
+// IPlugFrame:plugin 要求 resize editor 區 → 調整視窗 client 大小
+class EditorPlugFrame final : public IPlugFrame {
+public:
+    HWND hwnd{};  // editor thread 建視窗後填(frame 只在 editor thread 被 plugin 呼)
+
+    tresult PLUGIN_API queryInterface(const TUID requested_iid, void** obj) override {
+        if (obj == nullptr) return kInvalidArgument;
+        if (FUnknownPrivate::iidEqual(requested_iid, FUnknown::iid) ||
+            FUnknownPrivate::iidEqual(requested_iid, IPlugFrame::iid)) {
+            *obj = static_cast<IPlugFrame*>(this);
+            addRef();
+            return kResultOk;
+        }
+        *obj = nullptr;
+        return kNoInterface;
+    }
+    uint32 PLUGIN_API addRef() override { return ++references_; }
+    uint32 PLUGIN_API release() override {
+        const auto remaining = --references_;
+        if (remaining == 0) delete this;
+        return remaining;
+    }
+    // IPlugFrame 契約:plugin resize editor → resizeView;之後 host 須呼 view->onSize
+    tresult PLUGIN_API resizeView(IPlugView* view, ViewRect* r) override {
+        if (hwnd == nullptr || r == nullptr || view == nullptr) return kInvalidArgument;
+        const int w = r->right - r->left;
+        const int h = r->bottom - r->top;
+        if (w > 0 && h > 0) {
+            // 調 client 區:外框補上非 client 邊
+            RECT rc{0, 0, w, h};
+            AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
+            SetWindowPos(hwnd, nullptr, 0, 0, rc.right - rc.left, rc.bottom - rc.top,
+                         SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+            view->onSize(r);  // 契約:視窗 resize 完成後通知 plugin
+        }
+        return kResultOk;
+    }
+
+private:
+    std::atomic<uint32> references_{1};
+};
+
+constexpr wchar_t kEditorClassName[] = L"RmxVST3Editor";
+
+// ---- .vstpreset 容器(格式:VST3 Developer Portal「Preset Format」+ SDK
+// vstpresetfile.cpp)----
+// header 48B:'VST3' + int32 version(=1)+ char classID[32](32 hex ASCII,UID::toString
+// 的 COM 形式)+ int64 chunkListOffset;chunk list:'List' + int32 count + per-entry
+// { FourCC id, int64 offset, int64 size };chunk 'Comp' = component state、'Cont' =
+// controller state(SDK kControllerState = {'C','o','n','t'})。全 little-endian。
+constexpr std::int32_t kPresetVersion = 1;
+constexpr std::uint32_t kPresetMagic = 0x33545356;    // 'VST3' little-endian
+constexpr std::uint32_t kListMagic = 0x7473694C;      // 'List'
+constexpr std::uint32_t kChunkComp = 0x706D6F43;      // 'Comp'
+constexpr std::uint32_t kChunkCont = 0x746E6F43;      // 'Cont'(SDK 標準)
+constexpr std::uint32_t kChunkCntcOld = 0x63746E43;   // 'Cntc'(本專案早期誤寫,讀相容)
+constexpr std::uint32_t kChunkRmxP = 0x50786D52;      // 'RmxP'(私有:host 權威表)
+constexpr std::size_t kPresetHeaderSize = 48;
+
+void push_u32(std::vector<std::uint8_t>& v, std::uint32_t x) {
+    const auto* p = reinterpret_cast<const std::uint8_t*>(&x);
+    v.insert(v.end(), p, p + 4);
+}
+void push_u64(std::vector<std::uint8_t>& v, std::uint64_t x) {
+    const auto* p = reinterpret_cast<const std::uint8_t*>(&x);
+    v.insert(v.end(), p, p + 8);
+}
+std::uint32_t rd_u32(const std::uint8_t* p) {
+    std::uint32_t v;
+    std::memcpy(&v, p, 4);
+    return v;
+}
+std::uint64_t rd_u64(const std::uint8_t* p) {
+    std::uint64_t v;
+    std::memcpy(&v, p, 8);
+    return v;
+}
+std::uint64_t f64_bits(double v) noexcept {
+    std::uint64_t b;
+    std::memcpy(&b, &v, 8);
+    return b;
+}
+double bits_f64(std::uint64_t b) noexcept {
+    double v;
+    std::memcpy(&v, &b, 8);
+    return v;
+}
+
+// class ID 比對容錯:去 {}-、空白,收斂大寫;非 32 hex(規範形)回空
+std::string normalize_uid(std::string s) {
+    std::string out;
+    for (const char c : s) {
+        if (c == '{' || c == '}' || c == '-' || c == ' ') continue;
+        out.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+    }
+    if (out.size() != 32) return {};
+    for (const char c : out) {
+        if (!std::isxdigit(static_cast<unsigned char>(c))) return {};
+    }
+    return out;
+}
 
 }  // namespace
 
@@ -119,7 +246,46 @@ struct Vst3Plugin::Impl {
     std::string class_uid_;
     std::string error;
 
-    ~Impl() { terminate(); }
+    // ---- RT:slew 防 zipper(process() 專屬寫,僅 audio thread 觸碰)----
+    // from = 同參數上次 slew 終值;首次編輯無快取 = 直接跳(拖動中才連續)。
+    // setState(load_preset)會在 control thread 整批改參數 —— slew_gen_++ 讓
+    // process() 下一個 block 清快取,不然下次編輯會從 pre-preset 舊值起 ramp
+    // (sample 0 跳回舊值 = 正是 slew 要消的 zipper)
+    struct SlewEntry {
+        uint32_t id{};
+        double value{};
+        bool active{};
+    };
+    static constexpr size_t kSlewCacheSize = 64;
+    SlewEntry slew_cache_[kSlewCacheSize]{};
+    size_t slew_evict_{};
+    int32_t slew_frames_{};  // initialize 時依 sample rate 算(15ms 線性)
+    std::atomic<uint32_t> slew_gen_{0};   // control thread ++(setState 後)
+    uint32_t slew_gen_seen_{};            // RT 專屬
+    void invalidate_slew() noexcept { slew_gen_.fetch_add(1, std::memory_order_release); }
+
+    // editor:視窗 + view 生命週期全在 main thread(dispatch thread,跑 message loop)。
+    // JUCE 系 plugin 假設 host 單一 UI thread —— createView/attached/removed 分拆到
+    // 別 thread 會跨 thread 互等死鎖(實測:attached 等 condition_variable,
+    // main thread 被 plugin wnd_proc 拉進 CreateWindowEx 卡 win32k send)。
+    EditComponentHandler* edit_handler{};  // 生命週期歸 handler(IPtr)持有
+    IPtr<IPlugView> view;
+    IPtr<EditorPlugFrame> frame;
+    HWND editor_wnd{};  // main thread 專屬,無需 atomic
+
+    ~Impl() {
+        close_editor();
+        terminate();
+    }
+
+    // 冪等;使用者按視窗 X(wnd_proc DestroyWindow)或此呼叫同效。
+    // 同 thread 同步摧毀:WM_DESTROY 內 removed() 會先跑。
+    void close_editor() noexcept {
+        if (editor_wnd != nullptr) DestroyWindow(editor_wnd);
+        view = nullptr;
+        frame = nullptr;
+        editor_wnd = nullptr;
+    }
 
     void load(const std::filesystem::path& path, const std::string& class_id) {
         module = VST3::Hosting::Module::create(path.string(), error);
@@ -158,7 +324,8 @@ struct Vst3Plugin::Impl {
             return;
         }
         if (controller) {
-            handler = owned(new NullComponentHandler());
+            edit_handler = new EditComponentHandler();
+            handler = owned(edit_handler);
             if (controller->setComponentHandler(handler) != kResultOk) {
                 error = "VST3 controller rejected IComponentHandler";
                 return;
@@ -166,6 +333,104 @@ struct Vst3Plugin::Impl {
             enumerate_params();
         }
         loaded = true;
+    }
+
+    // ---- editor(全在 main thread;main.cpp 的 message loop 服務訊息)----
+
+    static LRESULT CALLBACK editor_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept {
+        auto* self = reinterpret_cast<Impl*>(GetWindowLongPtrW(h, GWLP_USERDATA));
+        if (msg == WM_CLOSE) {
+            DestroyWindow(h);
+            return 0;
+        }
+        if (msg == WM_DESTROY && self != nullptr) {
+            if (self->view) {
+                self->view->removed();
+                self->view = nullptr;
+            }
+            self->editor_wnd = nullptr;
+            self->frame = nullptr;
+        }
+        return DefWindowProcW(h, msg, wp, lp);
+    }
+
+    static ATOM editor_class_atom() {
+        static const ATOM atom = [] {
+            WNDCLASSEXW wc{};
+            wc.cbSize = sizeof(wc);
+            wc.style = CS_HREDRAW | CS_VREDRAW;
+            wc.lpfnWndProc = &Impl::editor_wnd_proc;
+            wc.hInstance = GetModuleHandleW(nullptr);
+            wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+            wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+            wc.lpszClassName = kEditorClassName;
+            return RegisterClassExW(&wc);
+        }();
+        return atom;
+    }
+
+    // 同步開:createView → 建窗 → setFrame → attached → show。caller 保證 main thread。
+    bool open_editor() {
+        if (!loaded || !controller) {
+            error = "plugin has no controller for an editor";
+            return false;
+        }
+        if (editor_wnd != nullptr) return true;  // 冪等
+        error.clear();
+        IPlugView* raw = controller->createView(ViewType::kEditor);
+        if (raw == nullptr) {
+            error = "plugin has no editor view";
+            return false;
+        }
+        view = owned(raw);
+        frame = owned(new EditorPlugFrame());
+        ViewRect vr{};
+        int w = 300, h = 200;  // getSize 失敗時的 fallback
+        if (view->getSize(&vr) == kResultOk) {
+            const int rw = vr.right - vr.left;
+            const int rh = vr.bottom - vr.top;
+            if (rw > 0 && rh > 0) {
+                w = std::clamp(rw, 80, 4096);
+                h = std::clamp(rh, 60, 4096);
+            }
+        }
+        RECT rc{0, 0, w, h};
+        AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
+        if (editor_class_atom() == 0) {
+            error = "editor window class registration failed";
+            view = nullptr;
+            frame = nullptr;
+            return false;
+        }
+        const std::wstring title = to_wide(name_);
+        // WS_VISIBLE:create 即顯示。spawn engine 的 STARTUPINFO 帶 SW_HIDE 時
+        // (Start-Process -WindowStyle Hidden),首個 top-level 視窗的第一個
+        // ShowWindow 呼叫會被替換成 startup 的 SW_HIDE —— 視窗建了但永遠 hidden
+        HWND wnd = CreateWindowExW(0, kEditorClassName, title.c_str(),
+                                   WS_OVERLAPPEDWINDOW | WS_VISIBLE, CW_USEDEFAULT,
+                                   CW_USEDEFAULT, rc.right - rc.left, rc.bottom - rc.top,
+                                   nullptr, nullptr, GetModuleHandleW(nullptr), this);
+        if (wnd == nullptr) {
+            error = "editor window creation failed";
+            view = nullptr;
+            frame = nullptr;
+            return false;
+        }
+        editor_wnd = wnd;
+        frame->hwnd = wnd;
+        view->setFrame(frame);
+        if (view->attached(wnd, kPlatformTypeHWND) != kResultOk) {
+            // 從未 attached:removed 不該呼叫;手動清欄位後摧毀空殼視窗
+            view->setFrame(nullptr);
+            view = nullptr;
+            frame = nullptr;
+            editor_wnd = nullptr;
+            DestroyWindow(wnd);
+            error = "plugin editor attach failed";
+            return false;
+        }
+        ShowWindow(wnd, SW_SHOW);
+        return true;
     }
 
     void enumerate_params() {
@@ -262,6 +527,7 @@ struct Vst3Plugin::Impl {
             process_data.unprepare();
             return false;
         }
+        slew_frames_ = static_cast<int32_t>(sample_rate * 0.015);  // 15ms 防 zipper
         // 部分 plugin 回 kNotImplemented 仍正常進 processing 狀態(ProMixArea 同款放行)
         processor->setProcessing(true);
         context = {};
@@ -281,17 +547,267 @@ struct Vst3Plugin::Impl {
         }
     }
 
+    // ---- preset:容器讀寫(控制面)----
+
+    bool save_preset(const std::filesystem::path& file,
+                     const std::vector<std::pair<std::uint32_t, double>>& host_params,
+                     std::string& err) {
+        if (!loaded || !component) {
+            err = "plugin not loaded";
+            return false;
+        }
+        MemoryStream comp_stream;
+        if (component->getState(&comp_stream) != kResultOk) {
+            err = "plugin component getState failed";
+            return false;
+        }
+        MemoryStream ctrl_stream;
+        bool have_ctrl = false;
+        if (controller) have_ctrl = controller->getState(&ctrl_stream) == kResultOk;
+
+        // RmxP:host 權威表(u32 count + {u32 id, f64 value}*),其他 host 略過
+        std::vector<std::uint8_t> rmxp;
+        if (!host_params.empty()) {
+            push_u32(rmxp, static_cast<std::uint32_t>(host_params.size()));
+            for (const auto& [id, v] : host_params) {
+                push_u32(rmxp, id);
+                push_u64(rmxp, f64_bits(v));
+            }
+        }
+
+        const auto comp_data =
+            reinterpret_cast<const std::uint8_t*>(comp_stream.getData());
+        const auto ctrl_data =
+            reinterpret_cast<const std::uint8_t*>(ctrl_stream.getData());
+        const auto comp_size = static_cast<std::uint64_t>(comp_stream.getSize());
+        const auto ctrl_size = static_cast<std::uint64_t>(have_ctrl ? ctrl_stream.getSize() : 0);
+        const auto rmxp_size = static_cast<std::uint64_t>(rmxp.size());
+
+        const std::uint64_t comp_off = kPresetHeaderSize;
+        const std::uint64_t ctrl_off = comp_off + comp_size;
+        const std::uint64_t rmxp_off = ctrl_off + ctrl_size;
+        const std::uint64_t list_off = rmxp_off + rmxp_size;
+        std::uint32_t chunk_count = 1;
+        if (have_ctrl) ++chunk_count;
+        if (!rmxp.empty()) ++chunk_count;
+
+        std::vector<std::uint8_t> out;
+        out.reserve(static_cast<std::size_t>(list_off) + 8 + 20 * chunk_count);
+        push_u32(out, kPresetMagic);
+        push_u32(out, static_cast<std::uint32_t>(kPresetVersion));
+        char uid[32]{};
+        std::memcpy(uid, class_uid_.data(), std::min<size_t>(32, class_uid_.size()));
+        out.insert(out.end(), uid, uid + 32);
+        push_u64(out, list_off);
+        out.insert(out.end(), comp_data, comp_data + comp_size);
+        if (have_ctrl) out.insert(out.end(), ctrl_data, ctrl_data + ctrl_size);
+        if (!rmxp.empty()) out.insert(out.end(), rmxp.begin(), rmxp.end());
+        push_u32(out, kListMagic);
+        push_u32(out, chunk_count);
+        push_u32(out, kChunkComp);
+        push_u64(out, comp_off);
+        push_u64(out, comp_size);
+        if (have_ctrl) {
+            push_u32(out, kChunkCont);
+            push_u64(out, ctrl_off);
+            push_u64(out, ctrl_size);
+        }
+        if (!rmxp.empty()) {
+            push_u32(out, kChunkRmxP);
+            push_u64(out, rmxp_off);
+            push_u64(out, rmxp_size);
+        }
+
+        std::FILE* f = nullptr;
+        if (_wfopen_s(&f, file.c_str(), L"wb") != 0 || f == nullptr) {
+            err = "cannot open preset file for writing: " + file.string();
+            return false;
+        }
+        const bool wrote = std::fwrite(out.data(), 1, out.size(), f) == out.size();
+        std::fclose(f);
+        if (!wrote) {
+            err = "preset file write failed: " + file.string();
+            return false;
+        }
+        return true;
+    }
+
+    bool load_preset(const std::filesystem::path& file,
+                     std::vector<std::pair<std::uint32_t, double>>& host_params_inout,
+                     std::string& err, bool& host_values_from_file) {
+        host_values_from_file = false;
+        if (!loaded || !component) {
+            err = "plugin not loaded";
+            return false;
+        }
+        std::FILE* f = nullptr;
+        if (_wfopen_s(&f, file.c_str(), L"rb") != 0 || f == nullptr) {
+            err = "cannot open preset file: " + file.string();
+            return false;
+        }
+        std::vector<std::uint8_t> data;
+        std::uint8_t buf[4096];
+        size_t n;
+        while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) data.insert(data.end(), buf, buf + n);
+        std::fclose(f);
+
+        const std::uint64_t total = data.size();
+        if (total < kPresetHeaderSize + 8 + 20 || rd_u32(data.data()) != kPresetMagic ||
+            rd_u32(data.data() + 4) != static_cast<std::uint32_t>(kPresetVersion)) {
+            err = "not a VST3 preset file (bad header): " + file.string();
+            return false;
+        }
+        // class ID 比對:header 32 字元 vs 本 instance(normalize 容錯 {}- 與大小寫)
+        const char* raw_uid = reinterpret_cast<const char*>(data.data() + 8);
+        const auto uid_len = strnlen(raw_uid, 32);
+        std::string header_uid(raw_uid, uid_len);
+        const std::string want = normalize_uid(class_uid_);
+        const std::string got = normalize_uid(header_uid);
+        if (want.empty() || got.empty() || want != got) {
+            err = "preset class id mismatch (file targets " +
+                  (got.empty() ? "?" : got) + ")";
+            return false;
+        }
+
+        const std::uint64_t list_off = rd_u64(data.data() + 40);
+        // 邊界全用減法形式:offset 為檔案內容(attacker-controlled),加法會繞回
+        if (total < kPresetHeaderSize || list_off > total - 8 || total - list_off < 8 ||
+            rd_u32(data.data() + list_off) != kListMagic) {
+            err = "preset chunk list corrupt: " + file.string();
+            return false;
+        }
+        const std::uint64_t count = rd_u32(data.data() + list_off + 4);
+        if (count > 64) {
+            err = "preset chunk list too large: " + file.string();
+            return false;
+        }
+        std::uint64_t comp_off = 0, comp_size = 0, ctrl_off = 0, ctrl_size = 0, rmxp_off = 0,
+                     rmxp_size = 0;
+        bool have_comp = false, have_ctrl = false, have_rmxp = false;
+        for (std::uint64_t i = 0; i < count; ++i) {
+            const std::uint64_t e = list_off + 8 + i * 20;
+            if (e > total || total - e < 20) {
+                err = "preset chunk entry out of range: " + file.string();
+                return false;
+            }
+            const std::uint32_t id = rd_u32(data.data() + e);
+            const std::uint64_t off = rd_u64(data.data() + e + 4);
+            const std::uint64_t size = rd_u64(data.data() + e + 12);
+            if (off > total || total - off < size) {
+                err = "preset chunk data out of range: " + file.string();
+                return false;
+            }
+            if (id == kChunkComp) {
+                comp_off = off;
+                comp_size = size;
+                have_comp = true;
+            } else if (id == kChunkCont || id == kChunkCntcOld) {
+                // 'Cont' = SDK 標準;'Cntc' = 本專案早期誤寫的檔,讀取相容
+                ctrl_off = off;
+                ctrl_size = size;
+                have_ctrl = true;
+            } else if (id == kChunkRmxP) {
+                rmxp_off = off;
+                rmxp_size = size;
+                have_rmxp = true;
+            }
+        }
+        if (!have_comp || comp_size == 0) {
+            err = "preset has no component state chunk: " + file.string();
+            return false;
+        }
+
+        MemoryStream comp_in(data.data() + comp_off, static_cast<int32>(comp_size));
+        if (component->setState(&comp_in) != kResultOk) {
+            err = "plugin rejected preset component state";
+            return false;
+        }
+        invalidate_slew();  // 參數被整批改寫:slew 快取的 from 值全部作廢
+        bool ctrl_synced = false;
+        if (controller) {
+            // setComponentState = controller 自 component state 重建參數視圖(VST3
+            // 語意;檔案裡的 Cntc 是 controller 自己的佈景狀態,另一回事)。
+            // 同步失敗不整體失敗:component 已套用,但 controller 值不可信
+            MemoryStream comp_again(data.data() + comp_off, static_cast<int32>(comp_size));
+            ctrl_synced = controller->setComponentState(&comp_again) == kResultOk;
+        }
+        if (have_ctrl && controller && ctrl_synced) {
+            // controller 自身狀態(Cntc)最後套,蓋編輯器佈局等,不影響參數值
+            MemoryStream ctrl_in(data.data() + ctrl_off, static_cast<int32>(ctrl_size));
+            controller->setState(&ctrl_in);
+        }
+
+        // host 權威值:RmxP(save 時的 host 表)最準;淺實作 plugin 的 controller
+        // setComponentState 回 OK 但 getParamNormalized 不動,不可當 truth
+        if (have_rmxp && rmxp_size >= 4) {
+            const std::uint64_t n_entries = rd_u32(data.data() + rmxp_off);
+            if (n_entries <= (rmxp_size - 4) / 12) {
+                for (std::uint64_t i = 0; i < n_entries; ++i) {
+                    const std::uint8_t* e = data.data() + rmxp_off + 4 + i * 12;
+                    const std::uint32_t id = rd_u32(e);
+                    const double v = bits_f64(rd_u64(e + 4));
+                    for (auto& [hid, hv] : host_params_inout) {
+                        if (hid == id) {
+                            hv = v;
+                            break;
+                        }
+                    }
+                }
+                host_values_from_file = true;
+            }
+        }
+        return true;
+    }
+
     bool process(const float* in_l, const float* in_r, float* out_l, float* out_r,
                  int32_t frames, const Vst3ParamEdit* edits, size_t edit_count) noexcept {
         if (!initialized) return false;
+        const uint32_t gen = slew_gen_.load(std::memory_order_acquire);
+        if (gen != slew_gen_seen_) {
+            slew_gen_seen_ = gen;
+            for (auto& e : slew_cache_) e.active = false;
+        }
         parameter_changes.clearQueue();
         for (size_t i = 0; i < edit_count; ++i) {
             int32 queue_index{};
             auto* queue = parameter_changes.addParameterData(edits[i].id, queue_index);
+            if (queue == nullptr) return false;
+            // slew 兩點線性(0 → slew_frames_)消 zipper;from = 上次終值,首次直接跳
+            double from = edits[i].value;
+            SlewEntry* entry = nullptr;
+            for (auto& e : slew_cache_) {
+                if (e.active && e.id == edits[i].id) {
+                    entry = &e;
+                    break;
+                }
+            }
+            if (entry != nullptr) {
+                from = entry->value;
+            } else {
+                for (auto& e : slew_cache_) {
+                    if (!e.active) {
+                        entry = &e;
+                        e.active = true;
+                        e.id = edits[i].id;
+                        break;
+                    }
+                }
+                if (entry == nullptr) {  // 滿:輪替覆寫(64 個同時 ramp 已遠超旋鈕場景)
+                    entry = &slew_cache_[slew_evict_++ % kSlewCacheSize];
+                    entry->active = true;
+                    entry->id = edits[i].id;
+                }
+            }
+            entry->value = edits[i].value;
             int32 point_index{};
-            if (!queue ||
-                queue->addPoint(0, edits[i].value, point_index) != kResultTrue)
-                return false;
+            if (queue->addPoint(0, from, point_index) != kResultTrue) return false;
+            const int32 off = std::min<int32_t>(frames > 0 ? frames - 1 : 0, slew_frames_);
+            if (edits[i].value != from) {
+                // off == 0(1-frame block)無處 ramp:同 offset 覆寫成目標值(直接跳)
+                if (queue->addPoint(off > 0 ? off : 0, edits[i].value, point_index) !=
+                    kResultTrue)
+                    return false;
+            }
         }
         process_data.numSamples = frames;
         context.projectTimeSamples += frames;
@@ -342,6 +858,37 @@ double Vst3Plugin::param_value(uint32_t id) const noexcept {
     if (!impl_ || !impl_->controller) return std::numeric_limits<double>::quiet_NaN();
     const double v = impl_->controller->getParamNormalized(id);
     return std::isfinite(v) ? v : std::numeric_limits<double>::quiet_NaN();
+}
+
+void Vst3Plugin::set_param_callback(std::function<void(uint32_t, double)> cb) noexcept {
+    // 僅 main thread 在 open_editor 前呼叫;performEdit 回呼也在 main thread(其
+    // editor 訊息由 main 的 message loop 派發)—— 無並發
+    if (impl_ && impl_->edit_handler) impl_->edit_handler->on_edit = std::move(cb);
+}
+
+bool Vst3Plugin::save_preset(const std::filesystem::path& file,
+                             const std::vector<std::pair<std::uint32_t, double>>& host_params,
+                             std::string& error) {
+    return impl_ && impl_->save_preset(file, host_params, error);
+}
+
+bool Vst3Plugin::load_preset(const std::filesystem::path& file,
+                             std::vector<std::pair<std::uint32_t, double>>& host_params_inout,
+                             std::string& error, bool& host_values_from_file) {
+    host_values_from_file = false;
+    return impl_ && impl_->load_preset(file, host_params_inout, error, host_values_from_file);
+}
+
+bool Vst3Plugin::open_editor() {
+    return impl_ && impl_->open_editor();
+}
+
+void Vst3Plugin::close_editor() noexcept {
+    if (impl_ != nullptr) impl_->close_editor();
+}
+
+bool Vst3Plugin::editor_open() const noexcept {
+    return impl_ && impl_->editor_wnd != nullptr;
 }
 
 }  // namespace rmx

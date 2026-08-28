@@ -28,6 +28,7 @@ struct EngineStatusInfo {
     std::uint64_t xruns{};
     std::string source;       // "sine" | "passthrough"
     float sine_freq{440.0F};
+    bool input_mono{true};    // 輸入 ch1 複製到 L+R(mic 監聽);false = 1:1 立體聲
     std::uint32_t plugin_fails{};  // RT plugin process 失敗累計
     std::string error;        // 最近錯誤(空 = 無)
 };
@@ -40,15 +41,19 @@ public:
     // 裝置列舉 + 輕量 probe(開 driver 讀能力後即關;單 driver 崩由上層 SEH 吸收)
     struct DeviceSummary {
         std::string key, name;
-        std::uint32_t max_in{}, max_out{}, preferred_buffer{};
+        std::uint32_t max_in{}, max_out{}, min_buffer{}, max_buffer{}, preferred_buffer{};
         std::vector<std::uint32_t> sample_rates;
+        std::vector<std::uint32_t> buffer_sizes;  // granularity 展開(driver 真正接受的)
+        std::uint32_t current_sample_rate{};      // driver 現行率(硬體面板才是權威)
     };
     std::vector<DeviceSummary> list_devices();
 
     bool start(const std::string& device_key, std::optional<std::uint32_t> sample_rate,
+               std::optional<std::uint32_t> buffer_size, std::optional<bool> input_mono,
                std::string& err);
     void stop() noexcept;
     bool set_source(bool passthrough, float sine_freq, std::string& err);
+    bool open_control_panel(std::string& err);
 
     // ---- rack(控制面;全部假設 g_engine_mutex 已持有)----
     bool add_plugin(const std::string& module_path, const std::string& class_id,
@@ -58,10 +63,17 @@ public:
     bool set_bypass(std::uint32_t instance_id, bool bypass, std::string& err);
     bool set_param(std::uint32_t instance_id, std::uint32_t param_id, double value,
                    std::string& err);
+    // preset(檔案式 .vstpreset;控制面,假設 g_engine_mutex 已持有)。
+    // load 成功後 host 端 param 權威值自 controller 重同步
+    bool save_preset(std::uint32_t instance_id, const std::filesystem::path& file,
+                     std::string& err);
+    bool load_preset(std::uint32_t instance_id, const std::filesystem::path& file,
+                     std::string& err);
     const std::vector<RackSlot>& rack() const noexcept { return rack_; }
-    // 最近一次成功 start 的裝置/取樣率(session serialize 用;stop 後仍保留)
+    // 最近一次成功 start 的裝置/取樣率/緩衝(session serialize 用;stop 後仍保留)
     const std::string& last_device_key() const noexcept { return last_device_key_; }
     std::uint32_t last_sample_rate() const noexcept { return last_sample_rate_; }
+    std::uint32_t last_buffer_size() const noexcept { return last_buffer_size_; }
     // 找 slot(add 後 UI 要參數表用);nullptr = 無
     const RackSlot* find_slot(std::uint32_t instance_id) const noexcept;
 
@@ -84,12 +96,16 @@ private:
     std::atomic<std::uint32_t> rt_sample_rate_{};  // Hz
     std::atomic<std::uint64_t> rt_phase_{};        // sine 相位(1<<32 = 2π)
     std::atomic<std::uint32_t> rt_plugin_fails_{};  // RT plugin process 失敗數
+    std::atomic<std::uint32_t> input_mono_{1u};    // 1 = ch1 複製 L+R(預設 mic 場景)
+    std::atomic<int> panel_open_{0};               // 硬體面板開著(>0):期間禁 start(driver 重開 race)
 
-    // rack:control master + RT snapshot(atomic swap)
+    // rack:control master + RT snapshot(atomic swap)。rack_ 只在 main thread
+    // 變(dispatch + editor performEdit 都在 main thread,無鎖即序列化)。
     std::vector<RackSlot> rack_;
     std::uint32_t next_instance_id_{1};
     std::string last_device_key_;     // 空 = 從未成功 start
     std::uint32_t last_sample_rate_{};
+    std::uint32_t last_buffer_size_{};
     std::atomic<RackChain*> rt_rack_{nullptr};
     struct Retired {
         RackChain* chain;

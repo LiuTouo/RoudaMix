@@ -26,6 +26,7 @@ struct DeviceCapability {
     std::uint32_t min_buffer{};
     std::uint32_t max_buffer{};
     std::uint32_t preferred_buffer{};
+    std::int32_t buffer_granularity{};  // getBufferSize:>0 步進、0 = 2 的冪、-1 = 任意
     std::uint32_t current_sample_rate{};
     std::uint32_t input_latency{};      // getLatencies(有效時)
     std::uint32_t output_latency{};
@@ -33,6 +34,9 @@ struct DeviceCapability {
     std::vector<std::uint32_t> sample_rates;  // canSampleRate 驗證清單
     std::vector<PcmType> input_types;         // per-channel sample type
     std::vector<PcmType> output_types;
+
+    // granularity 展開的合法 buffer 清單(UI 下拉直接用;空 = 常見值過濾 [min,max])
+    [[nodiscard]] std::vector<std::uint32_t> buffer_options() const;
 };
 
 struct AudioBlock {
@@ -61,11 +65,16 @@ public:
     [[nodiscard]] const std::string& name() const { return name_; }
 
     // 建緩衝:前 in_count 輸入 / 前 out_count 輸出、設取樣率、單例 gate。
+    // buffer_size = 0 用 driver preferred;否則需在 [min,max] 內(driver 是
+    // 最終權威,granularity 不合 createBuffers 會失敗回 err)
     bool prepare(std::uint32_t sample_rate, std::size_t in_count, std::size_t out_count,
-                 std::string& err);
+                 std::uint32_t buffer_size, std::string& err);
     bool start(std::string& err);
     void stop() noexcept;
     void close() noexcept;  // 停 + dispose + 關 driver
+    // 開 driver 自帶控制面板(硬體設定視窗);須 probe 過。driver 面板是硬體
+    // 設定最終權威(取樣率/緩衝 driver 拒絕時,使用者從面板改)
+    bool open_control_panel(std::string& err);
 
     [[nodiscard]] bool running() const noexcept { return running_; }
     [[nodiscard]] std::uint64_t xruns() const noexcept;
@@ -83,6 +92,7 @@ private:
     DeviceCapability cap_;
     std::string clsid_;
     std::string name_;
+    std::string driver_dll_path_;  // vendor 面板 exe fallback 掃描基準
     std::atomic<IAudioCallback*> callback_{};
     std::atomic<std::uint64_t> xruns_{};
     std::atomic<std::uint64_t> callbacks_{};
