@@ -10,9 +10,11 @@ namespace {
 const std::set<std::string>& command_kinds() {
     static const std::set<std::string> k = {
         "ping", "get_snapshot", "list_devices", "start", "stop", "set_source",
+        "open_device_panel",
         "scan_plugins", "add_plugin", "remove_plugin", "move_plugin",
-        "set_bypass", "set_param", "get_params", "save_session",
-        "load_session", "shutdown_engine",
+        "set_bypass", "set_param", "get_params", "open_editor", "close_editor",
+        "save_preset", "load_preset",
+        "save_session", "load_session", "shutdown_engine",
     };
     return k;
 }
@@ -20,6 +22,7 @@ const std::set<std::string>& command_kinds() {
 const std::set<std::string>& event_kinds() {
     static const std::set<std::string> k = {
         "snapshot", "status", "scan_done", "rack_changed", "plugin_event",
+        "devices_changed",
     };
     return k;
 }
@@ -28,8 +31,9 @@ const std::set<std::string>& error_codes() {
     static const std::set<std::string> k = {
         "unsupported_version", "bad_frame", "bad_command", "not_running",
         "already_running", "device_open_failed", "device_lost",
-        "plugin_not_found", "plugin_load_failed", "param_not_found",
-        "session_io", "internal",
+        "plugin_not_found", "plugin_load_failed", "plugin_no_editor",
+        "param_not_found", "session_io", "preset_io", "plugin_state_failed",
+        "internal",
     };
     return k;
 }
@@ -76,7 +80,8 @@ void validate_command_payload(const std::string& kind, const nlohmann::json& p) 
             reject("payload.roots must be string[] when present");
     } else if (kind == "add_plugin") {
         str("path");
-    } else if (kind == "remove_plugin" || kind == "get_params") {
+    } else if (kind == "remove_plugin" || kind == "get_params" || kind == "open_editor" ||
+               kind == "close_editor") {
         u32("instanceId");
     } else if (kind == "move_plugin") {
         u32("instanceId");
@@ -91,13 +96,16 @@ void validate_command_payload(const std::string& kind, const nlohmann::json& p) 
         if (!has("value") || !p["value"].is_number() || p["value"].get<double>() < 0.0 ||
             p["value"].get<double>() > 1.0)
             reject("payload.value must be number in [0,1]");
+    } else if (kind == "save_preset" || kind == "load_preset") {
+        u32("instanceId");
+        str("path");
     } else if (kind == "save_session") {
         if (!has("path") || !(p["path"].is_string() || p["path"].is_null()))
             reject("payload.path must be string or null");
     } else if (kind == "load_session") {
         str("path");
     } else if (kind == "ping" || kind == "get_snapshot" || kind == "list_devices" ||
-               kind == "stop" || kind == "shutdown_engine") {
+               kind == "stop" || kind == "shutdown_engine" || kind == "open_device_panel") {
         if (!p.empty()) reject("payload must be empty object");
     }
 }

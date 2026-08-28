@@ -1,17 +1,23 @@
 // roudamix-engine — pipe server,單一 instance,client 斷線續跑等重連。
-// M1:ASIO 裝置 start/stop、sine/passthrough 音源、telemetry SHM publish。
+// M4a:main thread 跑 Win32 message loop(VST3 editor 需要 — JUCE 系 plugin 假設
+// host 單一 UI thread;拆 thread 開 editor 會跨 thread 互等死鎖),pipe I/O 在
+// worker thread;command 經 PostMessage 進 main thread dispatch(寫回 reply/event
+// 由 main 執行,跨 thread pipe 寫用 g_write_mutex 序列化)。
 #include <windows.h>
 
 #include <atomic>
 #include <cstdio>
 #include <filesystem>
+#include <exception>
 #include <mutex>
 #include <optional>
+#include <sstream>
 #include <thread>
 
 #include "audio_engine.hpp"
 #include "frame_io.hpp"
 #include "protocol.hpp"
+#include "sandbox.hpp"
 #include "session.hpp"
 #include "vst3_host.hpp"
 
@@ -27,6 +33,33 @@ std::atomic<ULONGLONG> g_last_activity{GetTickCount64()};
 // 引擎核心:常駐(process 生命週期);start/stop 只開關裝置,不分毀核心
 rmx::AudioEngine g_engine;
 std::mutex g_engine_mutex;  // dispatch 序列化(engine 控制面非 RT)
+
+// main thread 的 message-only window + 自訂訊息(pipe thread → main 的 task 隊列)
+constexpr UINT WM_APP_TASK = WM_APP + 1;      // LPARAM = Task*(main 處理後 delete)
+constexpr UINT WM_APP_QUIT = WM_APP + 2;      // shutdown_engine:main loop 退出
+constexpr wchar_t kMainWndClass[] = L"RmxEngineMain";
+HWND g_main_hwnd = nullptr;
+std::mutex g_write_mutex;  // pipe thread 與 main 都會寫:幀序列化
+// 目前 pipe instance(pipe thread 擁有生命週期;斷線先清 null 再 CloseHandle)。
+// watchdog/退出用它 CancelIoEx 喚醒 overlapped 的 accept/read。
+std::atomic<HANDLE> g_active_pipe{nullptr};
+// 連線代數:每次 accept 遞增。Task 帶當時 gen;dispatch 前驗證 —— 舊連線的
+// 排隊 task 直接丟棄,不寫 reply(handle 可能已被 Close/重用為新連線)。
+std::atomic<uint64_t> g_conn_gen{0};
+
+struct Task {
+    uint64_t gen;
+    HANDLE client;
+    Command cmd;
+};
+
+// 兩 thread(main dispatch / pipe thread bad_command reply)都會寫同一 pipe:
+// 每次 write_frame 前後持鎖,幀不交錯
+void send_frame(HANDLE client, const nlohmann::json& j) {
+    std::lock_guard<std::mutex> lock(g_write_mutex);
+    if (!rmx::write_frame(client, j))
+        std::fprintf(stderr, "[engine] send_frame write failed: %lu\n", GetLastError());
+}
 
 nlohmann::json rack_json() {
     auto arr = nlohmann::json::array();
@@ -61,6 +94,7 @@ nlohmann::json status_json() {
         {"xruns", s.xruns},
         {"source", s.source},
         {"sineFreq", s.sine_freq},
+        {"inputMono", s.input_mono},
         {"pluginFails", s.plugin_fails},
         {"rack", rack_json()},
         {"error", s.error.empty() ? nlohmann::json(nullptr) : nlohmann::json(s.error)},
@@ -72,27 +106,27 @@ nlohmann::json snapshot_payload() {
     return rmx::make_snapshot_json(g_epoch.load(), status_json(), nlohmann::json::array());
 }
 
-// 成功 mutation:epoch 前進、對在線 client 廣播 status event
+// 成功 mutation:epoch 前進、對在線 client 廣播 status event(main thread 呼)
 void after_mutation(HANDLE client) {
     uint64_t epoch = g_epoch.fetch_add(1) + 1;
-    rmx::write_frame(client, rmx::make_event("status", status_json()));
+    send_frame(client, rmx::make_event("status", status_json()));
     (void)epoch;
 }
 
-// 回覆 command;shutdown_engine 回 true(呼叫端 ack 後退出)
+// 回覆 command;shutdown_engine 回 true(呼叫端 ack 後退出)。main thread 專屬。
 bool dispatch(HANDLE client, const Command& c) {
     if (c.protocol_version != rmx::kProtocolVersion) {
-        rmx::write_frame(client, rmx::make_reply_err(c.id, g_epoch.load(),
-                                                     "unsupported_version",
-                                                     "server speaks protocol v1"));
+        send_frame(client, rmx::make_reply_err(c.id, g_epoch.load(),
+                                               "unsupported_version",
+                                               "server speaks protocol v1"));
         return false;
     }
     const uint64_t epoch = g_epoch.load();
     auto ok = [&](nlohmann::json result) {
-        rmx::write_frame(client, rmx::make_reply_ok(c.id, epoch, std::move(result)));
+        send_frame(client, rmx::make_reply_ok(c.id, epoch, std::move(result)));
     };
     auto fail = [&](const char* code, const std::string& msg) {
-        rmx::write_frame(client, rmx::make_reply_err(c.id, epoch, code, msg));
+        send_frame(client, rmx::make_reply_err(c.id, epoch, code, msg));
     };
 
     if (c.kind == "ping") {
@@ -109,7 +143,11 @@ bool dispatch(HANDLE client, const Command& c) {
                 {"maxIn", d.max_in},
                 {"maxOut", d.max_out},
                 {"sampleRates", d.sample_rates},
+                {"currentSampleRate", d.current_sample_rate},
+                {"minBufferSize", d.min_buffer},
+                {"maxBufferSize", d.max_buffer},
                 {"preferredBufferSize", d.preferred_buffer},
+                {"bufferSizes", d.buffer_sizes},
             });
         }
         ok(nlohmann::json{{"devices", devices}});
@@ -122,7 +160,14 @@ bool dispatch(HANDLE client, const Command& c) {
             const auto rate = c.payload["sampleRate"].is_null()
                                   ? std::optional<uint32_t>{}
                                   : std::optional<uint32_t>{c.payload["sampleRate"].get<uint32_t>()};
-            if (g_engine.start(c.payload["deviceKey"].get<std::string>(), rate, err)) {
+            const auto buffer =
+                c.payload.contains("bufferSize") && c.payload["bufferSize"].is_number_unsigned()
+                    ? std::optional<uint32_t>{c.payload["bufferSize"].get<uint32_t>()}
+                    : std::optional<uint32_t>{};
+            const auto mono = c.payload.contains("inputMono") && c.payload["inputMono"].is_boolean()
+                                  ? std::optional<bool>{c.payload["inputMono"].get<bool>()}
+                                  : std::optional<bool>{};
+            if (g_engine.start(c.payload["deviceKey"].get<std::string>(), rate, buffer, mono, err)) {
                 after_mutation(client);
                 ok(status_json());
             } else {
@@ -135,6 +180,28 @@ bool dispatch(HANDLE client, const Command& c) {
         g_engine.stop();
         if (was) after_mutation(client);
         ok(status_json());
+    } else if (c.kind == "open_device_panel") {
+        // controlPanel() 多數 driver 同步開視窗即返;少數 modal(關面板才返)= 凍結
+        // dispatch 與 pipe reply。detach thread 開、立刻回覆;面板期間 start 被
+        // engine panel_open_ 擋(driver 銷毀 race)。SSL(Thesycon)例外:controlPanel
+        // 是 stub,fallback spawn vendor 面板 exe(AsioDevice 內處理)。
+        // 面板關閉(modal 返回 / cpl exe 結束)= driver 現行設定可能已變,推
+        // devices_changed 讓 client 重 list_devices;寫前驗 gen,斷線重連後不寫舊 handle
+        if (!g_engine.status().running) {
+            fail("not_running", "engine not running");
+        } else {
+            const uint64_t gen = g_conn_gen.load(std::memory_order_acquire);
+            std::thread([client, gen] {
+                std::string err;
+                if (!g_engine.open_control_panel(err)) {
+                    std::fprintf(stderr, "[engine] open panel failed: %s\n", err.c_str());
+                    return;
+                }
+                if (gen == g_conn_gen.load(std::memory_order_acquire))
+                    send_frame(client, rmx::make_event("devices_changed", nlohmann::json::object()));
+            }).detach();
+            ok(nlohmann::json{{"panel", true}});
+        }
     } else if (c.kind == "set_source") {
         std::lock_guard<std::mutex> lock(g_engine_mutex);
         const bool passthrough = c.payload["source"].get<std::string>() == "passthrough";
@@ -159,27 +226,66 @@ bool dispatch(HANDLE client, const Command& c) {
                      std::filesystem::path{L"C:\\Program Files\\VST3"}};
         }
         nlohmann::json plugins = nlohmann::json::array();
-        for (const auto& m : rmx::scan_vst3_dirs(roots)) {
-            auto classes = nlohmann::json::array();
-            for (const auto& ci : m.classes) {
-                classes.push_back({{"uid", ci.uid},
-                                   {"name", ci.name},
-                                   {"vendor", ci.vendor},
-                                   {"version", ci.version},
-                                   {"subcategories", ci.subcategories}});
+        bool scanned = false;
+        for (const auto& root : roots) {
+            // 掃描在隔離 worker 跑:壞 module 崩潰只死 worker,已 flush 的行 =
+            // 增量結果照收(契約:載入失敗略過不整批 fail)。120s 上限防掛死。
+            const auto r = rmx::sandbox::run_worker({"--scan", root.string()}, 120000);
+            if (!r.spawned) break;  // worker 不在(dev 環境):fallback in-process
+            scanned = true;
+            std::istringstream stream(r.output);
+            std::string line;
+            while (std::getline(stream, line)) {
+                const auto tab1 = line.find('\t');
+                if (tab1 == std::string::npos) continue;
+                const auto tab2 = line.find('\t', tab1 + 1);
+                if (tab2 == std::string::npos) continue;
+                const std::string status = line.substr(0, tab1);
+                const std::string path = line.substr(tab1 + 1, tab2 - tab1 - 1);
+                if (status != "OK") continue;  // FAIL 略過(等同 in-process 略過語意)
+                nlohmann::json classes =
+                    nlohmann::json::parse(line.substr(tab2 + 1), nullptr, false);
+                if (classes.is_discarded() || !classes.is_array() || classes.empty()) continue;
+                plugins.push_back({{"path", path}, {"classes", classes}});
             }
-            plugins.push_back({{"path", m.path.string()}, {"classes", classes}});
+        }
+        if (!scanned) {
+            for (const auto& m : rmx::scan_vst3_dirs(roots)) {
+                auto classes = nlohmann::json::array();
+                for (const auto& ci : m.classes) {
+                    classes.push_back({{"uid", ci.uid},
+                                       {"name", ci.name},
+                                       {"vendor", ci.vendor},
+                                       {"version", ci.version},
+                                       {"subcategories", ci.subcategories}});
+                }
+                plugins.push_back({{"path", m.path.string()}, {"classes", classes}});
+            }
         }
         ok(nlohmann::json{{"plugins", plugins}});
     } else if (c.kind == "add_plugin") {
-        std::lock_guard<std::mutex> lock(g_engine_mutex);
         std::string class_id;
         if (c.payload.contains("classId") && c.payload["classId"].is_string())
             class_id = c.payload["classId"].get<std::string>();
+        const std::string module_path = c.payload["path"].get<std::string>();
+        // 載入前試爆:module 在 worker 驗(載入 + initialize + setActive)。壞 DLL
+        // 的 heap 污染只發生在 worker process,engine 不接髒 module。worker 不在 =
+        // fallback in-process(旧行為)。驗證率/塊 = 現行 start 值,未跑 = 常見預設
+        {
+            const auto st = g_engine.status();
+            const double rate = st.running ? static_cast<double>(st.sample_rate) : 48000.0;
+            const std::uint32_t block =
+                st.running && st.buffer_size > 0 ? st.buffer_size : 512u;
+            std::string verr;
+            if (!rmx::sandbox::verify_module(module_path, class_id, rate, block, verr)) {
+                fail("plugin_load_failed", verr);
+                return false;
+            }
+        }
+        std::lock_guard<std::mutex> lock(g_engine_mutex);
         std::uint32_t instance_id = 0;
         std::string err;
-        if (g_engine.add_plugin(c.payload["path"].get<std::string>(), class_id,
-                                instance_id, err)) {
+        if (g_engine.add_plugin(module_path, class_id, instance_id, err)) {
             after_mutation(client);
             ok(nlohmann::json{{"instanceId", instance_id}, {"rack", rack_json()}});
         } else {
@@ -244,6 +350,57 @@ bool dispatch(HANDLE client, const Command& c) {
             }
             ok(nlohmann::json{{"instanceId", slot->instance_id}, {"params", params}});
         }
+    } else if (c.kind == "open_editor") {
+        std::lock_guard<std::mutex> lock(g_engine_mutex);
+        const auto instance = c.payload["instanceId"].get<std::uint32_t>();
+        const auto* slot = g_engine.find_slot(instance);
+        if (slot == nullptr) {
+            fail("plugin_not_found", "unknown instanceId");
+        } else {
+            // editor 內改參數 → performEdit → set_param 同語意(main thread,無並發)
+            const auto plugin = slot->plugin;
+            plugin->set_param_callback(
+                [&engine = g_engine, instance](std::uint32_t param_id, double value) {
+                    std::string err;
+                    engine.set_param(instance, param_id, value, err);
+                });
+            if (plugin->open_editor()) {
+                ok(nlohmann::json{{"instanceId", instance}, {"editor", true}});
+            } else {
+                fail("plugin_no_editor", plugin->last_error());
+            }
+        }
+    } else if (c.kind == "close_editor") {
+        std::lock_guard<std::mutex> lock(g_engine_mutex);
+        const auto* slot = g_engine.find_slot(c.payload["instanceId"].get<std::uint32_t>());
+        if (slot == nullptr) {
+            fail("plugin_not_found", "unknown instanceId");
+        } else {
+            slot->plugin->close_editor();
+            ok(nlohmann::json::object());
+        }
+    } else if (c.kind == "save_preset" || c.kind == "load_preset") {
+        std::lock_guard<std::mutex> lock(g_engine_mutex);
+        const auto instance = c.payload["instanceId"].get<std::uint32_t>();
+        if (g_engine.find_slot(instance) == nullptr) {
+            fail("plugin_not_found", "unknown instanceId");
+        } else {
+            const auto file = std::filesystem::path(c.payload["path"].get<std::string>());
+            std::string err;
+            if (c.kind == "save_preset") {
+                if (g_engine.save_preset(instance, file, err))
+                    ok(nlohmann::json{{"savedPath", c.payload["path"].get<std::string>()}});
+                else
+                    fail("preset_io", err);
+            } else if (g_engine.load_preset(instance, file, err)) {
+                after_mutation(client);
+                ok(nlohmann::json{{"rack", rack_json()}});
+            } else {
+                // 檔案開不了/格式壞 = preset_io;plugin 拒套 state = plugin_state_failed
+                const bool bad_state = err.find("rejected preset") != std::string::npos;
+                fail(bad_state ? "plugin_state_failed" : "preset_io", err);
+            }
+        }
     } else if (c.kind == "save_session") {
         std::lock_guard<std::mutex> lock(g_engine_mutex);
         std::filesystem::path file;
@@ -278,42 +435,162 @@ bool dispatch(HANDLE client, const Command& c) {
     return false;
 }
 
-// 服務單一 client:接上先推 snapshot,之後 command/reply 迴圈。回 true = shutdown 請求
-bool serve_client(HANDLE client) {
-    if (!rmx::write_frame(client, rmx::make_event("snapshot", snapshot_payload()))) {
-        return false;
+// C++ 例外層:dispatch 內任何 throw 都必須回 error reply,client 才不會乾等 hang 死
+bool dispatch_guarded(HANDLE client, const Command& c) {
+    try {
+        return dispatch(client, c);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[engine] exception while dispatching %s: %s\n", c.kind.c_str(),
+                     e.what());
+        send_frame(client, rmx::make_reply_err(c.id, g_epoch.load(), "internal", e.what()));
+    } catch (...) {
+        std::fprintf(stderr, "[engine] unknown exception while dispatching %s\n", c.kind.c_str());
+        send_frame(client,
+                   rmx::make_reply_err(c.id, g_epoch.load(), "internal", "unknown exception"));
+    }
+    return false;
+}
+
+// SEH 包裹層(含 C++ 物件的函式不能直接用 __try;guarded 拆另一函式)
+bool dispatch_seh(HANDLE client, const Command& c) {
+    bool shutdown = false;
+    __try {
+        shutdown = dispatch_guarded(client, c);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        std::fprintf(stderr, "[engine] SEH exception while dispatching %s: %lX\n",
+                     c.kind.c_str(), GetExceptionCode());
+    }
+    return shutdown;
+}
+
+LRESULT CALLBACK main_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept {
+    if (msg == WM_APP_TASK) {
+        auto* task = reinterpret_cast<Task*>(lp);
+        if (task != nullptr) {
+            // 舊連線的積壓 task:client 已斷、handle 已 Close(值可能被新連線重用)
+            // —— 丟棄不 dispatch。dispatch 執行中斷線的窄窗口由 write 的 bounded
+            // timeout 兜底(最壞 = 一個壞幀寫進新連線,client 端容錯跳過)
+            if (task->gen != g_conn_gen.load(std::memory_order_acquire)) {
+                delete task;
+                return 0;
+            }
+            if (dispatch_seh(task->client, task->cmd))
+                PostMessageW(h, WM_APP_QUIT, 0, 0);
+            delete task;
+        }
+        return 0;
+    }
+    if (msg == WM_APP_QUIT) {
+        PostQuitMessage(0);
+        return 0;
+    }
+    return DefWindowProcW(h, msg, wp, lp);
+}
+
+// 單一 client 生命週期:推 snapshot + 讀幀轉 dispatch。
+// 推 snapshot 必須持 g_engine_mutex:rack_ 由 main thread 改(erase/push_back),
+// pipe thread 無鎖並行迭代 vector = UB(曾炸 SEH C0000005)。鎖序 engine→write
+// 與 dispatch 各分支一致,無死鎖。
+void serve_client(HANDLE pipe, uint64_t gen) {
+    g_last_activity.store(GetTickCount64());
+    {
+        std::lock_guard<std::mutex> lock(g_engine_mutex);
+        send_frame(pipe, rmx::make_event("snapshot", snapshot_payload()));
     }
     for (;;) {
         std::optional<std::vector<uint8_t>> frame;
         try {
-            frame = rmx::read_frame(client);
+            frame = rmx::read_frame(pipe);
         } catch (const rmx::FrameIoError& e) {
             std::fprintf(stderr, "[engine] bad frame: %s\n", e.what());
-            return false;
+            break;
         }
-        if (!frame) return false;  // EOF / 斷線
+        if (!frame) break;  // EOF/broken pipe
         g_last_activity.store(GetTickCount64());
         nlohmann::json j = nlohmann::json::parse(*frame, nullptr, false);
         if (j.is_discarded()) {
             std::fprintf(stderr, "[engine] invalid JSON payload\n");
-            return false;
+            break;
         }
         try {
             Frame f = rmx::parse_frame(j, /*strict=*/false);
             if (auto* cmd = std::get_if<Command>(&f)) {
-                if (dispatch(client, *cmd)) return true;
+                auto* task = new Task{gen, pipe, std::move(*cmd)};
+                if (!PostMessageW(g_main_hwnd, WM_APP_TASK, 0,
+                                  reinterpret_cast<LPARAM>(task))) {
+                    delete task;  // main window 已不在:engine 正在退場
+                    break;
+                }
             }
             // server 收到 reply/event:契約上不該出現,忽略(容錯不斷線)
         } catch (const rmx::ParseError& e) {
-            std::fprintf(stderr, "[engine] parse error: %s\n", e.what());
-            rmx::write_frame(client, rmx::make_reply_err(0, g_epoch.load(), "bad_command",
-                                                         e.what()));
+            send_frame(pipe, rmx::make_reply_err(0, g_epoch.load(), "bad_command",
+                                                 e.what()));
         }
     }
 }
 
-// idle watchdog:12h 無 client 活動 → 取消 blocking ConnectNamedPipe 讓主迴圈退出
-void idle_watchdog(HANDLE main_thread) {
+// pipe worker:accept → serve → 斷線回 accept 續跑。單 client 炸(SEH)不死
+// thread —— 攔下、收 client、繼續 accept。
+void pipe_serve_inner() {
+    while (!g_exiting.load()) {
+        HANDLE pipe = CreateNamedPipeW(
+            L"\\\\.\\pipe\\roudamix-engine",
+            PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
+            PIPE_READMODE_BYTE | PIPE_WAIT, 1, 64 * 1024, 64 * 1024, 0, nullptr);
+        if (pipe == INVALID_HANDLE_VALUE) {
+            std::fprintf(stderr, "[engine] CreateNamedPipeW failed: %lu\n", GetLastError());
+            break;
+        }
+        g_active_pipe.store(pipe);
+        // overlapped accept:分段等,shutdown(idle watchdog/退出)醒得來
+        OVERLAPPED conn{};
+        conn.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        BOOL connected = FALSE;
+        if (ConnectNamedPipe(pipe, &conn) ||
+            GetLastError() == ERROR_PIPE_CONNECTED) {
+            connected = TRUE;
+        } else if (GetLastError() == ERROR_IO_PENDING && conn.hEvent != nullptr) {
+            while (!g_exiting.load()) {
+                if (WaitForSingleObject(conn.hEvent, 500) == WAIT_OBJECT_0) {
+                    DWORD dummy = 0;
+                    if (GetOverlappedResult(pipe, &conn, &dummy, FALSE)) connected = TRUE;
+                    break;
+                }
+            }
+        }
+        if (conn.hEvent != nullptr) CloseHandle(conn.hEvent);
+        if (!connected) {
+            g_active_pipe.store(nullptr);
+            CloseHandle(pipe);
+            continue;
+        }
+        std::printf("[engine] client connected\n");
+        const uint64_t gen = g_conn_gen.fetch_add(1) + 1;
+        // SEH 只包 serve_client:client 端壞輸入/plugin 炸不帶走整個 thread,
+        // 收掉這個 client 繼續 accept(callee 內 C++ 物件不 unwind,leak 一次可接受)
+        __try {
+            serve_client(pipe, gen);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            std::fprintf(stderr, "[engine] SEH while serving client: %lX\n",
+                         GetExceptionCode());
+        }
+        // 不 FlushFileBuffers:Flush 會等 client 讀完所有 server 寫的 byte ——
+        // client 斷線不讀 = 永卡(pipe thread 卡死無法 accept)
+        g_active_pipe.store(nullptr);
+        DisconnectNamedPipe(pipe);
+        CloseHandle(pipe);
+        g_last_activity.store(GetTickCount64());
+        std::printf("[engine] client disconnected\n");
+    }
+}
+
+void pipe_serve_thread() {
+    pipe_serve_inner();
+}
+
+// idle watchdog:12h 無 client 活動 → 取消 pipe thread 的 blocking IO 讓它退出
+void idle_watchdog() {
     constexpr ULONGLONG kIdleTimeoutMs = 12ull * 60 * 60 * 1000;  // 12h
     for (;;) {
         if (g_exiting.load()) return;
@@ -321,23 +598,11 @@ void idle_watchdog(HANDLE main_thread) {
         for (int i = 0; i < 240 && !g_exiting.load(); ++i) Sleep(250);
         if (g_exiting.load()) return;
         if (GetTickCount64() - g_last_activity.load() > kIdleTimeoutMs) {
-            CancelSynchronousIo(main_thread);
-            g_exiting.store(true);
+            if (HANDLE h = g_active_pipe.load(); h != nullptr) CancelIoEx(h, nullptr);
+            PostMessageW(g_main_hwnd, WM_APP_QUIT, 0, 0);
             return;
         }
     }
-}
-
-// SEH 包裹層(含 C++ 物件的函式不能直接用 __try)
-bool serve_client_seh(HANDLE client) {
-    bool shutdown = false;
-    __try {
-        shutdown = serve_client(client);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        std::fprintf(stderr, "[engine] SEH exception while serving client: %lX\n",
-                     GetExceptionCode());
-    }
-    return shutdown;
 }
 
 }  // namespace
@@ -349,42 +614,46 @@ int main() {
         return 0;
     }
 
-    HANDLE self = GetCurrentThread();
-    std::thread watchdog(idle_watchdog, self);
+    // main thread = UI thread:VST3 editor(createView/attached/removed)與 plugin
+    // GUI 訊息全部由本 thread 的 message loop 服務(STA 是 Win32 GUI 標配)
+    if (FAILED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED))) {
+        std::fprintf(stderr, "[engine] CoInitializeEx failed\n");
+    }
 
-    while (!g_exiting.load()) {
-        HANDLE pipe = CreateNamedPipeW(L"\\\\.\\pipe\\roudamix-engine",
-                                       PIPE_ACCESS_DUPLEX,
-                                       PIPE_READMODE_BYTE | PIPE_WAIT,
-                                       1, 64 * 1024, 64 * 1024, 0, nullptr);
-        if (pipe == INVALID_HANDLE_VALUE) {
-            std::fprintf(stderr, "[engine] CreateNamedPipeW failed: %lu\n", GetLastError());
-            break;
-        }
-        BOOL connected = ConnectNamedPipe(pipe, nullptr)
-                             ? TRUE
-                             : (GetLastError() == ERROR_PIPE_CONNECTED ? TRUE : FALSE);
-        if (!connected) {
-            CloseHandle(pipe);
-            continue;
-        }
-        std::printf("[engine] client connected\n");
-        g_last_activity.store(GetTickCount64());
-        bool shutdown = serve_client_seh(pipe);
-        FlushFileBuffers(pipe);
-        DisconnectNamedPipe(pipe);
-        CloseHandle(pipe);
-        g_last_activity.store(GetTickCount64());
-        std::printf("[engine] client disconnected (shutdown=%d)\n", shutdown ? 1 : 0);
-        if (shutdown) break;
+    WNDCLASSEXW wc{};
+    wc.cbSize = sizeof(wc);
+    wc.lpfnWndProc = &main_wnd_proc;
+    wc.hInstance = GetModuleHandleW(nullptr);
+    wc.lpszClassName = kMainWndClass;
+    RegisterClassExW(&wc);
+    // message-only window:不進 z-order / 不收廣播,只收 PostMessage 的 task
+    g_main_hwnd = CreateWindowExW(0, kMainWndClass, L"", 0, 0, 0, 0, 0, HWND_MESSAGE,
+                                  nullptr, wc.hInstance, nullptr);
+    std::fprintf(stderr, "[engine] main window hwnd=%p\n", static_cast<void*>(g_main_hwnd));
+
+    std::thread pipe_thread(pipe_serve_thread);
+    std::thread watchdog(idle_watchdog);
+
+    MSG msg;
+    while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
     }
 
     g_exiting.store(true);
+    // shutdown_engine 的 ack 已寫進 pipe buffer,但 client 可能還沒讀 —— process
+    // 關 pipe handle 會連未讀資料一起丟(client 收 EOF 而非 ack)。短等它收走。
+    Sleep(150);
+    if (HANDLE h = g_active_pipe.load(); h != nullptr)
+        CancelIoEx(h, nullptr);  // 喚醒 overlapped accept/read
+    if (pipe_thread.joinable()) pipe_thread.join();
     if (watchdog.joinable()) watchdog.join();
     {
         std::lock_guard<std::mutex> lock(g_engine_mutex);
         g_engine.stop();
     }
+    if (g_main_hwnd != nullptr) DestroyWindow(g_main_hwnd);
+    CoUninitialize();
     ReleaseMutex(singleton);
     CloseHandle(singleton);
     return 0;
