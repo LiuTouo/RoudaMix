@@ -1,9 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { open, save } from "@tauri-apps/plugin-dialog";
-  import Knob from "./lib/Knob.svelte";
   import MeterCanvas from "./lib/MeterCanvas.svelte";
   import Rack from "./lib/Rack.svelte";
+  import SpectrumCanvas from "./lib/SpectrumCanvas.svelte";
   import {
     connectStatus,
     onConnection,
@@ -17,7 +17,6 @@
     DeviceInfo,
     EngineStatus,
     MetersFrame,
-    ParamInfo,
     ScanModule,
     Snapshot,
   } from "./lib/types";
@@ -28,27 +27,24 @@
   let meters = $state<MetersFrame | null>(null);
   let devices = $state<DeviceInfo[]>([]);
   let selected = $state("");
+  let bufSize = $state<number | null>(null); // buffer 是 ASIO host 權威;實數,初始 = driver preferred
+  let inputMono = $state(true); // ch1 複製 L+R(mic 監聽)
   let busy = $state(false);
   let notice = $state("");
-  let sineFreq = $state(440);
+  let panelOpen = $state(false); // 硬體面板開啟中:stream 可能停,關閉後自動重建
 
   // rack 狀態
   let focusId = $state<number | null>(null);
-  let paramInfos = $state<Map<number, ParamInfo[]>>(new Map());
-  let optimistic = $state<Map<number, Map<number, number>>>(new Map());
   let scanOpen = $state(false);
   let scanning = $state(false);
   let modules = $state<ScanModule[]>([]);
+  let editorIds = $state<Set<number>>(new Set()); // editor 視窗開著的 instanceId
 
   const rack = $derived(status?.rack ?? []);
-  const focusSlot = $derived(rack.find((s) => s.instanceId === focusId) ?? null);
+  // 沒明確選擇時 fallback 第一張:rack 非空必見面板(UI 重啟從快照恢復後
+  // focusId 歸 null,右側空白會讓人找不到 GUI/Bypass 按鈕)
+  const focusSlot = $derived(rack.find((s) => s.instanceId === focusId) ?? rack[0] ?? null);
   const outStrip = $derived(meters?.strips?.find((s) => s.instanceId === 0xffffffff));
-
-  // set_param 不廣播 status —— 樂觀值只在本地;下一次 status(rack ref 變)即被權威值覆蓋
-  $effect(() => {
-    void status?.rack;
-    optimistic = new Map();
-  });
 
   onMount(async () => {
     conn = await connectStatus().catch(() => conn);
@@ -62,31 +58,89 @@
     });
     await onEngineEvent((kind, payload) => {
       if (kind === "status") status = payload as EngineStatus;
+      // 硬體面板關閉:driver 設定可能變(率),且 SSL 這類 driver 在面板動 buffer 後
+      // 現有 stream 會死流 —— 一律重掃 + 重建(短暫中斷換取與硬體同步)
+      if (kind === "devices_changed") onPanelClosed().catch(() => {});
     });
     await onMeters((m) => (meters = m));
     refreshDevices().catch(() => {});
   });
 
+  // 裝置選定。取樣率 = 硬體面板權威(driver 現行);buffer = ASIO host 權威
+  // (createBuffers 時 host 決定;driver 面板裡的緩衝選擇不影響 ASIO stream,會被蓋掉)
+  function applyDeviceDefaults(dev: DeviceInfo) {
+    selected = dev.deviceKey;
+    // 新裝置 = driver preferred(清單沒有 preferred 時取最小值)
+    bufSize = dev.bufferSizes.includes(dev.preferredBufferSize)
+      ? dev.preferredBufferSize
+      : (dev.bufferSizes[0] ?? null);
+  }
+
+  // 硬體面板關閉後:重掃 + 重建 stream(面板期間動過率/緩衝都會讓現有 stream 失效)
+  async function onPanelClosed() {
+    panelOpen = false;
+    await refreshDevices();
+    if (status?.running && !busy) restartWith(inputMono);
+  }
+
   async function refreshDevices() {
     try {
       const r = await engineCommand("list_devices");
       devices = (r.devices as DeviceInfo[]) ?? [];
-      if (!selected && devices.length) selected = devices[0].deviceKey;
+      if (!selected && devices.length) {
+        applyDeviceDefaults(devices[0]);
+        start(); // 自動啟用:開 app 即跑
+      }
       if (notice === "not connected") notice = ""; // 啟動競態殘留,成功即清
     } catch (e) {
       notice = String(e);
     }
   }
 
-  async function start() {
+  async function start(deviceKey?: string) {
+    const key = deviceKey ?? selected;
+    if (!key || busy || status?.running) return;
     busy = true;
     notice = "";
     try {
-      await engineCommand("start", { deviceKey: selected, sampleRate: null });
+      await engineCommand("start", {
+        deviceKey: key,
+        sampleRate: null, // 率 = driver 現行(硬體面板權威)
+        bufferSize: bufSize, // buffer = host 權威;null = driver preferred
+        inputMono,
+      });
     } catch (e) {
       notice = String(e);
     }
     busy = false;
+  }
+
+  // 跑著時改 mono/buffer:ASIO 要重建 = stop → start
+  async function restartWith(mono: boolean) {
+    if (busy) return;
+    busy = true;
+    notice = "";
+    try {
+      await engineCommand("stop");
+      await engineCommand("start", {
+        deviceKey: selected,
+        sampleRate: null,
+        bufferSize: bufSize,
+        inputMono: mono,
+      });
+    } catch (e) {
+      notice = String(e);
+    }
+    busy = false;
+  }
+
+  async function openDevicePanel() {
+    try {
+      await engineCommand("open_device_panel", {});
+      panelOpen = true; // devices_changed 回來 = 面板關閉,清旗標並重建
+    } catch (e) {
+      notice = String(e);
+    }
   }
 
   async function stop() {
@@ -97,20 +151,6 @@
       notice = String(e);
     }
     busy = false;
-  }
-
-  async function setSource(source: "sine" | "passthrough") {
-    if (source === "passthrough" && status?.running) {
-      const ok = window.confirm(
-        "切到 Passthrough 會把輸入直接送到輸出。\n接喇叭可能產生回授嘯叫,建議先戴耳機。\n要繼續嗎?",
-      );
-      if (!ok) return;
-    }
-    try {
-      await engineCommand("set_source", { source, sineFreq });
-    } catch (e) {
-      notice = String(e);
-    }
   }
 
   // ---------- session 存/載 ----------
@@ -127,6 +167,8 @@
         path,
         deviceKey: selected || null,
         sampleRate: status?.running ? Math.round(status.sampleRate) : null,
+        bufferSize: status?.running ? status.bufferSize : bufSize,
+        inputMono,
       });
       notice = "";
     } catch (e) {
@@ -144,10 +186,18 @@
       });
       if (!path) return;
       const r = await engineCommand("load_session", { path });
-      paramInfos = new Map(); // instanceId 全新,舊 focus 參數作廢
-      focusId = null;
+      focusId = null; // instanceId 全新,舊 focus 作廢
       const dk = r.deviceKey as string | null;
-      if (dk && devices.some((d) => d.deviceKey === dk)) selected = dk;
+      if (dk && devices.some((d) => d.deviceKey === dk)) {
+        selected = dk;
+        if (typeof r.inputMono === "boolean") inputMono = r.inputMono;
+        // session 的 buffer:合法值才套,否則 driver preferred
+        const sb = r.bufferSize as number | null;
+        const dev = devices.find((d) => d.deviceKey === dk);
+        if (sb && dev?.bufferSizes?.includes(sb)) bufSize = sb;
+        else if (dev) applyDeviceDefaults(dev);
+        start(); // 自動啟用:載入 session 即恢復現場(率跟 driver 現行值)
+      }
       notice = "";
     } catch (e) {
       notice = String(e);
@@ -156,17 +206,8 @@
 
   // ---------- rack 操作 ----------
 
-  async function focus(id: number) {
+  function focus(id: number) {
     focusId = id;
-    if (!paramInfos.has(id)) {
-      try {
-        const r = await engineCommand("get_params", { instanceId: id });
-        const infos = (r.params as ParamInfo[]) ?? [];
-        paramInfos = new Map(paramInfos).set(id, infos);
-      } catch (e) {
-        notice = String(e);
-      }
-    }
   }
 
   async function bypass(slot: { instanceId: number; bypassed: boolean }) {
@@ -196,6 +237,55 @@
     try {
       await engineCommand("remove_plugin", { instanceId: id });
       if (focusId === id) focusId = null;
+      editorIds = new Set([...editorIds].filter((x) => x !== id));
+    } catch (e) {
+      notice = String(e);
+    }
+  }
+
+  async function toggleEditor(slot: { instanceId: number }) {
+    const id = slot.instanceId;
+    try {
+      if (editorIds.has(id)) {
+        await engineCommand("close_editor", { instanceId: id }); // 冪等:視窗已 X 也 ok
+        editorIds = new Set([...editorIds].filter((x) => x !== id));
+      } else {
+        await engineCommand("open_editor", { instanceId: id });
+        editorIds = new Set(editorIds).add(id);
+      }
+    } catch (e) {
+      notice = String(e);
+    }
+  }
+
+  // ---------- plugin preset(.vstpreset 檔案式 state)----------
+
+  async function savePreset(slot: { instanceId: number; name: string }) {
+    try {
+      const path = await save({
+        title: "儲存 Preset",
+        defaultPath: `${slot.name}.vstpreset`,
+        filters: [{ name: "VST3 Preset", extensions: ["vstpreset"] }],
+      });
+      if (!path) return;
+      await engineCommand("save_preset", { instanceId: slot.instanceId, path });
+      notice = "";
+    } catch (e) {
+      notice = String(e);
+    }
+  }
+
+  async function loadPreset(slot: { instanceId: number }) {
+    try {
+      const path = await open({
+        title: "載入 Preset",
+        multiple: false,
+        directory: false,
+        filters: [{ name: "VST3 Preset", extensions: ["vstpreset"] }],
+      });
+      if (!path) return;
+      await engineCommand("load_preset", { instanceId: slot.instanceId, path });
+      notice = "";
     } catch (e) {
       notice = String(e);
     }
@@ -218,35 +308,15 @@
     try {
       const r = await engineCommand("add_plugin", { path, classId });
       scanOpen = false;
-      await focus(r.instanceId as number);
+      focus(r.instanceId as number);
     } catch (e) {
       notice = String(e);
     }
   }
 
-  function setParam(instanceId: number, paramId: number, v: number) {
-    const m = new Map(optimistic);
-    const inner = new Map(m.get(instanceId) ?? []);
-    inner.set(paramId, v);
-    m.set(instanceId, inner);
-    optimistic = m;
-    engineCommand("set_param", { instanceId, paramId, value: v }).catch((e) => {
-      notice = String(e);
-    });
-  }
-
-  function knobValue(slotId: number, paramId: number): number {
-    return (
-      optimistic.get(slotId)?.get(paramId) ??
-      rack.find((s) => s.instanceId === slotId)?.params.find((p) => p.paramId === paramId)
-        ?.normalized ??
-      paramInfos.get(slotId)?.find((p) => p.paramId === paramId)?.normalized ??
-      0
-    );
-  }
-
   const running = $derived(status?.running ?? false);
   const basename = (p: string) => p.split(/[\\/]/).pop() ?? p;
+  const selDev = $derived(devices.find((d) => d.deviceKey === selected) ?? null);
 </script>
 
 <header class="bar">
@@ -261,6 +331,8 @@
       >{status!.sampleRate} Hz · buf {status!.bufferSize} · lat
       {status!.inputLatency}/{status!.outputLatency} · xrun {status!.xruns}</span
     >
+  {:else if selDev?.currentSampleRate}
+    <span class="dim mono" title="driver 現行取樣率(在硬體面板改)">{selDev.currentSampleRate} Hz · buf {bufSize ?? selDev.preferredBufferSize}</span>
   {/if}
   {#if status?.pluginFails}
     <span class="err mono" title="RT 端 plugin process 失敗次數(失敗時維持 bypass 效果)"
@@ -270,41 +342,66 @@
 </header>
 
 <div class="devicebar">
-  <select bind:value={selected} disabled={running || devices.length === 0}>
+  <select
+    bind:value={selected}
+    disabled={running || devices.length === 0}
+    onchange={(e) => {
+      const d = devices.find((x) => x.deviceKey === e.currentTarget.value);
+      if (d) applyDeviceDefaults(d);
+      start();
+    }}
+  >
     {#each devices as d (d.deviceKey)}
       <option value={d.deviceKey}>{d.name} ({d.maxIn}in/{d.maxOut}out)</option>
     {:else}
       <option value="">(無 ASIO 裝置)</option>
     {/each}
   </select>
+  <label
+    title="ASIO 緩衝 = host 決定(在這裡選,即時重建);driver 面板裡的緩衝選擇不影響 ASIO stream。小 = 低延遲,大 = 穩"
+  >
+    <select
+      value={bufSize ?? ""}
+      disabled={!selDev || selDev.bufferSizes.length === 0}
+      onchange={(e) => {
+        bufSize = Number(e.currentTarget.value);
+        if (running) restartWith(inputMono);
+      }}
+    >
+      {#each selDev?.bufferSizes ?? [] as b (b)}
+        <option value={b}>{b}</option>
+      {/each}
+    </select>
+  </label>
+  <label title="輸入 ch1 複製到左右聲道(mic 監聽);關 = 立體聲 1:1"
+    ><input
+      type="checkbox"
+      checked={inputMono}
+      onchange={(e) => {
+        inputMono = e.currentTarget.checked;
+        restartWith(inputMono);
+      }}
+    />Mono</label
+  >
+  <button
+    onclick={openDevicePanel}
+    disabled={!running}
+    title="開硬體驅動控制面板(取樣率在這改;緩衝請用 RoudaMix 的 Buffer 下拉 —— 面板的緩衝選擇會被 ASIO 蓋掉)。關閉面板後自動同步並重建"
+    >硬體面板</button
+  >
+  {#if panelOpen}
+    <span class="err mono" title="面板期間 driver 時脈可能切換,聲音中斷屬正常;關閉面板後自動重掃並重建 stream"
+      >面板開啟中 — 聲音可能中斷,關閉面板後自動恢復</span
+    >
+  {/if}
   {#if running}
     <button class="danger" onclick={stop} disabled={busy}>Stop</button>
   {:else}
-    <button class="primary" onclick={start} disabled={busy || !selected}>Start</button>
+    <button class="primary" onclick={() => start()} disabled={busy || !selected}>Start</button>
   {/if}
-  <button onclick={refreshDevices} disabled={running}>重新掃描</button>
+  <button onclick={refreshDevices}>重新掃描</button>
   <button onclick={saveSession}>儲存 Session</button>
   <button onclick={loadSession}>載入 Session</button>
-
-  <span class="sep"></span>
-
-  <div class="seg">
-    <button class:active={status?.source !== "passthrough"} onclick={() => setSource("sine")}
-      >Sine</button
-    >
-    <button class:active={status?.source === "passthrough"} onclick={() => setSource("passthrough")}
-      >Passthrough</button
-    >
-  </div>
-  <input
-    type="number"
-    min="20"
-    max="20000"
-    bind:value={sineFreq}
-    disabled={status?.source === "passthrough"}
-    onchange={() => setSource("sine")}
-  />
-  <span class="dim mono">Hz</span>
 
   <span style="flex:1"></span>
   {#if status?.error}
@@ -360,31 +457,40 @@
           <span class="dim mono" title={focusSlot.pluginPath}>{basename(focusSlot.pluginPath)}</span>
           <span style="flex:1"></span>
           <button
+            class:on={editorIds.has(focusSlot.instanceId)}
+            onclick={() => toggleEditor(focusSlot)}
+            title="開 plugin 自帶原生 GUI 視窗(engine process 內彈出);關了再開同款"
+            >{editorIds.has(focusSlot.instanceId) ? "GUI 開啟中(點擊關閉)" : "開啟原生 GUI"}</button
+          >
+          <button
             class:on={focusSlot.bypassed}
             onclick={() => bypass(focusSlot)}>{focusSlot.bypassed ? "Bypassed" : "Bypass"}</button
           >
+          <button onclick={() => savePreset(focusSlot)} title="把目前參數存成 .vstpreset"
+            >存 Preset</button
+          >
+          <button onclick={() => loadPreset(focusSlot)} title="載入 .vstpreset 套用"
+            >載 Preset</button
+          >
         </div>
-        <div class="knobs">
-          {#each paramInfos.get(focusSlot.instanceId) ?? [] as p (p.paramId)}
-            {#if !p.bypass}
-              <Knob
-                label={p.name}
-                def={p.default}
-                value={knobValue(focusSlot.instanceId, p.paramId)}
-                onChange={(v) => setParam(focusSlot.instanceId, p.paramId, v)}
-              />
-            {/if}
-          {/each}
-        </div>
+        <MeterCanvas
+          strip={meters?.strips?.find((s) => s.instanceId === focusSlot.instanceId)}
+          height={48}
+        />
       </div>
-      <p class="hint dim">旋鈕:拖曳繞中心轉 · 滾輪微調 · 雙擊回預設值</p>
+      <p class="hint dim">參數設定在 plugin 原生 GUI 視窗內(按上方式開啟)</p>
     {:else}
       <div class="card">
         <div class="cardhead"><span>Engine 輸出</span></div>
         <MeterCanvas strip={outStrip} height={64} />
+        <SpectrumCanvas
+          spectrum={meters?.spectrum ?? null}
+          sampleRate={meters?.sampleRate ?? 0}
+          height={120}
+        />
         <p class="hint dim">
           {rack.length
-            ? "點左側 slot 檢視參數;＋ 加入 plugin"
+            ? "點左側 slot 開 plugin 原生 GUI;＋ 加入 plugin"
             : "左側 ＋ 掃描並加入 VST3 plugin,再按 Start 出聲"}
         </p>
       </div>
@@ -428,31 +534,8 @@
   .err {
     color: var(--warn);
   }
-  .sep {
-    width: 1px;
-    height: 22px;
-    background: var(--border);
-  }
-  .seg {
-    display: flex;
-  }
-  .seg button:first-child {
-    border-radius: 6px 0 0 6px;
-  }
-  .seg button:last-child {
-    border-radius: 0 6px 6px 0;
-  }
-  .seg button + button {
-    border-left: none;
-  }
-  .seg button.active {
-    background: var(--accent);
-    color: #0d1117;
-    border-color: var(--accent);
-  }
   select,
-  button,
-  input {
+  button {
     background: var(--bg);
     color: var(--text);
     border: 1px solid var(--border);
@@ -481,9 +564,6 @@
     border-color: var(--warn);
     color: #14161a;
     font-weight: 600;
-  }
-  input {
-    width: 72px;
   }
   main {
     padding: 14px;
@@ -515,11 +595,6 @@
     align-items: center;
     gap: 10px;
     font-size: 13px;
-  }
-  .knobs {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 12px;
   }
   .hint {
     margin: 0;

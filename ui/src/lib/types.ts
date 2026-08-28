@@ -21,6 +21,7 @@ export interface EngineStatus {
   xruns: number;
   source: "sine" | "passthrough";
   sineFreq: number;
+  inputMono: boolean;
   pluginFails: number;
   rack: RackSlot[];
   error: string | null;
@@ -70,7 +71,11 @@ export interface DeviceInfo {
   maxIn: number;
   maxOut: number;
   sampleRates: number[];
+  currentSampleRate: number; // driver 現行率(硬體面板才是權威)
+  minBufferSize: number;
+  maxBufferSize: number;
   preferredBufferSize: number;
+  bufferSizes: number[]; // driver granularity 展開(空 = UI 自行過濾)
 }
 
 // telemetry SHM(contracts/telemetry_abi.md)
@@ -90,4 +95,5 @@ export interface MetersFrame {
   inputLatency: number;
   outputLatency: number;
   strips: MeterStrip[];
+  spectrum: number[] | null; // 線性 0..Nyquist,dB(-120 floor);null = 無頻譜
 }
