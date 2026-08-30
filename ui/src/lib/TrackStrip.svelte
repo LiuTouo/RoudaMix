@@ -10,6 +10,7 @@
     DeviceInfo,
     MeterStrip,
     RackSlot,
+    RenderDevice,
     ScanModule,
     Track,
   } from "./types";
@@ -33,8 +34,9 @@
   let scanning = $state(false);
   let scanned = $state(false);
   let modules = $state<ScanModule[]>([]);
-  // app 程序清單(focus 時拉一次,保持常新)
+  // app 程序清單 / WASAPI render 裝置清單(focus 時拉,保持常新)
   let apps = $state<AudioApp[]>([]);
+  let renderDevices = $state<RenderDevice[]>([]);
 
   const dev = $derived(devices.find((d) => d.deviceKey === selectedDeviceKey) ?? null);
   const isOutput = $derived(track.kind === "output");
@@ -78,6 +80,15 @@
     }
   }
 
+  async function loadRenderDevices() {
+    try {
+      const r = await engineCommand("list_render_devices", {});
+      renderDevices = (r.devices as RenderDevice[]) ?? [];
+    } catch (e) {
+      err = String(e);
+    }
+  }
+
   async function setAppSource(value: string) {
     err = "";
     if (value === "") {
@@ -104,10 +115,15 @@
     try {
       if (value === "") {
         await engineCommand("track_set_output", { trackId: track.trackId, output: null });
+      } else if (value.startsWith("asio:")) {
+        await engineCommand("track_set_output", {
+          trackId: track.trackId,
+          output: { type: "asioOut", channel: Number(value.slice(5)) },
+        });
       } else {
         await engineCommand("track_set_output", {
           trackId: track.trackId,
-          output: { type: "asioOut", channel: Number(value) },
+          output: { type: "wasapi", deviceId: value.slice(7) },
         });
       }
     } catch (e) {
@@ -295,14 +311,28 @@
     {:else}
       <span class="lbl">輸出裝置</span>
       <select
-        value={track.output?.type === "asioOut" ? String(track.output.channel) : ""}
+        value={track.output?.type === "asioOut"
+          ? `asio:${track.output.channel}`
+          : track.output?.type === "wasapi" && track.output.deviceId
+            ? `wasapi:${track.output.deviceId}`
+            : ""}
         onchange={(e) => setOutput(e.currentTarget.value)}
-        disabled={!dev}
+        onfocus={loadRenderDevices}
+        title="ASIO 輸出 pair 或 WASAPI 裝置(串流用,如 VB-Cable)"
       >
         <option value="">(無)</option>
-        {#each pairOptions(dev?.outputNames ?? [], "out") as o (o.value)}
-          <option value={o.value}>{o.label}</option>
-        {/each}
+        {#if dev}
+          <optgroup label="ASIO">
+            {#each pairOptions(dev.outputNames, "out") as o (o.value)}
+              <option value={`asio:${o.value}`}>{o.label}</option>
+            {/each}
+          </optgroup>
+        {/if}
+        <optgroup label="WASAPI">
+          {#each renderDevices as d (d.id)}
+            <option value={`wasapi:${d.id}`}>{d.name}{d.default ? "（預設）" : ""}</option>
+          {/each}
+        </optgroup>
       </select>
     {/if}
   </div>

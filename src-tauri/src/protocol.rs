@@ -107,8 +107,8 @@ fn err<S: Into<String>>(s: S) -> ProtocolError {
 // ---------- per-kind payload(§6)----------
 
 pub const COMMAND_KINDS: &[&str] = &[
-    "ping", "get_snapshot", "list_devices", "list_audio_apps", "start", "stop",
-    "open_device_panel",
+    "ping", "get_snapshot", "list_devices", "list_audio_apps", "list_render_devices",
+    "start", "stop", "open_device_panel",
     "track_add", "track_remove", "track_set", "track_set_source", "track_set_dests",
     "track_set_output", "track_move",
     "scan_plugins", "add_plugin", "remove_plugin", "move_plugin", "set_bypass", "set_param",
@@ -277,8 +277,8 @@ fn validate_command_payload(c: &CommandEnvelope) -> Result<(), ProtocolError> {
             Some(V::Number(n)) if n.as_u64().is_some() => Ok(()),
             _ => Err(err("payload.hwnd must be u64")),
         },
-        "ping" | "get_snapshot" | "list_devices" | "list_audio_apps" | "stop" | "shutdown_engine"
-        | "open_device_panel" => {
+        "ping" | "get_snapshot" | "list_devices" | "list_audio_apps" | "list_render_devices"
+        | "stop" | "shutdown_engine" | "open_device_panel" => {
             if p.is_empty() { Ok(()) } else { Err(err("payload must be empty object")) }
         }
         _ => unreachable!(),

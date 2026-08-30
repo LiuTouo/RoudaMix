@@ -15,6 +15,7 @@
 namespace rmx {
 
 class AppCapture;  // M5b:process loopback capture(app 軌;shared_ptr 跨 snapshot)
+class RenderSink;  // M5c:wasapi render sink(串流軌;shared_ptr 跨 snapshot)
 
 enum class TrackKind : std::uint8_t { kAudio, kApp, kFx, kOutput };
 
@@ -79,7 +80,8 @@ struct TrackNode {
     std::vector<std::uint32_t> chain_strips;   // 平行於 chain(plugin 錶)
     std::shared_ptr<TrackRt> buf;
     std::shared_ptr<AppCapture> capture;  // M5b:app 軌的 loopback pump(master 與 snapshot 共用)
-    std::string track_error;              // control 面:capture 失敗等原因(UI 顯示;空 = 無)
+    std::shared_ptr<RenderSink> render;   // M5c:串流軌的 wasapi render pump
+    std::string track_error;              // control 面:capture/render 失敗等原因(UI 顯示;空 = 無)
 };
 
 struct TrackGraph {

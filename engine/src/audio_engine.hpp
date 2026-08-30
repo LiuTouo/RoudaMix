@@ -57,12 +57,19 @@ public:
         std::string name;
     };
     std::vector<AudioAppInfo> list_audio_apps();
-    // M5b:app capture pump 偵錯(程序結束/裝置失效)→ main thread PostMessage
-    // 轉 handle_capture_failed(track_id);engine 不鎖、不碰 pipe
+    // M5c:WASAPI render endpoints(串流軌裝置選擇器用;default = 預設裝置)
+    struct RenderDeviceInfo {
+        std::string id, name;
+        bool is_default{};
+        std::uint32_t sample_rate{};  // mix format 率
+    };
+    std::vector<RenderDeviceInfo> list_render_devices();
+    // M5b/M5c:capture/render pump 偵錯(程序結束/裝置失效)→ main thread
+    // PostMessage 轉 handle_track_failed(track_id);engine 不鎖、不碰 pipe
     void set_capture_failed_cb(std::function<void(std::uint32_t)> cb) {
         capture_failed_cb_ = std::move(cb);
     }
-    void handle_capture_failed(std::uint32_t track_id);  // main thread 專屬
+    void handle_track_failed(std::uint32_t track_id);  // main thread 專屬(capture 或 render)
 
     bool start(const std::string& device_key, std::optional<std::uint32_t> sample_rate,
                std::optional<std::uint32_t> buffer_size, std::string& err);
@@ -164,6 +171,10 @@ private:
     bool ensure_capture(TrackNode& t, std::uint32_t dst_rate, std::string& err);
     void stop_capture(TrackNode& t) noexcept;
     void stop_captures() noexcept;
+    // M5c:wasapi render sink 生命週期(同語意)
+    bool ensure_render(TrackNode& t, std::uint32_t src_rate, std::string& err);
+    void stop_render(TrackNode& t) noexcept;
+    void stop_renders() noexcept;
     std::function<void(std::uint32_t)> capture_failed_cb_;
 };
 

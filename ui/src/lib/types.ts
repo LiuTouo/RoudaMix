@@ -30,6 +30,13 @@ export interface AudioApp {
   name: string;
 }
 
+export interface RenderDevice {
+  id: string;
+  name: string;
+  default: boolean;
+  sampleRate: number;
+}
+
 export interface Track {
   trackId: number;
   kind: "audio" | "app" | "fx" | "output";

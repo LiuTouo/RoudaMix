@@ -230,6 +230,16 @@
           "properties": {
             "protocolVersion": { "const": 2 },
             "id": { "$ref": "#/$defs/u64" },
+            "kind": { "const": "list_render_devices" },
+            "payload": { "type": "object" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["protocolVersion", "id", "kind", "payload"],
+          "properties": {
+            "protocolVersion": { "const": 2 },
+            "id": { "$ref": "#/$defs/u64" },
             "kind": { "const": "start" },
             "payload": {
               "type": "object",

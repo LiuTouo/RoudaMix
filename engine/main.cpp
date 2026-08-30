@@ -232,6 +232,17 @@ bool dispatch(HANDLE client, const Command& c) {
             apps.push_back({{"pid", a.pid}, {"name", a.name}});
         }
         ok(nlohmann::json{{"apps", apps}});
+    } else if (c.kind == "list_render_devices") {
+        nlohmann::json devices = nlohmann::json::array();
+        for (const auto& d : g_engine.list_render_devices()) {
+            devices.push_back({
+                {"id", d.id},
+                {"name", d.name},
+                {"default", d.is_default},
+                {"sampleRate", d.sample_rate},
+            });
+        }
+        ok(nlohmann::json{{"devices", devices}});
     } else if (c.kind == "start") {
         std::lock_guard<std::mutex> lock(g_engine_mutex);
         if (g_engine.status().running) {
@@ -677,10 +688,10 @@ LRESULT CALLBACK main_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
         return 0;
     }
     if (msg == WM_APP_CAPTURE_ERR) {
-        // app capture pump 偵錯(pump thread → callback → PostMessage):
-        // 標軌 error、收 capture、廣播 status(UI 顯示軌道出錯)
+        // capture/render pump 偵錯(pump thread → callback → PostMessage):
+        // 標軌 error、收 pump、廣播 status(UI 顯示軌道出錯)
         std::lock_guard<std::mutex> lock(g_engine_mutex);
-        g_engine.handle_capture_failed(static_cast<std::uint32_t>(wp));
+        g_engine.handle_track_failed(static_cast<std::uint32_t>(wp));
         if (g_active_pipe.load() != nullptr) after_mutation(g_active_pipe.load());
         return 0;
     }
@@ -837,7 +848,7 @@ int main() {
 
     rmx::EditorHost::instance().set_engine(&g_engine);
     rmx::EditorHost::instance().set_command_target(g_main_hwnd);
-    // M5b:app capture 偵錯 → main thread 排隊( pump thread 禁碰 pipe/鎖)
+    // M5b/M5c:capture/render pump 偵錯 → main thread 排隊(pump thread 禁碰 pipe/鎖)
     g_engine.set_capture_failed_cb([](std::uint32_t track_id) {
         PostMessageW(g_main_hwnd, WM_APP_CAPTURE_ERR, track_id, 0);
     });

@@ -53,6 +53,7 @@ add_executable(roudamix-engine
     src/track_graph.cpp
     src/audio_engine.cpp
     src/app_capture.cpp
+    src/render_sink.cpp
     src/vst3_host.cpp
     src/editor_host.cpp
     src/session.cpp
@@ -111,7 +112,7 @@ add_test(NAME vst3_host COMMAND vst3_host_test)
 
 # session 檔案序列化/載入(無 plugin 環境;真 plugin roundtrip 走 m5a-engine-tracks.ps1)
 add_executable(session_test tests/session_test.cpp src/session.cpp src/audio_engine.cpp
-    src/track_graph.cpp src/app_capture.cpp
+    src/track_graph.cpp src/app_capture.cpp src/render_sink.cpp
     src/asio_device.cpp src/pcm_convert.cpp src/telemetry.cpp src/vst3_host.cpp)
 target_include_directories(session_test PRIVATE src)
 target_include_directories(session_test SYSTEM PRIVATE third_party)
