@@ -2,8 +2,9 @@
 // parameterchanges/processdata)+ pluginterfaces。ponytail:stereo main bus only,
 // aux bus / Float64 / state 不支援 —— mono-only 或多 bus plugin 進不來,
 // 需要時再開(ProMixArea vst3_adapter.cpp 有全版)。
-// editor:M4a 加 —— top-level popup 視窗住 engine process(VMR 風格),
-// param 變更走 performEdit → host callback(不廣播,set_param 同語意)。
+// editor:M4a 加,Studio Pro 式重構後 —— view 生命週期在這(createView/attached/
+// removed),視窗與 tab 列由 EditorHost 持有(見 editor_host.cpp);param 變更走
+// performEdit → host callback(不廣播,set_param 同語意)。
 #include "vst3_host.hpp"
 
 #include "pluginterfaces/gui/iplugview.h"
@@ -32,14 +33,7 @@
 
 namespace rmx {
 
-namespace {
-
-using namespace Steinberg;
-using namespace Steinberg::Vst;
-
-constexpr int32 kMaxParamEventsPerBlock = 64;
-
-// UTF-8 → UTF-16(視窗 title 用;StringConvert 只給 u16string,wchar_t 要自轉)
+// UTF-8 → UTF-16(視窗 title / tab 文字用;StringConvert 只給 u16string,自轉)
 std::wstring to_wide(const std::string& s) {
     if (s.empty()) return {};
     const int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()),
@@ -49,11 +43,18 @@ std::wstring to_wide(const std::string& s) {
     return w;
 }
 
+namespace {
+
+using namespace Steinberg;
+using namespace Steinberg::Vst;
+
+constexpr int32 kMaxParamEventsPerBlock = 64;
+
 // IComponentHandler:editor 內改參數 → performEdit → host callback。
 // beginEdit/endEdit no-op(無 automation 錄製);restartComponent no-op(M4+ 再說)。
 class EditComponentHandler final : public IComponentHandler {
 public:
-    std::function<void(ParamID, ParamValue)> on_edit;  // open_editor 前設定一次
+    std::function<void(ParamID, ParamValue)> on_edit;  // attach_editor 前設定一次
 
     tresult PLUGIN_API queryInterface(const TUID requested_iid, void** obj) override {
         if (obj == nullptr) return kInvalidArgument;
@@ -84,50 +85,7 @@ private:
     std::atomic<uint32> references_{1};
 };
 
-// IPlugFrame:plugin 要求 resize editor 區 → 調整視窗 client 大小
-class EditorPlugFrame final : public IPlugFrame {
-public:
-    HWND hwnd{};  // editor thread 建視窗後填(frame 只在 editor thread 被 plugin 呼)
-
-    tresult PLUGIN_API queryInterface(const TUID requested_iid, void** obj) override {
-        if (obj == nullptr) return kInvalidArgument;
-        if (FUnknownPrivate::iidEqual(requested_iid, FUnknown::iid) ||
-            FUnknownPrivate::iidEqual(requested_iid, IPlugFrame::iid)) {
-            *obj = static_cast<IPlugFrame*>(this);
-            addRef();
-            return kResultOk;
-        }
-        *obj = nullptr;
-        return kNoInterface;
-    }
-    uint32 PLUGIN_API addRef() override { return ++references_; }
-    uint32 PLUGIN_API release() override {
-        const auto remaining = --references_;
-        if (remaining == 0) delete this;
-        return remaining;
-    }
-    // IPlugFrame 契約:plugin resize editor → resizeView;之後 host 須呼 view->onSize
-    tresult PLUGIN_API resizeView(IPlugView* view, ViewRect* r) override {
-        if (hwnd == nullptr || r == nullptr || view == nullptr) return kInvalidArgument;
-        const int w = r->right - r->left;
-        const int h = r->bottom - r->top;
-        if (w > 0 && h > 0) {
-            // 調 client 區:外框補上非 client 邊
-            RECT rc{0, 0, w, h};
-            AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
-            SetWindowPos(hwnd, nullptr, 0, 0, rc.right - rc.left, rc.bottom - rc.top,
-                         SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
-            view->onSize(r);  // 契約:視窗 resize 完成後通知 plugin
-        }
-        return kResultOk;
-    }
-
-private:
-    std::atomic<uint32> references_{1};
-};
-
-constexpr wchar_t kEditorClassName[] = L"RmxVST3Editor";
-
+// IPlugFrame:搬到 editor_host.cpp(視窗由 EditorHost 持有)。
 // ---- .vstpreset 容器(格式:VST3 Developer Portal「Preset Format」+ SDK
 // vstpresetfile.cpp)----
 // header 48B:'VST3' + int32 version(=1)+ char classID[32](32 hex ASCII,UID::toString
@@ -264,27 +222,25 @@ struct Vst3Plugin::Impl {
     uint32_t slew_gen_seen_{};            // RT 專屬
     void invalidate_slew() noexcept { slew_gen_.fetch_add(1, std::memory_order_release); }
 
-    // editor:視窗 + view 生命週期全在 main thread(dispatch thread,跑 message loop)。
+    // editor:view 生命週期全在 main thread(dispatch thread,跑 message loop)。
     // JUCE 系 plugin 假設 host 單一 UI thread —— createView/attached/removed 分拆到
     // 別 thread 會跨 thread 互等死鎖(實測:attached 等 condition_variable,
     // main thread 被 plugin wnd_proc 拉進 CreateWindowEx 卡 win32k send)。
+    // 視窗本體由 EditorHost 持有(editor_host.cpp),這裡只管 view。
     EditComponentHandler* edit_handler{};  // 生命週期歸 handler(IPtr)持有
     IPtr<IPlugView> view;
-    IPtr<EditorPlugFrame> frame;
-    HWND editor_wnd{};  // main thread 專屬,無需 atomic
 
     ~Impl() {
         close_editor();
         terminate();
     }
 
-    // 冪等;使用者按視窗 X(wnd_proc DestroyWindow)或此呼叫同效。
-    // 同 thread 同步摧毀:WM_DESTROY 內 removed() 會先跑。
+    // 冪等;EditorHost 關窗/切換/remove_plugin 或此呼叫同效。
     void close_editor() noexcept {
-        if (editor_wnd != nullptr) DestroyWindow(editor_wnd);
-        view = nullptr;
-        frame = nullptr;
-        editor_wnd = nullptr;
+        if (view) {
+            view->removed();
+            view = nullptr;
+        }
     }
 
     void load(const std::filesystem::path& path, const std::string& class_id) {
@@ -337,45 +293,13 @@ struct Vst3Plugin::Impl {
 
     // ---- editor(全在 main thread;main.cpp 的 message loop 服務訊息)----
 
-    static LRESULT CALLBACK editor_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept {
-        auto* self = reinterpret_cast<Impl*>(GetWindowLongPtrW(h, GWLP_USERDATA));
-        if (msg == WM_CLOSE) {
-            DestroyWindow(h);
-            return 0;
-        }
-        if (msg == WM_DESTROY && self != nullptr) {
-            if (self->view) {
-                self->view->removed();
-                self->view = nullptr;
-            }
-            self->editor_wnd = nullptr;
-            self->frame = nullptr;
-        }
-        return DefWindowProcW(h, msg, wp, lp);
-    }
-
-    static ATOM editor_class_atom() {
-        static const ATOM atom = [] {
-            WNDCLASSEXW wc{};
-            wc.cbSize = sizeof(wc);
-            wc.style = CS_HREDRAW | CS_VREDRAW;
-            wc.lpfnWndProc = &Impl::editor_wnd_proc;
-            wc.hInstance = GetModuleHandleW(nullptr);
-            wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-            wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
-            wc.lpszClassName = kEditorClassName;
-            return RegisterClassExW(&wc);
-        }();
-        return atom;
-    }
-
-    // 同步開:createView → 建窗 → setFrame → attached → show。caller 保證 main thread。
-    bool open_editor() {
+    // attach 到 EditorHost 提供的 parent(視窗/前景/尺寸都歸 host 管)。
+    // caller 保證 main thread;成功後 out_w/out_h = clamp 後原生尺寸
+    bool attach_editor(HWND parent, IPlugFrame* plug_frame, int& out_w, int& out_h) {
         if (!loaded || !controller) {
             error = "plugin has no controller for an editor";
             return false;
         }
-        if (editor_wnd != nullptr) return true;  // 冪等
         error.clear();
         IPlugView* raw = controller->createView(ViewType::kEditor);
         if (raw == nullptr) {
@@ -383,7 +307,6 @@ struct Vst3Plugin::Impl {
             return false;
         }
         view = owned(raw);
-        frame = owned(new EditorPlugFrame());
         ViewRect vr{};
         int w = 300, h = 200;  // getSize 失敗時的 fallback
         if (view->getSize(&vr) == kResultOk) {
@@ -394,43 +317,23 @@ struct Vst3Plugin::Impl {
                 h = std::clamp(rh, 60, 4096);
             }
         }
-        RECT rc{0, 0, w, h};
-        AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
-        if (editor_class_atom() == 0) {
-            error = "editor window class registration failed";
-            view = nullptr;
-            frame = nullptr;
-            return false;
-        }
-        const std::wstring title = to_wide(name_);
-        // WS_VISIBLE:create 即顯示。spawn engine 的 STARTUPINFO 帶 SW_HIDE 時
-        // (Start-Process -WindowStyle Hidden),首個 top-level 視窗的第一個
-        // ShowWindow 呼叫會被替換成 startup 的 SW_HIDE —— 視窗建了但永遠 hidden
-        HWND wnd = CreateWindowExW(0, kEditorClassName, title.c_str(),
-                                   WS_OVERLAPPEDWINDOW | WS_VISIBLE, CW_USEDEFAULT,
-                                   CW_USEDEFAULT, rc.right - rc.left, rc.bottom - rc.top,
-                                   nullptr, nullptr, GetModuleHandleW(nullptr), this);
-        if (wnd == nullptr) {
-            error = "editor window creation failed";
-            view = nullptr;
-            frame = nullptr;
-            return false;
-        }
-        editor_wnd = wnd;
-        frame->hwnd = wnd;
-        view->setFrame(frame);
-        if (view->attached(wnd, kPlatformTypeHWND) != kResultOk) {
-            // 從未 attached:removed 不該呼叫;手動清欄位後摧毀空殼視窗
+        out_w = w;
+        out_h = h;
+        view->setFrame(plug_frame);
+        if (view->attached(parent, kPlatformTypeHWND) != kResultOk) {
+            // 從未 attached:removed 不該呼叫
             view->setFrame(nullptr);
             view = nullptr;
-            frame = nullptr;
-            editor_wnd = nullptr;
-            DestroyWindow(wnd);
             error = "plugin editor attach failed";
             return false;
         }
-        ShowWindow(wnd, SW_SHOW);
         return true;
+    }
+
+    void editor_resize_view(int w, int h) noexcept {
+        if (!view || w <= 0 || h <= 0) return;
+        ViewRect r{0, 0, w, h};
+        view->onSize(&r);
     }
 
     void enumerate_params() {
@@ -860,8 +763,14 @@ double Vst3Plugin::param_value(uint32_t id) const noexcept {
     return std::isfinite(v) ? v : std::numeric_limits<double>::quiet_NaN();
 }
 
+void Vst3Plugin::set_param_normalized(uint32_t id, double value) noexcept {
+    // control thread 專屬;preset 載入後同步 controller → editor GUI 顯示跟著動
+    if (impl_ && impl_->controller)
+        impl_->controller->setParamNormalized(id, std::isfinite(value) ? value : 0.0);
+}
+
 void Vst3Plugin::set_param_callback(std::function<void(uint32_t, double)> cb) noexcept {
-    // 僅 main thread 在 open_editor 前呼叫;performEdit 回呼也在 main thread(其
+    // 僅 main thread 在 attach_editor 前呼叫;performEdit 回呼也在 main thread(其
     // editor 訊息由 main 的 message loop 派發)—— 無並發
     if (impl_ && impl_->edit_handler) impl_->edit_handler->on_edit = std::move(cb);
 }
@@ -879,8 +788,16 @@ bool Vst3Plugin::load_preset(const std::filesystem::path& file,
     return impl_ && impl_->load_preset(file, host_params_inout, error, host_values_from_file);
 }
 
-bool Vst3Plugin::open_editor() {
-    return impl_ && impl_->open_editor();
+bool Vst3Plugin::editor_capable() const noexcept {
+    return impl_ && impl_->loaded && impl_->controller != nullptr;
+}
+
+bool Vst3Plugin::attach_editor(void* parent_hwnd, void* plug_frame, int& out_w, int& out_h) {
+    out_w = 0;
+    out_h = 0;
+    return impl_ && impl_->attach_editor(static_cast<HWND>(parent_hwnd),
+                                         static_cast<Steinberg::IPlugFrame*>(plug_frame),
+                                         out_w, out_h);
 }
 
 void Vst3Plugin::close_editor() noexcept {
@@ -888,7 +805,11 @@ void Vst3Plugin::close_editor() noexcept {
 }
 
 bool Vst3Plugin::editor_open() const noexcept {
-    return impl_ && impl_->editor_wnd != nullptr;
+    return impl_ && impl_->view != nullptr;
+}
+
+void Vst3Plugin::editor_resize_view(int w, int h) noexcept {
+    if (impl_ != nullptr) impl_->editor_resize_view(w, h);
 }
 
 }  // namespace rmx

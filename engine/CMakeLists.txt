@@ -52,12 +52,13 @@ add_executable(roudamix-engine
     src/telemetry.cpp
     src/audio_engine.cpp
     src/vst3_host.cpp
+    src/editor_host.cpp
     src/session.cpp
     src/sandbox.cpp
 )
 target_include_directories(roudamix-engine PRIVATE src)
 target_include_directories(roudamix-engine SYSTEM PRIVATE third_party)
-target_link_libraries(roudamix-engine PRIVATE asio_sdk vst3_sdk user32 ole32)
+target_link_libraries(roudamix-engine PRIVATE asio_sdk vst3_sdk user32 ole32 gdi32)
 if(MSVC)
     target_compile_options(roudamix-engine PRIVATE /W4 /utf-8)
     # 診斷用:SEH address 反查(roudamix-engine.map)

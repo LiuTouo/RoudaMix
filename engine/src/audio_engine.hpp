@@ -69,6 +69,9 @@ public:
                      std::string& err);
     bool load_preset(std::uint32_t instance_id, const std::filesystem::path& file,
                      std::string& err);
+    // 把 host 權威值推給 controller(editor GUI 顯示同步);session 載入後呼,
+    // set_param 只餵 RT、GUI 不知道。假設 g_engine_mutex 已持有
+    void sync_controller_params(std::uint32_t instance_id);
     const std::vector<RackSlot>& rack() const noexcept { return rack_; }
     // 最近一次成功 start 的裝置/取樣率/緩衝(session serialize 用;stop 後仍保留)
     const std::string& last_device_key() const noexcept { return last_device_key_; }

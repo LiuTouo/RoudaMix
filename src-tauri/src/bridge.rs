@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde_json::{json, Value};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient};
 use tokio::sync::{oneshot, Mutex as AsyncMutex};
@@ -193,6 +193,26 @@ async fn run(app: AppHandle, b: Bridge) {
 async fn serve(app: &AppHandle, b: &Bridge, pipe: NamedPipeClient) {
     let (mut read, write) = tokio::io::split(pipe);
     *b.inner.write.lock().await = Some(write);
+
+    // 主視窗 HWND → engine:editor host 掛成 owned 浮動視窗(無工作列項、
+    // 隨主程式最小化)。fire-and-forget:engine 會回 ok,pending 沒登記即丟。
+    // UI 重啟 → engine 被 job object 帶走重 spawn → 重連時自然重送
+    let owner = app
+        .get_webview_window("main")
+        .and_then(|w| w.hwnd().ok())
+        .map(|h| h.0 as u64);
+    if let Some(hwnd) = owner {
+        let id = b.inner.next_id.fetch_add(1, Ordering::Relaxed) + 1;
+        let frame = make_command(id, "set_editor_owner", json!({ "hwnd": hwnd }));
+        if let Ok(buf) = serde_json::to_vec(&frame) {
+            let mut framed = (buf.len() as u32).to_le_bytes().to_vec();
+            framed.extend_from_slice(&buf);
+            let mut w = b.inner.write.lock().await;
+            if let Some(h) = w.as_mut() {
+                let _ = h.write_all(&framed).await;
+            }
+        }
+    }
 
     let mut len = [0u8; 4];
     let mut buf = Vec::new();

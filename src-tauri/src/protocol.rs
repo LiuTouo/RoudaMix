@@ -110,7 +110,7 @@ pub const COMMAND_KINDS: &[&str] = &[
     "ping", "get_snapshot", "list_devices", "start", "stop", "set_source", "open_device_panel",
     "scan_plugins", "add_plugin", "remove_plugin", "move_plugin", "set_bypass", "set_param",
     "get_params", "open_editor", "close_editor", "save_preset", "load_preset",
-    "save_session", "load_session", "shutdown_engine",
+    "save_session", "load_session", "shutdown_engine", "set_editor_owner",
 ];
 
 fn validate_command_payload(c: &CommandEnvelope) -> Result<(), ProtocolError> {
@@ -189,6 +189,10 @@ fn validate_command_payload(c: &CommandEnvelope) -> Result<(), ProtocolError> {
             u32_field(p, "instanceId")?;
             s("path")
         }
+        "set_editor_owner" => match p.get("hwnd") {
+            Some(V::Number(n)) if n.as_u64().is_some() => Ok(()),
+            _ => Err(err("payload.hwnd must be u64")),
+        },
         "ping" | "get_snapshot" | "list_devices" | "stop" | "shutdown_engine"
         | "open_device_panel" => {
             if p.is_empty() { Ok(()) } else { Err(err("payload must be empty object")) }

@@ -15,6 +15,7 @@
 #include <thread>
 
 #include "audio_engine.hpp"
+#include "editor_host.hpp"
 #include "frame_io.hpp"
 #include "protocol.hpp"
 #include "sandbox.hpp"
@@ -111,6 +112,33 @@ void after_mutation(HANDLE client) {
     uint64_t epoch = g_epoch.fetch_add(1) + 1;
     send_frame(client, rmx::make_event("status", status_json()));
     (void)epoch;
+    rmx::EditorHost::instance().notify_rack_changed();  // host 視窗 tab 同步
+}
+
+// EditorHost 內部指令(bypass / 載入 preset):main thread 排隊執行,這裡持鎖
+// 走與 dispatch 正規分支相同的路徑(host wnd_proc 可能在持鎖中重入,絕不直接鎖)
+void handle_host_cmd(const rmx::EditorHostCmd& cmd) {
+    HANDLE client = g_active_pipe.load();
+    std::lock_guard<std::mutex> lock(g_engine_mutex);
+    std::string err;
+    if (cmd.kind == rmx::kHostBypass) {
+        // 對話框/排隊期間 slot 可能已移除:查無即棄
+        const auto* slot = g_engine.find_slot(cmd.instance_id);
+        if (slot == nullptr) return;
+        (void)g_engine.set_bypass(cmd.instance_id, !slot->bypass, err);
+    } else if (cmd.kind == rmx::kHostPreset) {
+        if (g_engine.find_slot(cmd.instance_id) == nullptr) return;
+        (void)g_engine.load_preset(cmd.instance_id,
+                                   std::filesystem::path(cmd.path), err);
+        // 失敗沉默:plugin 聲音不變即訊號;成功走 after_mutation 同步 UI/host tab
+    } else if (cmd.kind == rmx::kHostSavePreset) {
+        if (g_engine.find_slot(cmd.instance_id) == nullptr) return;
+        (void)g_engine.save_preset(cmd.instance_id,
+                                   std::filesystem::path(cmd.path), err);
+    } else {
+        return;
+    }
+    if (client != nullptr) after_mutation(client);
 }
 
 // 回覆 command;shutdown_engine 回 true(呼叫端 ack 後退出)。main thread 專屬。
@@ -354,21 +382,13 @@ bool dispatch(HANDLE client, const Command& c) {
         std::lock_guard<std::mutex> lock(g_engine_mutex);
         const auto instance = c.payload["instanceId"].get<std::uint32_t>();
         const auto* slot = g_engine.find_slot(instance);
+        std::string err;
         if (slot == nullptr) {
             fail("plugin_not_found", "unknown instanceId");
+        } else if (rmx::EditorHost::instance().open(instance, err)) {
+            ok(nlohmann::json{{"instanceId", instance}, {"editor", true}});
         } else {
-            // editor 內改參數 → performEdit → set_param 同語意(main thread,無並發)
-            const auto plugin = slot->plugin;
-            plugin->set_param_callback(
-                [&engine = g_engine, instance](std::uint32_t param_id, double value) {
-                    std::string err;
-                    engine.set_param(instance, param_id, value, err);
-                });
-            if (plugin->open_editor()) {
-                ok(nlohmann::json{{"instanceId", instance}, {"editor", true}});
-            } else {
-                fail("plugin_no_editor", plugin->last_error());
-            }
+            fail("plugin_no_editor", err);
         }
     } else if (c.kind == "close_editor") {
         std::lock_guard<std::mutex> lock(g_engine_mutex);
@@ -376,7 +396,7 @@ bool dispatch(HANDLE client, const Command& c) {
         if (slot == nullptr) {
             fail("plugin_not_found", "unknown instanceId");
         } else {
-            slot->plugin->close_editor();
+            rmx::EditorHost::instance().close(slot->instance_id);
             ok(nlohmann::json::object());
         }
     } else if (c.kind == "save_preset" || c.kind == "load_preset") {
@@ -426,6 +446,11 @@ bool dispatch(HANDLE client, const Command& c) {
         } else {
             fail("session_io", err);
         }
+    } else if (c.kind == "set_editor_owner") {
+        // UI 主視窗 HWND:editor host 掛成 owned 浮動視窗(無工作列項、隨主程式)
+        rmx::EditorHost::instance().set_owner(
+            reinterpret_cast<HWND>(c.payload["hwnd"].get<std::uint64_t>()));
+        ok(nlohmann::json::object());
     } else if (c.kind == "shutdown_engine") {
         ok(nlohmann::json::object());
         return true;
@@ -477,6 +502,14 @@ LRESULT CALLBACK main_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
             if (dispatch_seh(task->client, task->cmd))
                 PostMessageW(h, WM_APP_QUIT, 0, 0);
             delete task;
+        }
+        return 0;
+    }
+    if (msg == rmx::WM_APP_HOSTCMD) {
+        auto* cmd = reinterpret_cast<rmx::EditorHostCmd*>(lp);
+        if (cmd != nullptr) {
+            handle_host_cmd(*cmd);
+            delete cmd;
         }
         return 0;
     }
@@ -631,6 +664,9 @@ int main() {
                                   nullptr, wc.hInstance, nullptr);
     std::fprintf(stderr, "[engine] main window hwnd=%p\n", static_cast<void*>(g_main_hwnd));
 
+    rmx::EditorHost::instance().set_engine(&g_engine);
+    rmx::EditorHost::instance().set_command_target(g_main_hwnd);
+
     std::thread pipe_thread(pipe_serve_thread);
     std::thread watchdog(idle_watchdog);
 
@@ -650,6 +686,7 @@ int main() {
     if (watchdog.joinable()) watchdog.join();
     {
         std::lock_guard<std::mutex> lock(g_engine_mutex);
+        rmx::EditorHost::instance().shutdown();  // detach view:plugins 活著時拆,避開解構順序
         g_engine.stop();
     }
     if (g_main_hwnd != nullptr) DestroyWindow(g_main_hwnd);

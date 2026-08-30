@@ -38,7 +38,6 @@
   let scanOpen = $state(false);
   let scanning = $state(false);
   let modules = $state<ScanModule[]>([]);
-  let editorIds = $state<Set<number>>(new Set()); // editor 視窗開著的 instanceId
 
   const rack = $derived(status?.rack ?? []);
   // 沒明確選擇時 fallback 第一張:rack 非空必見面板(UI 重啟從快照恢復後
@@ -237,22 +236,15 @@
     try {
       await engineCommand("remove_plugin", { instanceId: id });
       if (focusId === id) focusId = null;
-      editorIds = new Set([...editorIds].filter((x) => x !== id));
     } catch (e) {
       notice = String(e);
     }
   }
 
-  async function toggleEditor(slot: { instanceId: number }) {
-    const id = slot.instanceId;
+  // 開啟即忘:關閉由 plugin 原生視窗自己做(engine 端冪等,已開時直接成功)
+  async function openEditor(slot: { instanceId: number }) {
     try {
-      if (editorIds.has(id)) {
-        await engineCommand("close_editor", { instanceId: id }); // 冪等:視窗已 X 也 ok
-        editorIds = new Set([...editorIds].filter((x) => x !== id));
-      } else {
-        await engineCommand("open_editor", { instanceId: id });
-        editorIds = new Set(editorIds).add(id);
-      }
+      await engineCommand("open_editor", { instanceId: slot.instanceId });
     } catch (e) {
       notice = String(e);
     }
@@ -399,7 +391,6 @@
   {:else}
     <button class="primary" onclick={() => start()} disabled={busy || !selected}>Start</button>
   {/if}
-  <button onclick={refreshDevices}>重新掃描</button>
   <button onclick={saveSession}>儲存 Session</button>
   <button onclick={loadSession}>載入 Session</button>
 
@@ -457,10 +448,9 @@
           <span class="dim mono" title={focusSlot.pluginPath}>{basename(focusSlot.pluginPath)}</span>
           <span style="flex:1"></span>
           <button
-            class:on={editorIds.has(focusSlot.instanceId)}
-            onclick={() => toggleEditor(focusSlot)}
-            title="開 plugin 自帶原生 GUI 視窗(engine process 內彈出);關了再開同款"
-            >{editorIds.has(focusSlot.instanceId) ? "GUI 開啟中(點擊關閉)" : "開啟原生 GUI"}</button
+            onclick={() => openEditor(focusSlot)}
+            title="開 plugin 自帶原生 GUI 視窗(engine process 內彈出);關閉用視窗自己的 ✕"
+            >開啟原生 GUI</button
           >
           <button
             class:on={focusSlot.bypassed}

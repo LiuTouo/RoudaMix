@@ -15,6 +15,7 @@ const std::set<std::string>& command_kinds() {
         "set_bypass", "set_param", "get_params", "open_editor", "close_editor",
         "save_preset", "load_preset",
         "save_session", "load_session", "shutdown_engine",
+        "set_editor_owner",
     };
     return k;
 }
@@ -104,6 +105,10 @@ void validate_command_payload(const std::string& kind, const nlohmann::json& p) 
             reject("payload.path must be string or null");
     } else if (kind == "load_session") {
         str("path");
+    } else if (kind == "set_editor_owner") {
+        // 主視窗 HWND(engine 是背景 process,owner 讓 editor host 變 owned
+        // 浮動視窗:無工作列項、隨主程式最小化)。u64:HWND 64-bit 上 8 bytes
+        if (!has("hwnd") || !is_u64(p["hwnd"])) reject("payload.hwnd must be u64");
     } else if (kind == "ping" || kind == "get_snapshot" || kind == "list_devices" ||
                kind == "stop" || kind == "shutdown_engine" || kind == "open_device_panel") {
         if (!p.empty()) reject("payload must be empty object");

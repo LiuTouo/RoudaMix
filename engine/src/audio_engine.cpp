@@ -374,7 +374,21 @@ bool AudioEngine::load_preset(std::uint32_t instance_id, const std::filesystem::
             if (std::isfinite(fresh)) v = fresh;
         }
     }
+    // 三路同步:load_preset 只更新了 host 權威表/component state —— RT(ring)與
+    // controller(editor GUI 顯示)都沒吃到,kHs Gain 實測數值不回來。這裡補推
+    for (auto& [id, v] : s->param_values) {
+        s->ring->push({id, v});                    // RT 下一個 block 套用
+        s->plugin->set_param_normalized(id, v);    // controller → editor GUI
+    }
     return true;
+}
+
+void AudioEngine::sync_controller_params(std::uint32_t instance_id) {
+    // session 載入:set_param 只餵 RT ring,controller(editor GUI)不知道 ——
+    // 開 GUI 會看到舊值/預設值。這裡把 host 權威值推給 controller 同步顯示
+    RackSlot* s = find_slot_mut(instance_id);
+    if (s == nullptr) return;
+    for (const auto& [id, v] : s->param_values) s->plugin->set_param_normalized(id, v);
 }
 
 bool AudioEngine::set_source(bool passthrough, float sine_freq, std::string& err) {

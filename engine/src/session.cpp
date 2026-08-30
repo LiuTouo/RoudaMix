@@ -130,6 +130,8 @@ bool load(AudioEngine& engine, const std::filesystem::path& file, nlohmann::json
                         engine.set_param(instance_id, p["paramId"].get<std::uint32_t>(),
                                          p["normalized"].get<double>(), op_err);
                 }
+                // set_param 只餵 RT;controller 也推,開 plugin GUI 才會顯示場景值
+                engine.sync_controller_params(instance_id);
             }
         }
     }

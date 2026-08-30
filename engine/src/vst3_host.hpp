@@ -10,6 +10,9 @@
 
 namespace rmx {
 
+// UTF-8 → UTF-16(engine 內視窗 title / tab 文字用;StringConvert 只給 u16string)
+std::wstring to_wide(const std::string& s);
+
 struct Vst3ClassInfo {
     std::string uid;    // class ID hex
     std::string name;
@@ -67,6 +70,8 @@ public:
 
     // 控制面讀 normalized 值;無此參數或無 controller 回 NaN
     double param_value(uint32_t id) const noexcept;
+    // 控制面寫 controller(preset 載入後同步 editor GUI 顯示);冪等
+    void set_param_normalized(uint32_t id, double value) noexcept;
 
     // ---- preset(.vstpreset 檔案式 state 存取;控制面呼叫)----
     // 寫 VST3 容器:'VST3' header + 'Comp'(component state)+ 'Cntc'(controller
@@ -84,14 +89,21 @@ public:
                      std::vector<std::pair<std::uint32_t, double>>& host_params_inout,
                      std::string& error, bool& host_values_from_file);
 
-    // ---- editor(plugin 自帶 GUI;top-level 視窗住 engine process)----
-    // performEdit(editor 內改參數)→ cb(paramId, normalized);open_editor 前設定
+    // ---- editor(plugin 自帶 GUI;view 生命週期在這,視窗由 EditorHost 持有,
+    //      見 editor_host.hpp)----
+    // performEdit(editor 內改參數)→ cb(paramId, normalized);attach 前設定
     void set_param_callback(std::function<void(uint32_t, double)> cb) noexcept;
-    // 建 editor 視窗 + attach;無 view 或 attach 失敗回 false(err 帶原因)
-    bool open_editor();
-    // 冪等;使用者按視窗 X 或此呼叫同效。remove/析構前必呼
+    bool editor_capable() const noexcept;  // loaded && 有 controller
+    // createView → setFrame → attached(parent);成功回 true,out_w/out_h =
+    // clamp 後 editor 原生尺寸(80..4096 / 60..4096)。
+    // parent_hwnd = HWND、plug_frame = IPlugFrame*(void* 避免 Win32/VST3 型別
+    // 進本 header —— rack/audio_engine 都 include 它)
+    bool attach_editor(void* parent_hwnd, void* plug_frame, int& out_w, int& out_h);
+    // 冪等;detach 並 release view(視窗歸 EditorHost 管,不在這摧毀)。
+    // remove/析構前必呼
     void close_editor() noexcept;
-    bool editor_open() const noexcept;
+    bool editor_open() const noexcept;               // view attached?
+    void editor_resize_view(int w, int h) noexcept;  // host WM_SIZE → view->onSize
 
 private:
     struct Impl;
