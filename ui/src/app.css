@@ -1,3 +1,23 @@
+/* IBM Plex Sans TC — 本機打包(TC 版不在 Google Fonts;來源 IBM/plex release,OFL) */
+@font-face {
+  font-family: "IBM Plex Sans TC";
+  src: url("/fonts/IBMPlexSansTC-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Sans TC";
+  src: url("/fonts/IBMPlexSansTC-SemiBold.ttf") format("truetype");
+  font-weight: 500 600;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Sans TC";
+  src: url("/fonts/IBMPlexSansTC-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-display: swap;
+}
+
 /* RoudaMix 深色主題 — tokens(M2 起機架 UI 全量沿用) */
 :root {
   --bg: #14161a;
@@ -11,6 +31,7 @@
   --warn: #ffb454;
   --err: #ff5c5c;
   --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  color-scheme: dark; /* 原生控制項(select 彈出清單等)跟著深色 */
 }
 
 * {
@@ -23,7 +44,7 @@ body {
   height: 100%;
   background: var(--bg);
   color: var(--text);
-  font: 13px/1.45 "Segoe UI", system-ui, sans-serif;
+  font: 13px/1.45 "IBM Plex Sans TC", "Segoe UI", system-ui, sans-serif;
   user-select: none;
 }
 
@@ -51,4 +72,48 @@ button:disabled {
 
 .mono {
   font-family: var(--mono);
+}
+
+/* ---- 去網頁感:細深色捲動條、選字色、鍵盤焦點 ---- */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #363c44 transparent;
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #363c44;
+  border-radius: 5px;
+  border: 2px solid var(--bg);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #454c56;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+::selection {
+  background: rgb(77 163 255 / 0.35);
+}
+:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* ---- 拖曳「拿起」幽靈圖(ui/src/lib/ghost.ts 掛的 clone;全域因為在 body 下) ---- */
+.drag-ghost {
+  /* 高元素旋轉角在上下端位移放大(1000px × 2.5° ≈ 43px)= 看起來歪很大;1° 剛好有拿起感 */
+  transform: rotate(1deg) scale(1.03);
+  opacity: 0.96;
+  border-radius: 8px;
+  background: var(--bg-panel);
+  border: 1px solid var(--accent);
+  box-shadow:
+    0 16px 40px rgb(0 0 0 / 0.65),
+    0 3px 10px rgb(0 0 0 / 0.45);
 }
