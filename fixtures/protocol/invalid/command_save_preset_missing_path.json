@@ -1,5 +1,5 @@
 {
-  "protocolVersion": 1,
+  "protocolVersion": 2,
   "id": 72,
   "kind": "save_preset",
   "payload": { "instanceId": 3 }

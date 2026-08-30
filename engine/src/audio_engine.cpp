@@ -32,20 +32,20 @@ inline void meter_band(MeterAccumulator& m, std::size_t strip, const float* l,
     }
     m.accumulate(strip, pl, pr, sl, sr, n);
 }
+// dest summing:dst += src(RT 內聯熱迴圈)
+inline void bus_add(float* dst, const float* src, std::uint32_t n) noexcept {
+    for (std::uint32_t i = 0; i < n; ++i) dst[i] += src[i];
+}
 }  // namespace
 
-AudioEngine::AudioEngine() {
-    // 預設 passthrough(sine 僅測試用,協議 set_source 仍可切)
-    source_passthrough_.store(1u, std::memory_order_relaxed);
-    sine_freq_bits_.store(f32_bits(440.0F), std::memory_order_relaxed);
-}
+AudioEngine::AudioEngine() = default;
 
 AudioEngine::~AudioEngine() {
     exiting_.store(true, std::memory_order_release);
     if (publish_thread_.joinable()) publish_thread_.join();
     device_.close();
-    delete rt_rack_.load(std::memory_order_relaxed);
-    for (auto& r : retired_) delete r.chain;
+    delete rt_graph_.load(std::memory_order_relaxed);
+    for (auto& r : retired_) delete r.graph;
     retired_.clear();
     if (shm_ != nullptr) UnmapViewOfFile(shm_);
     if (shm_mapping_ != nullptr) CloseHandle(shm_mapping_);
@@ -70,6 +70,8 @@ std::vector<AudioEngine::DeviceSummary> AudioEngine::list_devices() {
             sum.sample_rates = cap.sample_rates;
             sum.buffer_sizes = cap.buffer_options();
             sum.current_sample_rate = cap.current_sample_rate;
+            sum.input_names = cap.input_names;
+            sum.output_names = cap.output_names;
         }
         probe_device.close();
         result.push_back(std::move(sum));
@@ -79,8 +81,7 @@ std::vector<AudioEngine::DeviceSummary> AudioEngine::list_devices() {
 
 bool AudioEngine::start(const std::string& device_key,
                         std::optional<std::uint32_t> sample_rate,
-                        std::optional<std::uint32_t> buffer_size,
-                        std::optional<bool> input_mono, std::string& err) {
+                        std::optional<std::uint32_t> buffer_size, std::string& err) {
     if (device_.running()) {
         err = "already running";
         return false;
@@ -102,26 +103,45 @@ bool AudioEngine::start(const std::string& device_key,
     const auto& cap = device_.capability();
     const std::uint32_t rate = sample_rate.value_or(cap.current_sample_rate);
     const std::uint32_t buffer = buffer_size.value_or(0);  // 0 = driver preferred
-    input_mono_.store(input_mono.value_or(true) ? 1u : 0u, std::memory_order_relaxed);
 
-    if (!device_.prepare(rate, /*in=*/2, /*out=*/2, buffer, err)) {
+    // 從所有軌的 source/output 收集 ASIO channel 聯集(M5:軌道自選 pair)
+    std::vector<std::uint32_t> in_chans, out_chans;
+    for (const auto& t : tracks_) {
+        if (t.source.type == TrackSource::kAsioIn) {
+            in_chans.push_back(t.source.asio_in_ch);
+            in_chans.push_back(t.source.asio_in_ch + 1);
+        }
+        if (t.output.type == TrackOutput::kAsioOut) {
+            out_chans.push_back(t.output.asio_out_ch);
+            out_chans.push_back(t.output.asio_out_ch + 1);
+        }
+    }
+    std::sort(in_chans.begin(), in_chans.end());
+    in_chans.erase(std::unique(in_chans.begin(), in_chans.end()), in_chans.end());
+    std::sort(out_chans.begin(), out_chans.end());
+    out_chans.erase(std::unique(out_chans.begin(), out_chans.end()), out_chans.end());
+    if (out_chans.empty()) out_chans = {0, 1};  // createBuffers 至少要一組 out
+
+    if (!device_.prepare(rate, in_chans, out_chans, buffer, err)) {
         device_.close();
         return false;
     }
     device_.set_callback(this);
 
-    // rack plugin 先 initialize + 進 RT 鏈,再開 device —— callback 一啟動就拿到
-    // 已就緒的 plugin(順序反了 RT 會拿到未 initialize 的鏈,process 全 fail)。
+    // 全部軌的 plugin 先 initialize + 進 RT graph,再開 device —— callback 一啟動
+    // 就拿到已就緒的 plugin(順序反了 RT 會拿到未 initialize 的鏈,process 全 fail)。
     // terminate 先跑:前次 start 失敗殘留的 initialized 狀態會讓 initialize 拒絕
-    for (auto& slot : rack_) {
-        slot.plugin->terminate();
-        if (!slot.plugin->initialize(static_cast<double>(rate), device_.block_size())) {
-            device_.close();
-            err = "plugin '" + slot.name + "' init failed: " + slot.plugin->last_error();
-            return false;
+    for (auto& t : tracks_) {
+        for (auto& slot : t.chain) {
+            slot.plugin->terminate();
+            if (!slot.plugin->initialize(static_cast<double>(rate), device_.block_size())) {
+                device_.close();
+                err = "plugin '" + slot.name + "' init failed: " + slot.plugin->last_error();
+                return false;
+            }
         }
     }
-    swap_rack();
+    swap_graph();
 
     const std::uint64_t callbacks_before = device_.callbacks();
     if (!device_.start(err)) {
@@ -140,7 +160,6 @@ bool AudioEngine::start(const std::string& device_key,
     }
 
     rt_sample_rate_.store(rate, std::memory_order_relaxed);
-    rt_phase_.store(0, std::memory_order_relaxed);
     last_device_key_ = device_key;  // session 用:stop 後存檔仍記得裝置
     last_sample_rate_ = rate;
     last_buffer_size_ = device_.block_size();
@@ -163,17 +182,31 @@ bool AudioEngine::start(const std::string& device_key,
                 next += std::chrono::milliseconds(33);  // ~30Hz
                 std::this_thread::sleep_until(next);
                 if (shm_ == nullptr) continue;
-                // strip instance ids:0 = engine 輸出(0xFFFFFFFF)、1.. = rack slots
+                // strip 位置 = 陣列索引:0 = engine 輸出、其後依 snapshot 的
+                // track_strip / chain_strips 放軌(kind 1)與 plugin(kind 0)
                 std::uint32_t ids[kTelemetryStrips] = {0xFFFFFFFFu};
+                std::uint8_t kinds[kTelemetryStrips] = {2};
                 std::size_t count = 1;
-                const RackChain* chain = rt_rack_.load(std::memory_order_acquire);
-                if (chain != nullptr) {
-                    for (const auto& slot : chain->slots) {
-                        if (count >= kTelemetryStrips) break;
-                        ids[count++] = slot.instance_id;
+                const TrackGraph* g = rt_graph_.load(std::memory_order_acquire);
+                if (g != nullptr) {
+                    for (const auto& t : g->nodes) {
+                        if (t.track_strip != kNoStrip && t.track_strip < kTelemetryStrips) {
+                            ids[t.track_strip] = t.track_id;
+                            kinds[t.track_strip] = 1;
+                            count = (std::max)(count, static_cast<std::size_t>(t.track_strip) + 1);
+                        }
+                        for (std::size_t i = 0; i < t.chain.size() && i < t.chain_strips.size();
+                             ++i) {
+                            const auto s = t.chain_strips[i];
+                            if (s != kNoStrip && s < kTelemetryStrips) {
+                                ids[s] = t.chain[i].instance_id;
+                                kinds[s] = 0;
+                                count = (std::max)(count, static_cast<std::size_t>(s) + 1);
+                            }
+                        }
                     }
                 }
-                meters_.publish(*shm_, device_.xruns(), ids, count, device_.running());
+                meters_.publish(*shm_, device_.xruns(), ids, kinds, count, device_.running());
             }
         });
     }
@@ -182,23 +215,69 @@ bool AudioEngine::start(const std::string& device_key,
 
 void AudioEngine::stop() noexcept {
     device_.stop();
-    // RT 停 callback 後退鏈、卸 plugin(下次 start 依新 rate 重建)
-    retire_rack();
-    for (auto& slot : rack_) slot.plugin->terminate();
+    // RT 停 callback 後退 graph、卸 plugin(下次 start 依新 rate 重建)
+    retire_graph();
+    for (auto& t : tracks_)
+        for (auto& slot : t.chain) slot.plugin->terminate();
     clear_expired_retired(/*force=*/true);
 }
 
-// ---- rack ----
+// ---- track graph swap(同舊 rack 的 grace 模式)----
 
-void AudioEngine::swap_rack() noexcept {
-    auto* fresh = new RackChain{rack_};  // 淺拷貝:plugin/ring shared、值欄位快照
-    RackChain* old = rt_rack_.exchange(fresh, std::memory_order_acq_rel);
+void AudioEngine::swap_graph() noexcept {
+    // 深拷貝結構殼:chain 內 plugin/ring shared_ptr、RT buffer shared_ptr 共用
+    auto* fresh = new TrackGraph{tracks_, {}, {}};
+    fresh->order = graph_topo_order(tracks_);
+    if (fresh->order.empty()) {
+        fresh->order.clear();
+        for (std::uint32_t i = 0; i < tracks_.size(); ++i) fresh->order.push_back(i);
+    }
+    // id → node index(RT dest sum 查表)
+    if (!tracks_.empty()) {
+        std::uint32_t max_id = 0;
+        for (const auto& t : tracks_) max_id = (std::max)(max_id, t.track_id);
+        fresh->id_index.assign(static_cast<std::size_t>(max_id) + 1, kNoStrip);
+        for (std::uint32_t i = 0; i < tracks_.size(); ++i)
+            fresh->id_index[tracks_[i].track_id] = i;
+    }
+    // src/out 解析:軌選的 pair 基底 → ASIO scratch 位置(沒建 = -1 靜音)
+    const auto& imap = device_.input_map();
+    const auto& omap = device_.output_map();
+    auto resolve = [](const std::vector<std::uint32_t>& map, std::uint32_t ch) -> std::int32_t {
+        for (std::size_t i = 0; i < map.size(); ++i)
+            if (map[i] == ch) return static_cast<std::int32_t>(i);
+        return -1;
+    };
+    // telemetry strip 預算:0 = engine 輸出,之後 master 序逐軌(軌錶優先,
+    // plugin 錶超 64 根就省略 — 錶少幾根好過動 SHM 大小)
+    std::size_t next_strip = 1;
+    for (auto& t : fresh->nodes) {
+        t.src_l = t.src_r = t.out_l = t.out_r = -1;
+        if (t.source.type == TrackSource::kAsioIn) {
+            t.src_l = resolve(imap, t.source.asio_in_ch);
+            t.src_r = resolve(imap, t.source.asio_in_ch + 1);
+        }
+        if (t.output.type == TrackOutput::kAsioOut) {
+            t.out_l = resolve(omap, t.output.asio_out_ch);
+            t.out_r = resolve(omap, t.output.asio_out_ch + 1);
+        }
+        t.track_strip = kNoStrip;
+        t.chain_strips.assign(t.chain.size(), kNoStrip);
+        if (next_strip < kTelemetryStrips) {
+            t.track_strip = static_cast<std::uint32_t>(next_strip++);
+            for (auto& s : t.chain_strips) {
+                if (next_strip >= kTelemetryStrips) break;
+                s = static_cast<std::uint32_t>(next_strip++);
+            }
+        }
+    }
+    TrackGraph* old = rt_graph_.exchange(fresh, std::memory_order_acq_rel);
     if (old != nullptr) retired_.push_back({old, GetTickCount64()});
     clear_expired_retired(false);
 }
 
-void AudioEngine::retire_rack() noexcept {
-    RackChain* old = rt_rack_.exchange(nullptr, std::memory_order_acq_rel);
+void AudioEngine::retire_graph() noexcept {
+    TrackGraph* old = rt_graph_.exchange(nullptr, std::memory_order_acq_rel);
     if (old != nullptr) retired_.push_back({old, GetTickCount64()});
 }
 
@@ -208,29 +287,283 @@ void AudioEngine::clear_expired_retired(bool force) noexcept {
     still.reserve(retired_.size());
     for (auto& r : retired_) {
         if (force || (now - r.tick) > 500)
-            delete r.chain;
+            delete r.graph;
         else
             still.push_back(std::move(r));
     }
     retired_ = std::move(still);
 }
 
+// ---- tracks(控制面)----
+
+TrackNode* AudioEngine::find_track_mut(std::uint32_t track_id) noexcept {
+    for (auto& t : tracks_)
+        if (t.track_id == track_id) return &t;
+    return nullptr;
+}
+
+bool AudioEngine::asio_in_pair_busy(std::uint32_t ch, std::uint32_t except_track) const noexcept {
+    for (const auto& t : tracks_)
+        if (t.track_id != except_track && t.source.type == TrackSource::kAsioIn &&
+            t.source.asio_in_ch == ch)
+            return true;
+    return false;
+}
+
+bool AudioEngine::asio_out_pair_busy(std::uint32_t ch, std::uint32_t except_track) const noexcept {
+    for (const auto& t : tracks_)
+        if (t.track_id != except_track && t.output.type == TrackOutput::kAsioOut &&
+            t.output.asio_out_ch == ch)
+            return true;
+    return false;
+}
+
+bool AudioEngine::track_add(TrackKind kind, const std::string& name, std::uint32_t color,
+                            std::uint32_t& track_id, std::string& err) {
+    TrackNode t;
+    t.kind = kind;
+    t.track_id = next_track_id_++;
+    t.name = name.empty() ? (std::string(track_kind_str(kind)) + " " +
+                             std::to_string(next_track_id_ - 1))
+                          : name;
+    if (color == 0) {
+        // 調色盤輪替:8 色循環,不用使用者挑
+        static constexpr std::uint32_t kPalette[] = {0x4da3ff, 0x3ddc84, 0xffb454, 0xff5c5c,
+                                                     0xb48cff, 0x4dd0e1, 0xf06292, 0xaed581};
+        t.color = kPalette[(t.track_id - 1) % 8];
+    } else {
+        t.color = color & 0xFFFFFF;
+    }
+    t.buf = std::make_shared<TrackRt>();
+    track_id = t.track_id;
+    tracks_.push_back(std::move(t));
+    swap_graph();
+    return true;
+}
+
+bool AudioEngine::track_remove(std::uint32_t track_id, std::string& err) {
+    auto it = std::find_if(tracks_.begin(), tracks_.end(),
+                           [&](const TrackNode& t) { return t.track_id == track_id; });
+    if (it == tracks_.end()) {
+        err = "unknown trackId " + std::to_string(track_id);
+        return false;
+    }
+    // 該軌的 plugin editor 先收(editor 與 dispatch 同在 main thread,無並發)
+    for (auto& slot : it->chain) {
+        if (slot.plugin->editor_open()) slot.plugin->close_editor();
+    }
+    tracks_.erase(it);
+    // 其他軌 dests 的懸空引用一併清
+    for (auto& t : tracks_) {
+        t.dests.erase(std::remove(t.dests.begin(), t.dests.end(), track_id), t.dests.end());
+    }
+    swap_graph();
+    return true;
+}
+
+bool AudioEngine::track_set(std::uint32_t track_id, std::optional<std::string> name,
+                            std::optional<std::uint32_t> color, std::optional<float> gain,
+                            std::optional<bool> mute, std::string& err) {
+    TrackNode* t = find_track_mut(track_id);
+    if (t == nullptr) {
+        err = "unknown trackId " + std::to_string(track_id);
+        return false;
+    }
+    if (name && !name->empty()) t->name = *name;
+    if (color) t->color = *color & 0xFFFFFF;
+    if (gain) {
+        if (!std::isfinite(*gain) || *gain < 0.0F || *gain > 4.0F) {
+            err = "gain must be in [0, 4]";
+            return false;
+        }
+        t->gain = *gain;
+    }
+    if (mute) t->mute = *mute;
+    swap_graph();
+    return true;
+}
+
+bool AudioEngine::track_set_source(std::uint32_t track_id, const TrackSource& source,
+                                   std::string& err, std::string& code) {
+    TrackNode* t = find_track_mut(track_id);
+    if (t == nullptr) {
+        err = "unknown trackId " + std::to_string(track_id);
+        code = "track_not_found";
+        return false;
+    }
+    if (source.type == TrackSource::kApp) {
+        err = "app capture not available yet (M5b)";
+        code = "bad_command";
+        return false;
+    }
+    // fx/output 軌沒有來源選擇(insert 型:上游 dest 指進來)
+    if ((t->kind == TrackKind::kFx || t->kind == TrackKind::kOutput) &&
+        source.type != TrackSource::kNone) {
+        err = track_kind_str(t->kind) + std::string(" track has no source");
+        code = "bad_command";
+        return false;
+    }
+    if (source.type == TrackSource::kSine &&
+        (source.sine_freq < 20.0F || source.sine_freq > 20000.0F)) {
+        err = "sine freq out of range [20,20000]";
+        code = "bad_command";
+        return false;
+    }
+    if (source.type == TrackSource::kAsioIn) {
+        if (asio_in_pair_busy(source.asio_in_ch, track_id)) {
+            err = "asio input pair already used by another track";
+            code = "device_busy";
+            return false;
+        }
+        if (!device_.capability().input_types.empty() &&
+            source.asio_in_ch + 1 >= device_.capability().input_types.size()) {
+            err = "asio input channel out of range";
+            code = "bad_command";
+            return false;
+        }
+    }
+    t->source = source;
+    swap_graph();
+    return true;
+}
+
+bool AudioEngine::track_set_dests(std::uint32_t track_id, std::vector<std::uint32_t> dests,
+                                  std::string& err, std::string& code) {
+    TrackNode* t = find_track_mut(track_id);
+    if (t == nullptr) {
+        err = "unknown trackId " + std::to_string(track_id);
+        code = "track_not_found";
+        return false;
+    }
+    for (const auto d : dests) {
+        if (d == track_id) {
+            err = "track cannot route to itself";
+            code = "bad_command";
+            return false;
+        }
+        if (find_track_mut(d) == nullptr) {
+            err = "unknown dest trackId " + std::to_string(d);
+            code = "track_not_found";
+            return false;
+        }
+    }
+    std::sort(dests.begin(), dests.end());
+    dests.erase(std::unique(dests.begin(), dests.end()), dests.end());
+    // 有環不動 master(冪等重試安全);RT 端契約 = control 面保證無環
+    const auto old = t->dests;
+    t->dests = std::move(dests);
+    if (graph_has_cycle(tracks_)) {
+        t->dests = std::move(old);
+        err = "routing would create a cycle";
+        code = "cycle_detected";
+        return false;
+    }
+    swap_graph();
+    return true;
+}
+
+bool AudioEngine::track_set_output(std::uint32_t track_id, const TrackOutput& output,
+                                   std::string& err, std::string& code) {
+    TrackNode* t = find_track_mut(track_id);
+    if (t == nullptr) {
+        err = "unknown trackId " + std::to_string(track_id);
+        code = "track_not_found";
+        return false;
+    }
+    if (t->kind != TrackKind::kOutput && output.type != TrackOutput::kNone) {
+        err = "only output tracks take a sink";
+        code = "bad_command";
+        return false;
+    }
+    if (output.type == TrackOutput::kWasapiRender) {
+        err = "wasapi render not available yet (M5c)";
+        code = "bad_command";
+        return false;
+    }
+    if (output.type == TrackOutput::kAsioOut) {
+        if (asio_out_pair_busy(output.asio_out_ch, track_id)) {
+            err = "asio output pair already used by another track";
+            code = "device_busy";
+            return false;
+        }
+        if (!device_.capability().output_types.empty() &&
+            output.asio_out_ch + 1 >= device_.capability().output_types.size()) {
+            err = "asio output channel out of range";
+            code = "bad_command";
+            return false;
+        }
+    }
+    t->output = output;
+    swap_graph();
+    return true;
+}
+
+bool AudioEngine::track_move(std::uint32_t track_id, std::size_t new_index, std::string& err) {
+    // 同 kind 群組內重排(UI 欄內上下移)
+    auto target = std::find_if(tracks_.begin(), tracks_.end(), [&](const TrackNode& t) {
+        return t.track_id == track_id;
+    });
+    if (target == tracks_.end()) {
+        err = "unknown trackId " + std::to_string(track_id);
+        return false;
+    }
+    std::vector<std::size_t> idxs;  // 群組成員的 master 索引(master 序)
+    for (std::size_t i = 0; i < tracks_.size(); ++i)
+        if (tracks_[i].kind == target->kind) idxs.push_back(i);
+    if (new_index >= idxs.size()) {
+        err = "newIndex out of range";
+        return false;
+    }
+    const auto cur = static_cast<std::size_t>(
+        std::find(idxs.begin(), idxs.end(), static_cast<std::size_t>(target - tracks_.begin())) -
+        idxs.begin());
+    if (cur == new_index) return true;
+    // 重排後第 k 個群組成員落到 master 位置 g2[k];先全取出再對位寫回
+    // (g2 是 idxs 的排列,move-from 的洞會被精確補回)
+    std::vector<std::size_t> g2;
+    g2.reserve(idxs.size());
+    for (const auto i : idxs)
+        if (i != idxs[cur]) g2.push_back(i);
+    g2.insert(g2.begin() + static_cast<std::ptrdiff_t>(new_index), idxs[cur]);
+    std::vector<TrackNode> members;
+    members.reserve(idxs.size());
+    for (const auto i : idxs) members.push_back(std::move(tracks_[i]));
+    for (std::size_t k = 0; k < g2.size(); ++k) tracks_[g2[k]] = std::move(members[k]);
+    swap_graph();
+    return true;
+}
+
 RackSlot* AudioEngine::find_slot_mut(std::uint32_t instance_id) noexcept {
-    for (auto& s : rack_)
-        if (s.instance_id == instance_id) return &s;
+    for (auto& t : tracks_)
+        for (auto& s : t.chain)
+            if (s.instance_id == instance_id) return &s;
     return nullptr;
 }
 
 const RackSlot* AudioEngine::find_slot(std::uint32_t instance_id) const noexcept {
-    for (const auto& s : rack_)
-        if (s.instance_id == instance_id) return &s;
+    for (const auto& t : tracks_)
+        for (const auto& s : t.chain)
+            if (s.instance_id == instance_id) return &s;
     return nullptr;
 }
 
-bool AudioEngine::add_plugin(const std::string& module_path, const std::string& class_id,
-                             std::uint32_t& instance_id, std::string& err) {
-    if (rack_.size() >= kMaxRackSlots) {
-        err = "rack full (15 slots)";
+std::vector<AudioEngine::PluginTabInfo> AudioEngine::plugin_tabs() const {
+    std::vector<PluginTabInfo> tabs;
+    for (const auto& t : tracks_) {
+        for (const auto& s : t.chain) {
+            tabs.push_back({s.instance_id, t.name + " · " + s.name, s.plugin->editor_capable(),
+                            s.bypass});
+        }
+    }
+    return tabs;
+}
+
+bool AudioEngine::add_plugin(std::uint32_t track_id, const std::string& module_path,
+                             const std::string& class_id, std::uint32_t& instance_id,
+                             std::string& err) {
+    TrackNode* t = find_track_mut(track_id);
+    if (t == nullptr) {
+        err = "unknown trackId " + std::to_string(track_id);
         return false;
     }
     RackSlot slot;
@@ -252,20 +585,22 @@ bool AudioEngine::add_plugin(const std::string& module_path, const std::string& 
     for (const auto& p : slot.plugin->params())
         slot.param_values.push_back({p.id, p.default_normalized});
     instance_id = slot.instance_id;
-    rack_.push_back(std::move(slot));
-    swap_rack();
+    t->chain.push_back(std::move(slot));
+    swap_graph();
     return true;
 }
 
 bool AudioEngine::remove_plugin(std::uint32_t instance_id, std::string& err) {
-    for (auto it = rack_.begin(); it != rack_.end(); ++it) {
-        if (it->instance_id == instance_id) {
-            // editor 視窗先收(同步 DestroyWindow;editor 與 dispatch 同在 main thread,
-            // 無並發——performEdit 回呼不會同時跑)
-            if (it->plugin->editor_open()) it->plugin->close_editor();
-            rack_.erase(it);
-            swap_rack();
-            return true;
+    for (auto& t : tracks_) {
+        for (auto it = t.chain.begin(); it != t.chain.end(); ++it) {
+            if (it->instance_id == instance_id) {
+                // editor 視窗先收(同步 DestroyWindow;editor 與 dispatch 同在 main
+                // thread,無並發——performEdit 回呼不會同時跑)
+                if (it->plugin->editor_open()) it->plugin->close_editor();
+                t.chain.erase(it);
+                swap_graph();
+                return true;
+            }
         }
     }
     err = "unknown instanceId " + std::to_string(instance_id);
@@ -274,21 +609,27 @@ bool AudioEngine::remove_plugin(std::uint32_t instance_id, std::string& err) {
 
 bool AudioEngine::move_plugin(std::uint32_t instance_id, std::size_t to_index,
                               std::string& err) {
-    if (to_index >= rack_.size()) {
-        err = "toIndex out of range";
-        return false;
+    for (auto& t : tracks_) {
+        auto& chain = t.chain;
+        if (to_index >= chain.size() &&
+            std::none_of(chain.begin(), chain.end(),
+                         [&](const RackSlot& s) { return s.instance_id == instance_id; }))
+            continue;
+        const auto from = std::find_if(chain.begin(), chain.end(),
+                                       [&](const RackSlot& s) { return s.instance_id == instance_id; });
+        if (from == chain.end()) continue;
+        if (to_index >= chain.size()) {
+            err = "toIndex out of range";
+            return false;
+        }
+        RackSlot moved = std::move(*from);
+        chain.erase(from);
+        chain.insert(chain.begin() + static_cast<std::ptrdiff_t>(to_index), std::move(moved));
+        swap_graph();
+        return true;
     }
-    const auto from = std::find_if(rack_.begin(), rack_.end(),
-                                   [&](const RackSlot& s) { return s.instance_id == instance_id; });
-    if (from == rack_.end()) {
-        err = "unknown instanceId " + std::to_string(instance_id);
-        return false;
-    }
-    RackSlot moved = std::move(*from);
-    rack_.erase(from);
-    rack_.insert(rack_.begin() + static_cast<std::ptrdiff_t>(to_index), std::move(moved));
-    swap_rack();
-    return true;
+    err = "unknown instanceId " + std::to_string(instance_id);
+    return false;
 }
 
 bool AudioEngine::set_bypass(std::uint32_t instance_id, bool bypass, std::string& err) {
@@ -298,7 +639,7 @@ bool AudioEngine::set_bypass(std::uint32_t instance_id, bool bypass, std::string
         return false;
     }
     s->bypass = bypass;
-    swap_rack();
+    swap_graph();
     return true;
 }
 
@@ -336,16 +677,16 @@ bool AudioEngine::save_preset(std::uint32_t instance_id, const std::filesystem::
         err = "unknown instanceId " + std::to_string(instance_id);
         return false;
     }
-    // getState 與 RT process 不得併發(VST3 契約):掛 bypass 鏈讓 RT 放掉 plugin,
-    // 等在飛的舊鏈 block 跑完再 IO,做完還原
+    // getState 與 RT process 不得併發(VST3 契約):掛 bypass 讓 RT 放掉 plugin,
+    // 等在飛的舊 graph block 跑完再 IO,做完還原
     RackSlot* mut = find_slot_mut(instance_id);
     const bool orig_bypass = mut->bypass;
     mut->bypass = true;
-    swap_rack();
+    swap_graph();
     Sleep(60);  // > 2 個最大 ASIO block:RT 不再持舊鏈
     const bool ok = mut->plugin->save_preset(file, mut->param_values, err);
     mut->bypass = orig_bypass;
-    swap_rack();
+    swap_graph();
     return ok;
 }
 
@@ -356,15 +697,15 @@ bool AudioEngine::load_preset(std::uint32_t instance_id, const std::filesystem::
         err = "unknown instanceId " + std::to_string(instance_id);
         return false;
     }
-    // setState 與 RT process 不得併發:同 save_preset,先掛 bypass 鏈
+    // setState 與 RT process 不得併發:同 save_preset,先掛 bypass
     const bool orig_bypass = s->bypass;
     s->bypass = true;
-    swap_rack();
+    swap_graph();
     Sleep(60);
     bool host_values_from_file = false;
     const bool ok = s->plugin->load_preset(file, s->param_values, err, host_values_from_file);
     s->bypass = orig_bypass;
-    swap_rack();
+    swap_graph();
     if (!ok) return false;
     // 檔案無 RmxP(外部 host 存的 preset)且 controller 同步成功:拿 controller
     // 值重同步 host 權威表。兩者皆無 = 保持現值(component 已套用,UI 值不明)
@@ -389,16 +730,6 @@ void AudioEngine::sync_controller_params(std::uint32_t instance_id) {
     RackSlot* s = find_slot_mut(instance_id);
     if (s == nullptr) return;
     for (const auto& [id, v] : s->param_values) s->plugin->set_param_normalized(id, v);
-}
-
-bool AudioEngine::set_source(bool passthrough, float sine_freq, std::string& err) {
-    if (sine_freq < 20.0F || sine_freq > 20000.0F) {
-        err = "sineFreq out of range [20,20000]";
-        return false;
-    }
-    source_passthrough_.store(passthrough ? 1u : 0u, std::memory_order_relaxed);
-    sine_freq_bits_.store(f32_bits(sine_freq), std::memory_order_relaxed);
-    return true;
 }
 
 // controlPanel() 多數 driver 是 modal(關面板才返回)— 呼叫端(detach thread)
@@ -427,10 +758,7 @@ EngineStatusInfo AudioEngine::status() const {
         s.output_latency = device_.capability().output_latency;
     }
     s.xruns = device_.xruns();
-    s.source = source_passthrough_.load(std::memory_order_relaxed) ? "passthrough" : "sine";
-    s.sine_freq = bits_f32(sine_freq_bits_.load(std::memory_order_relaxed));
-    if (s.sine_freq == 0.0F) s.sine_freq = 440.0F;
-    s.input_mono = input_mono_.load(std::memory_order_relaxed) != 0;
+    s.track_count = static_cast<std::uint32_t>(tracks_.size());
     s.plugin_fails = rt_plugin_fails_.load(std::memory_order_relaxed);
     return s;
 }
@@ -439,58 +767,80 @@ EngineStatusInfo AudioEngine::status() const {
 void AudioEngine::process(const AudioBlock& block) noexcept {
     const std::uint32_t frames =
         block.frames > kMaxBlockFrames ? kMaxBlockFrames : block.frames;
-    const bool passthrough = source_passthrough_.load(std::memory_order_relaxed) != 0;
-    const bool mono = input_mono_.load(std::memory_order_relaxed) != 0;
-    const float freq = bits_f32(sine_freq_bits_.load(std::memory_order_relaxed));
-    const float rate = static_cast<float>(rt_sample_rate_.load(std::memory_order_relaxed));
+    TrackGraph* g = rt_graph_.load(std::memory_order_acquire);
+    if (g == nullptr || frames == 0) return;  // 輸出已由 asio_device 清零 = 靜音
 
-    float* out_l = block.outputs.size() > 0 ? block.outputs[0] : nullptr;
-    float* out_r = block.outputs.size() > 1 ? block.outputs[1] : nullptr;
-    const float* in_l = block.inputs.size() > 0 ? block.inputs[0] : nullptr;
-    const float* in_r = block.inputs.size() > 1 ? block.inputs[1] : nullptr;
-
-    std::uint64_t phase = rt_phase_.load(std::memory_order_relaxed);
-    const std::uint64_t step =
-        rate > 0.0F
-            ? static_cast<std::uint64_t>(4294967296.0 * static_cast<double>(freq) / rate)
-            : 0;
-
-    // 來源進 ping bus,再過 rack 鏈(每 slot 就地 ping-pong),最後 copy 到輸出
-    float* cur_l = rt_bus_[0][0];
-    float* cur_r = rt_bus_[0][1];
-    float* alt_l = rt_bus_[1][0];
-    float* alt_r = rt_bus_[1][1];
-    for (std::uint32_t i = 0; i < frames; ++i) {
-        float l, r;
-        if (passthrough) {
-            l = in_l != nullptr ? in_l[i] : 0.0F;
-            // mono:ch1 複製到雙聲道(mic 監聽);stereo:ch2 沒有就補 ch1
-            r = (!mono && in_r != nullptr) ? in_r[i] : l;
-        } else {
-            // 相位表 sine:2π = 2^32
-            const double a = static_cast<double>(phase >> 8) *
-                             (2.0 * 3.14159265358979323846 / 16777216.0);
-            const float s = 0.25F * static_cast<float>(std::sin(a));  // -12 dBFS 防爆
-            l = s;
-            r = s;
-            phase += step;
+    // 1) 清所有軌的 summing bus(16 軌 @512f = 8K floats,可忽略)
+    for (const auto& t : g->nodes) {
+        if (t.buf != nullptr) {
+            std::memset(t.buf->in[0], 0, frames * sizeof(float));
+            std::memset(t.buf->in[1], 0, frames * sizeof(float));
         }
-        cur_l[i] = l;
-        cur_r[i] = r;
     }
-    rt_phase_.store(phase, std::memory_order_relaxed);
 
-    RackChain* chain = rt_rack_.load(std::memory_order_acquire);
-    if (chain != nullptr) {
-        Vst3ParamEdit edits[kMaxParamEditsPerBlock];
-        std::size_t strip = 1;  // strip 0 = engine 輸出
-        for (const auto& slot : chain->slots) {
-            if (strip > kMaxRackSlots) break;
+    const float rate = static_cast<float>(rt_sample_rate_.load(std::memory_order_relaxed));
+    const float* engine_l = nullptr;
+    const float* engine_r = nullptr;
+    Vst3ParamEdit edits[kMaxParamEditsPerBlock];
+
+    // 2) 依拓撲序逐軌
+    for (const auto idx : g->order) {
+        const TrackNode& n = g->nodes[idx];
+        if (n.buf == nullptr) continue;
+        float* cur_l = n.buf->in[0];
+        float* cur_r = n.buf->in[1];
+        float* alt_l = n.buf->alt[0];
+        float* alt_r = n.buf->alt[1];
+
+        // 來源(kNone = FX/output 軌:bus 已含上游 sum)
+        switch (n.source.type) {
+            case TrackSource::kSine: {
+                // 相位表 sine:2π = 2^32;相位存 TrackRt(每軌獨立,跨 snapshot 存續)
+                const float freq = n.source.sine_freq;
+                const std::uint64_t step =
+                    rate > 0.0F
+                        ? static_cast<std::uint64_t>(4294967296.0 * static_cast<double>(freq) / rate)
+                        : 0;
+                std::uint64_t p = n.buf->sine_phase;
+                for (std::uint32_t i = 0; i < frames; ++i) {
+                    const double a = static_cast<double>(p >> 8) *
+                                     (2.0 * 3.14159265358979323846 / 16777216.0);
+                    const float s = 0.25F * static_cast<float>(std::sin(a));  // -12 dBFS 防爆
+                    cur_l[i] = s;
+                    cur_r[i] = s;
+                    p += step;
+                }
+                n.buf->sine_phase = p;
+                break;
+            }
+            case TrackSource::kAsioIn: {
+                const float* il = (n.src_l >= 0 &&
+                                   static_cast<std::size_t>(n.src_l) < block.inputs.size())
+                                      ? block.inputs[static_cast<std::size_t>(n.src_l)]
+                                      : nullptr;
+                const float* ir = (n.src_r >= 0 &&
+                                   static_cast<std::size_t>(n.src_r) < block.inputs.size())
+                                      ? block.inputs[static_cast<std::size_t>(n.src_r)]
+                                      : nullptr;
+                for (std::uint32_t i = 0; i < frames; ++i) {
+                    cur_l[i] = il != nullptr ? il[i] : 0.0F;
+                    cur_r[i] = ir != nullptr ? ir[i] : 0.0F;
+                }
+                break;
+            }
+            case TrackSource::kApp:
+            case TrackSource::kNone:
+                break;  // M5b:kApp 在此從 capture FIFO 讀
+        }
+
+        // VST 鏈 ping-pong(每 slot 就地)
+        for (std::size_t si = 0; si < n.chain.size(); ++si) {
+            const RackSlot& slot = n.chain[si];
             Vst3Plugin* plugin = slot.plugin.get();
             if (!slot.bypass && plugin != nullptr) {
-                const std::size_t n = slot.ring->pop_all(edits, kMaxParamEditsPerBlock);
+                const std::size_t cnt = slot.ring->pop_all(edits, kMaxParamEditsPerBlock);
                 if (plugin->process(cur_l, cur_r, alt_l, alt_r,
-                                    static_cast<std::int32_t>(frames), edits, n)) {
+                                    static_cast<std::int32_t>(frames), edits, cnt)) {
                     std::swap(cur_l, alt_l);
                     std::swap(cur_r, alt_r);
                 } else {
@@ -498,20 +848,55 @@ void AudioEngine::process(const AudioBlock& block) noexcept {
                     rt_plugin_fails_.fetch_add(1, std::memory_order_relaxed);
                 }
             }
-            meter_band(meters_, strip, cur_l, cur_r, frames);
-            ++strip;
+            if (si < n.chain_strips.size() && n.chain_strips[si] != kNoStrip)
+                meter_band(meters_, n.chain_strips[si], cur_l, cur_r, frames);
         }
+
+        // gain/mute:post-fader,block 內線性斜坡防爆音
+        const float target = n.mute ? 0.0F : n.gain;
+        const float g0 = n.buf->gain_state;
+        if (g0 != target) {
+            const float inc = (target - g0) / static_cast<float>(frames);
+            float gv = g0;
+            for (std::uint32_t i = 0; i < frames; ++i) {
+                gv += inc;
+                cur_l[i] *= gv;
+                cur_r[i] *= gv;
+            }
+            n.buf->gain_state = target;
+        }
+
+        if (n.track_strip != kNoStrip) meter_band(meters_, n.track_strip, cur_l, cur_r, frames);
+
+        // 目的地多選 = 加總
+        for (const auto d : n.dests) {
+            if (d >= g->id_index.size()) continue;
+            const auto di = g->id_index[d];
+            if (di == kNoStrip || di >= g->nodes.size()) continue;
+            const auto& dst = g->nodes[di];
+            if (dst.buf == nullptr) continue;
+            bus_add(dst.buf->in[0], cur_l, frames);
+            bus_add(dst.buf->in[1], cur_r, frames);
+        }
+
+        // Sink(ASIO out scratch 已清零,直接 +=)
+        if (n.output.type == TrackOutput::kAsioOut) {
+            if (n.out_l >= 0 && static_cast<std::size_t>(n.out_l) < block.outputs.size()) {
+                bus_add(block.outputs[static_cast<std::size_t>(n.out_l)], cur_l, frames);
+                if (n.out_r >= 0 && static_cast<std::size_t>(n.out_r) < block.outputs.size())
+                    bus_add(block.outputs[static_cast<std::size_t>(n.out_r)], cur_r, frames);
+            }
+            // strip 0(engine 輸出/頻譜)= 拓撲序最後一條有 ASIO out 的軌
+            engine_l = cur_l;
+            engine_r = cur_r;
+        }
+        // M5c:kWasapiRender 在此寫 render sink FIFO
     }
 
-    if (out_l != nullptr) std::memcpy(out_l, cur_l, frames * sizeof(float));
-    if (out_r != nullptr) std::memcpy(out_r, cur_r, frames * sizeof(float));
-    // 超出 bus 上限的尾巴(異常巨 block):補靜音,不出垃圾
-    for (std::uint32_t i = frames; i < block.frames; ++i) {
-        if (out_l != nullptr) out_l[i] = 0.0F;
-        if (out_r != nullptr) out_r[i] = 0.0F;
+    if (engine_l != nullptr) {
+        meter_band(meters_, 0, engine_l, engine_r, frames);
+        meters_.append_spectrum(engine_l, engine_r, frames);  // 最終輸出進頻譜 ring
     }
-    meter_band(meters_, 0, cur_l, cur_r, frames);
-    meters_.append_spectrum(cur_l, cur_r, frames);  // 最終輸出進頻譜 ring(RT:純寫+index)
 }
 
 }  // namespace rmx

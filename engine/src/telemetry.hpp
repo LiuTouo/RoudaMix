@@ -1,4 +1,4 @@
-// Telemetry SHM(`Local\roudamix-telemetry`)— 契約:contracts/telemetry_abi.md(v2)
+// Telemetry SHM(`Local\roudamix-telemetry`)— 契約:contracts/telemetry_abi.md(v3)
 // RT 端 accumulate(僅 atomic)+ mono 頻譜 ring;30Hz publish thread 寫 seqlock block。
 #pragma once
 
@@ -10,15 +10,15 @@
 namespace rmx {
 
 constexpr std::uint32_t kTelemetryMagic = 0x524D5854;  // "RMXT"
-constexpr std::uint32_t kTelemetryAbiVersion = 2;
-constexpr std::size_t kTelemetryStrips = 16;
+constexpr std::uint32_t kTelemetryAbiVersion = 3;
+constexpr std::size_t kTelemetryStrips = 64;
 constexpr std::size_t kTelemetrySpectrumBins = 256;
 constexpr std::size_t kTelemetryBytes = 4096;
 
 #pragma pack(push, 8)
 struct TelemetryStripShm {
     std::uint32_t instance_id;
-    std::uint32_t pad0;
+    std::uint32_t kind;  // v3(原 pad0):0 = plugin instanceId、1 = trackId、2 = engine 輸出
     float peak_l;
     float peak_r;
     float rms_l;
@@ -27,7 +27,7 @@ struct TelemetryStripShm {
 };
 static_assert(sizeof(TelemetryStripShm) == 32);
 
-// v2:offset 560 起追加 spectrum 區;v1 欄位 offset/語意不變
+// v3:strips 16 → 64(4096 page 內,v2 block 只用 1592);v1/v2 欄位 offset/語意不變
 struct TelemetryBlockShm {
     std::uint32_t magic;
     std::uint32_t abi_version;
@@ -44,8 +44,8 @@ struct TelemetryBlockShm {
     std::uint32_t spectrum_count;  // v2:有效 bin 數(未啟動 = 0)
     float spectrum_db[kTelemetrySpectrumBins];  // 線性 0..Nyquist,dB,-120 floor
 };
-// 1588 邏輯 bytes;pack(8) 尾端補齊 → sizeof = 1592
-static_assert(sizeof(TelemetryBlockShm) == 1592);
+// 48 header + 64×32 strips + 4 + 1024 spectrum = 3124;pack(8) 補齊 → 3128
+static_assert(sizeof(TelemetryBlockShm) == 3128);
 static_assert(sizeof(TelemetryBlockShm) <= kTelemetryBytes);
 #pragma pack(pop)
 
@@ -64,11 +64,12 @@ public:
     void add_xrun() noexcept;
 
     // 30Hz publisher(非 RT):取走並清零區間累積、算頻譜、寫入 SHM(seqlock)。
-    // instance_ids[0] = engine 輸出(慣例 0xFFFFFFFF)、其後 = rack slots 順序。
+    // instance_ids[0] = engine 輸出(慣例 0xFFFFFFFF、kinds[0] = 2)、其後 = 各軌
+    // (kind 1)與 plugin(kind 0)strip 順序 — strip 位置由 ids 陣列索引本身表達。
     // running = false 時 spectrum_count 寫 0(stream 沒在跑,頻譜無意義)。
     void publish(TelemetryBlockShm& block, std::uint64_t xruns_total,
-                 const std::uint32_t* instance_ids, std::size_t id_count,
-                 bool running) noexcept;
+                 const std::uint32_t* instance_ids, const std::uint8_t* kinds,
+                 std::size_t id_count, bool running) noexcept;
 
 private:
     static void atomic_max(std::atomic<std::uint32_t>& t, float v) noexcept;

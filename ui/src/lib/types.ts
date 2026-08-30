@@ -1,4 +1,4 @@
-// DTO 鏡像 — 契約權威:contracts/protocol.schema.json $defs
+// DTO 鏡像 — 契約權威:contracts/protocol.schema.json $defs(protocol v2 / telemetry v3)
 
 export interface ConnectionStatus {
   connected: boolean;
@@ -11,6 +11,33 @@ export interface ParamValue {
   normalized: number;
 }
 
+export interface TrackSource {
+  type: "sine" | "asioIn" | "app";
+  freq?: number; // sine
+  channel?: number; // asioIn(pair 基底)
+  pid?: number; // app(M5b)
+  name?: string; // app 顯示名
+}
+
+export interface TrackOutput {
+  type: "asioOut" | "wasapi";
+  channel?: number; // asioOut(pair 基底)
+  deviceId?: string; // wasapi(M5c)
+}
+
+export interface Track {
+  trackId: number;
+  kind: "audio" | "app" | "fx" | "output";
+  name: string;
+  color: number; // 0xRRGGBB
+  source: TrackSource | null;
+  dests: number[];
+  output: TrackOutput | null;
+  gain: number; // 線性 [0,4]
+  mute: boolean;
+  plugins: RackSlot[];
+}
+
 export interface EngineStatus {
   running: boolean;
   deviceKey: string | null;
@@ -19,11 +46,9 @@ export interface EngineStatus {
   inputLatency: number | null;
   outputLatency: number | null;
   xruns: number;
-  source: "sine" | "passthrough";
-  sineFreq: number;
-  inputMono: boolean;
+  trackCount: number;
   pluginFails: number;
-  rack: RackSlot[];
+  tracks: Track[];
   error: string | null;
 }
 
@@ -61,7 +86,7 @@ export interface Snapshot {
   epoch: number;
   engineVersion: string;
   status: EngineStatus;
-  rack: RackSlot[];
+  tracks: Track[];
   lastScan: ScanModule[] | null;
 }
 
@@ -76,11 +101,14 @@ export interface DeviceInfo {
   maxBufferSize: number;
   preferredBufferSize: number;
   bufferSizes: number[]; // driver granularity 展開(空 = UI 自行過濾)
+  inputNames: string[]; // per-channel 名稱(UI 下拉)
+  outputNames: string[];
 }
 
-// telemetry SHM(contracts/telemetry_abi.md)
+// telemetry SHM(contracts/telemetry_abi.md v3)
 export interface MeterStrip {
   instanceId: number;
+  kind: number; // 0 = plugin、1 = track、2 = engine 輸出
   peakL: number;
   peakR: number;
   rmsL: number;

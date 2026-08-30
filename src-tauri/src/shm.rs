@@ -1,6 +1,6 @@
-//! Telemetry SHM 讀取端 — 契約:contracts/telemetry_abi.md(v2)。
+//! Telemetry SHM 讀取端 — 契約:contracts/telemetry_abi.md(v3)。
 //! `Local\roudamix-telemetry`,seqlock 讀(odd=寫入中),45Hz 輪詢 → emit "meters"。
-//! 結構必須與 engine/src/telemetry.hpp TelemetryBlockShm(#pragma pack(8), 1588B)同構。
+//! 結構必須與 engine/src/telemetry.hpp TelemetryBlockShm(#pragma pack(8), 3128B)同構。
 
 use std::ptr;
 use std::time::Duration;
@@ -11,14 +11,14 @@ use tauri::{AppHandle, Emitter};
 const FILE_MAP_READ: u32 = 0x0004;
 const TELEMETRY_NAME: &str = "Local\\roudamix-telemetry";
 const MAGIC: u32 = 0x524D_5854; // "RMXT"
-const ABI_VERSION: u32 = 2;
-const STRIPS: usize = 16;
+const ABI_VERSION: u32 = 3;
+const STRIPS: usize = 64;
 const SPECTRUM_BINS: usize = 256;
 
 #[repr(C)]
 struct StripShm {
     instance_id: u32,
-    pad0: u32,
+    kind: u32,
     peak_l: f32,
     peak_r: f32,
     rms_l: f32,
@@ -40,7 +40,7 @@ struct BlockShm {
     output_latency: u32,
     reserved0: u32,
     strips: [StripShm; STRIPS],
-    spectrum_count: u32, // v2:offset 560 起
+    spectrum_count: u32, // v3:offset 2096 起
     spectrum_db: [f32; SPECTRUM_BINS],
 }
 
@@ -140,6 +140,7 @@ fn to_json(b: &BlockShm) -> Value {
         .map(|s| {
             json!({
                 "instanceId": s.instance_id,
+                "kind": s.kind,
                 "peakL": s.peak_l,
                 "peakR": s.peak_r,
                 "rmsL": s.rms_l,
@@ -163,8 +164,8 @@ fn to_json(b: &BlockShm) -> Value {
 // 佈局與 C++ 契約同構(static_assert 對應)
 const _: () = {
     assert!(std::mem::size_of::<StripShm>() == 32);
-    assert!(std::mem::size_of::<BlockShm>() == 1592); // 1588 邏輯 + pack(8) 尾端補齊
+    assert!(std::mem::size_of::<BlockShm>() == 3128); // 3124 邏輯 + pack(8) 尾端補齊
     assert!(std::mem::offset_of!(BlockShm, strips) == 48);
     assert!(std::mem::offset_of!(BlockShm, sequence) == 8);
-    assert!(std::mem::offset_of!(BlockShm, spectrum_count) == 560);
+    assert!(std::mem::offset_of!(BlockShm, spectrum_count) == 2096);
 };

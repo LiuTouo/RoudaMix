@@ -9,8 +9,10 @@ namespace {
 
 const std::set<std::string>& command_kinds() {
     static const std::set<std::string> k = {
-        "ping", "get_snapshot", "list_devices", "start", "stop", "set_source",
+        "ping", "get_snapshot", "list_devices", "start", "stop",
         "open_device_panel",
+        "track_add", "track_remove", "track_set", "track_set_source",
+        "track_set_dests", "track_set_output", "track_move",
         "scan_plugins", "add_plugin", "remove_plugin", "move_plugin",
         "set_bypass", "set_param", "get_params", "open_editor", "close_editor",
         "save_preset", "load_preset",
@@ -32,6 +34,7 @@ const std::set<std::string>& error_codes() {
     static const std::set<std::string> k = {
         "unsupported_version", "bad_frame", "bad_command", "not_running",
         "already_running", "device_open_failed", "device_lost",
+        "track_not_found", "cycle_detected", "device_busy",
         "plugin_not_found", "plugin_load_failed", "plugin_no_editor",
         "param_not_found", "session_io", "preset_io", "plugin_state_failed",
         "internal",
@@ -52,6 +55,47 @@ void require(const nlohmann::json& o, const char* key) {
     if (!o.is_object() || !o.contains(key)) reject(std::string("missing key: ") + key);
 }
 
+// TrackSource:null | {type:"sine",freq} | {type:"asioIn",channel} | {type:"app",pid,name?}
+void validate_track_source(const nlohmann::json& s) {
+    if (s.is_null()) return;
+    if (!s.is_object()) reject("payload.source must be null or object");
+    require(s, "type");
+    if (!s["type"].is_string()) reject("payload.source.type must be string");
+    const auto t = s["type"].get<std::string>();
+    if (t == "sine") {
+        require(s, "freq");
+        if (!s["freq"].is_number()) reject("payload.source.freq must be number");
+    } else if (t == "asioIn") {
+        require(s, "channel");
+        if (!is_u32(s["channel"])) reject("payload.source.channel must be u32");
+    } else if (t == "app") {
+        require(s, "pid");
+        if (!is_u32(s["pid"])) reject("payload.source.pid must be u32");
+        if (s.contains("name") && !s["name"].is_string())
+            reject("payload.source.name must be string when present");
+    } else {
+        reject("payload.source.type must be sine|asioIn|app");
+    }
+}
+
+// TrackOutput:null | {type:"asioOut",channel} | {type:"wasapi",deviceId}
+void validate_track_output(const nlohmann::json& o) {
+    if (o.is_null()) return;
+    if (!o.is_object()) reject("payload.output must be null or object");
+    require(o, "type");
+    if (!o["type"].is_string()) reject("payload.output.type must be string");
+    const auto t = o["type"].get<std::string>();
+    if (t == "asioOut") {
+        require(o, "channel");
+        if (!is_u32(o["channel"])) reject("payload.output.channel must be u32");
+    } else if (t == "wasapi") {
+        require(o, "deviceId");
+        if (!o["deviceId"].is_string()) reject("payload.output.deviceId must be string");
+    } else {
+        reject("payload.output.type must be asioOut|wasapi");
+    }
+}
+
 // 檢查 payload 语义(schema per-kind payload 規則)
 void validate_command_payload(const std::string& kind, const nlohmann::json& p) {
     if (!p.is_object()) reject("payload must be object");
@@ -67,20 +111,56 @@ void validate_command_payload(const std::string& kind, const nlohmann::json& p) 
         str("deviceKey");
         if (!has("sampleRate") || !(p["sampleRate"].is_null() || is_u32(p["sampleRate"])))
             reject("payload.sampleRate must be u32 or null");
-    } else if (kind == "set_source") {
-        str("source");
-        const auto src = p["source"].get<std::string>();
-        if (src != "sine" && src != "passthrough")
-            reject("payload.source must be sine|passthrough");
-        if (!has("sineFreq") || !p["sineFreq"].is_number())
-            reject("payload.sineFreq must be number");
+        if (has("bufferSize") && !(p["bufferSize"].is_null() || is_u32(p["bufferSize"])))
+            reject("payload.bufferSize must be u32 or null");
+    } else if (kind == "track_add") {
+        str("kind");
+        const auto k = p["kind"].get<std::string>();
+        if (k != "audio" && k != "app" && k != "fx" && k != "output")
+            reject("payload.kind must be audio|app|fx|output");
+        if (has("name") && !p["name"].is_string())
+            reject("payload.name must be string when present");
+        if (has("color") && !is_u32(p["color"]))
+            reject("payload.color must be u32 when present");
+    } else if (kind == "track_remove" || kind == "track_move") {
+        u32("trackId");
+        if (kind == "track_move") {
+            u32("newIndex");
+        }
+    } else if (kind == "track_set") {
+        u32("trackId");
+        if (has("name") && !p["name"].is_string())
+            reject("payload.name must be string when present");
+        if (has("color") && !is_u32(p["color"]))
+            reject("payload.color must be u32 when present");
+        if (has("gain") && (!p["gain"].is_number() || p["gain"].get<double>() < 0.0 ||
+                            p["gain"].get<double>() > 4.0))
+            reject("payload.gain must be number in [0,4]");
+        if (has("mute") && !p["mute"].is_boolean())
+            reject("payload.mute must be bool when present");
+    } else if (kind == "track_set_source") {
+        u32("trackId");
+        if (!has("source")) reject("missing key: payload.source");
+        validate_track_source(p["source"]);
+    } else if (kind == "track_set_dests") {
+        u32("trackId");
+        if (!has("dests") || !p["dests"].is_array() ||
+            !std::all_of(p["dests"].begin(), p["dests"].end(), is_u32))
+            reject("payload.dests must be u32[]");
+    } else if (kind == "track_set_output") {
+        u32("trackId");
+        if (!has("output")) reject("missing key: payload.output");
+        validate_track_output(p["output"]);
     } else if (kind == "scan_plugins") {
         if (has("roots") && (!p["roots"].is_array() ||
                              !std::all_of(p["roots"].begin(), p["roots"].end(),
                                           [](const nlohmann::json& e) { return e.is_string(); })))
             reject("payload.roots must be string[] when present");
     } else if (kind == "add_plugin") {
+        u32("trackId");
         str("path");
+        if (has("classId") && !p["classId"].is_string())
+            reject("payload.classId must be string when present");
     } else if (kind == "remove_plugin" || kind == "get_params" || kind == "open_editor" ||
                kind == "close_editor") {
         u32("instanceId");
@@ -197,9 +277,9 @@ nlohmann::json make_event(std::string kind, nlohmann::json payload) {
 }
 
 nlohmann::json make_snapshot_json(uint64_t epoch, const nlohmann::json& status,
-                                  const nlohmann::json& rack) {
+                                  const nlohmann::json& tracks) {
     return nlohmann::json{
-        {"epoch", epoch}, {"engineVersion", kEngineVersion}, {"status", status}, {"rack", rack}, {"lastScan", nullptr}};
+        {"epoch", epoch}, {"engineVersion", kEngineVersion}, {"status", status}, {"tracks", tracks}, {"lastScan", nullptr}};
 }
 
 }  // namespace rmx

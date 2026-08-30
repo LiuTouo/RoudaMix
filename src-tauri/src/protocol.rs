@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const PIPE_NAME: &str = r"\\.\pipe\roudamix-engine";
 
@@ -107,7 +107,9 @@ fn err<S: Into<String>>(s: S) -> ProtocolError {
 // ---------- per-kind payload(§6)----------
 
 pub const COMMAND_KINDS: &[&str] = &[
-    "ping", "get_snapshot", "list_devices", "start", "stop", "set_source", "open_device_panel",
+    "ping", "get_snapshot", "list_devices", "start", "stop", "open_device_panel",
+    "track_add", "track_remove", "track_set", "track_set_source", "track_set_dests",
+    "track_set_output", "track_move",
     "scan_plugins", "add_plugin", "remove_plugin", "move_plugin", "set_bypass", "set_param",
     "get_params", "open_editor", "close_editor", "save_preset", "load_preset",
     "save_session", "load_session", "shutdown_engine", "set_editor_owner",
@@ -129,14 +131,92 @@ fn validate_command_payload(c: &CommandEnvelope) -> Result<(), ProtocolError> {
                 _ => Err(err("payload.sampleRate must be u32 or null")),
             }
         }
-        "set_source" => {
-            match p.get("source") {
-                Some(V::String(s)) if s == "sine" || s == "passthrough" => {}
-                _ => return Err(err("payload.source must be sine|passthrough")),
+        "track_add" => {
+            match p.get("kind") {
+                Some(V::String(k)) if matches!(k.as_str(), "audio" | "app" | "fx" | "output") => {}
+                _ => return Err(err("payload.kind must be audio|app|fx|output")),
             }
-            match p.get("sineFreq") {
-                Some(V::Number(_)) => Ok(()),
-                _ => Err(err("payload.sineFreq must be number")),
+            match p.get("name") {
+                None | Some(V::String(_)) => Ok(()),
+                _ => Err(err("payload.name must be string when present")),
+            }?;
+            match p.get("color") {
+                None => Ok(()),
+                Some(v) if v.as_u64().map(|n| n <= u32::MAX as u64).unwrap_or(false) => Ok(()),
+                _ => Err(err("payload.color must be u32 when present")),
+            }
+        }
+        "track_remove" => u32_field(p, "trackId"),
+        "track_move" => {
+            u32_field(p, "trackId")?;
+            u32_field(p, "newIndex")
+        }
+        "track_set" => {
+            u32_field(p, "trackId")?;
+            match p.get("name") {
+                None | Some(V::String(_)) => Ok(()),
+                _ => Err(err("payload.name must be string when present")),
+            }?;
+            match p.get("color") {
+                None => Ok(()),
+                Some(v) if v.as_u64().map(|n| n <= u32::MAX as u64).unwrap_or(false) => Ok(()),
+                _ => Err(err("payload.color must be u32 when present")),
+            }?;
+            match p.get("gain") {
+                None => Ok(()),
+                Some(V::Number(n)) if n.as_f64().map(|v| (0.0..=4.0).contains(&v)).unwrap_or(false) => Ok(()),
+                _ => Err(err("payload.gain must be number in [0,4]")),
+            }?;
+            match p.get("mute") {
+                None | Some(V::Bool(_)) => Ok(()),
+                _ => Err(err("payload.mute must be bool when present")),
+            }
+        }
+        "track_set_source" => {
+            u32_field(p, "trackId")?;
+            match p.get("source") {
+                Some(V::Null) => Ok(()),
+                Some(V::Object(o)) => match o.get("type").and_then(|v| v.as_str()) {
+                    Some("sine") => match o.get("freq") {
+                        Some(V::Number(_)) => Ok(()),
+                        _ => Err(err("payload.source.freq must be number")),
+                    },
+                    Some("asioIn") => match o.get("channel") {
+                        Some(v) if v.as_u64().map(|n| n <= u32::MAX as u64).unwrap_or(false) => Ok(()),
+                        _ => Err(err("payload.source.channel must be u32")),
+                    },
+                    Some("app") => match o.get("pid") {
+                        Some(v) if v.as_u64().map(|n| n <= u32::MAX as u64).unwrap_or(false) => Ok(()),
+                        _ => Err(err("payload.source.pid must be u32")),
+                    },
+                    _ => Err(err("payload.source.type must be sine|asioIn|app")),
+                },
+                _ => Err(err("payload.source must be null or object")),
+            }
+        }
+        "track_set_dests" => {
+            u32_field(p, "trackId")?;
+            match p.get("dests") {
+                Some(V::Array(a)) if a.iter().all(|v| v.as_u64().map(|n| n <= u32::MAX as u64).unwrap_or(false)) => Ok(()),
+                _ => Err(err("payload.dests must be u32[]")),
+            }
+        }
+        "track_set_output" => {
+            u32_field(p, "trackId")?;
+            match p.get("output") {
+                Some(V::Null) => Ok(()),
+                Some(V::Object(o)) => match o.get("type").and_then(|v| v.as_str()) {
+                    Some("asioOut") => match o.get("channel") {
+                        Some(v) if v.as_u64().map(|n| n <= u32::MAX as u64).unwrap_or(false) => Ok(()),
+                        _ => Err(err("payload.output.channel must be u32")),
+                    },
+                    Some("wasapi") => match o.get("deviceId") {
+                        Some(V::String(_)) => Ok(()),
+                        _ => Err(err("payload.output.deviceId must be string")),
+                    },
+                    _ => Err(err("payload.output.type must be asioOut|wasapi")),
+                },
+                _ => Err(err("payload.output must be null or object")),
             }
         }
         "scan_plugins" => match p.get("roots") {
@@ -144,7 +224,10 @@ fn validate_command_payload(c: &CommandEnvelope) -> Result<(), ProtocolError> {
             Some(V::Array(a)) if a.iter().all(|v| v.is_string()) => Ok(()),
             _ => Err(err("payload.roots must be string[] when present")),
         },
-        "add_plugin" => s("path"),
+        "add_plugin" => {
+            u32_field(p, "trackId")?;
+            s("path")
+        }
         "remove_plugin" | "get_params" | "open_editor" | "close_editor" => {
             u32_field(p, "instanceId")
         }
@@ -211,9 +294,9 @@ fn u32_field(p: &serde_json::Map<String, Value>, k: &str) -> Result<(), Protocol
 fn known_error_code(c: &str) -> bool {
     [
         "unsupported_version", "bad_frame", "bad_command", "not_running", "already_running",
-        "device_open_failed", "device_lost", "plugin_not_found", "plugin_load_failed",
-        "plugin_no_editor", "param_not_found", "session_io", "preset_io",
-        "plugin_state_failed", "internal",
+        "device_open_failed", "device_lost", "track_not_found", "cycle_detected", "device_busy",
+        "plugin_not_found", "plugin_load_failed", "plugin_no_editor", "param_not_found",
+        "session_io", "preset_io", "plugin_state_failed", "internal",
     ]
     .contains(&c)
 }
@@ -234,91 +317,6 @@ fn known_event_kind(k: &str) -> bool {
 
 pub fn make_command(id: u64, kind: &str, payload: Value) -> Value {
     serde_json::to_value(CommandEnvelope::new(id, kind, payload)).expect("envelope serializes")
-}
-
-// ---------- §8 共用結構(bridge→UI 用)----------
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct DeviceInfo {
-    pub device_key: String,
-    pub name: String,
-    pub max_in: u16,
-    pub max_out: u16,
-    pub sample_rates: Vec<u32>,
-    pub preferred_buffer_size: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct ParamValue {
-    pub param_id: u32,
-    pub normalized: f32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct EngineStatus {
-    pub running: bool,
-    pub device_key: Option<String>,
-    pub sample_rate: f32,
-    pub buffer_size: Option<u32>,
-    pub input_latency: Option<u32>,
-    pub output_latency: Option<u32>,
-    pub xruns: u64,
-    pub source: String, // "sine" | "passthrough"
-    pub sine_freq: f32,
-    pub plugin_fails: u32,
-    pub rack: Vec<RackSlot>,
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct ParamInfo {
-    pub param_id: u32,
-    pub name: String,
-    pub normalized: f32,
-    pub default: f32,
-    pub bypass: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct RackSlot {
-    pub instance_id: u32,
-    pub name: String,
-    pub plugin_path: String,
-    pub class_id: String,
-    pub bypassed: bool,
-    pub params: Vec<ParamValue>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct PluginClass {
-    pub uid: String,
-    pub name: String,
-    pub vendor: String,
-    pub version: String,
-    pub subcategories: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct ScanModule {
-    pub path: String,
-    pub classes: Vec<PluginClass>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct Snapshot {
-    pub epoch: u64,
-    pub engine_version: String,
-    pub status: EngineStatus,
-    pub rack: Vec<RackSlot>,
-    pub last_scan: Option<Vec<ScanModule>>,
 }
 
 // ---------- conformance 測試 ----------

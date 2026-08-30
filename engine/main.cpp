@@ -62,19 +62,63 @@ void send_frame(HANDLE client, const nlohmann::json& j) {
         std::fprintf(stderr, "[engine] send_frame write failed: %lu\n", GetLastError());
 }
 
-nlohmann::json rack_json() {
+nlohmann::json source_json(const rmx::TrackSource& src) {
+    switch (src.type) {
+        case rmx::TrackSource::kSine:
+            return nlohmann::json{{"type", "sine"}, {"freq", src.sine_freq}};
+        case rmx::TrackSource::kAsioIn:
+            return nlohmann::json{{"type", "asioIn"}, {"channel", src.asio_in_ch}};
+        case rmx::TrackSource::kApp:
+            return nlohmann::json{{"type", "app"},
+                                  {"pid", src.pid},
+                                  {"name", src.app_name.empty() ? nlohmann::json(nullptr)
+                                                                : nlohmann::json(src.app_name)}};
+        case rmx::TrackSource::kNone:
+            return nullptr;
+    }
+    return nullptr;
+}
+
+nlohmann::json output_json(const rmx::TrackOutput& out) {
+    switch (out.type) {
+        case rmx::TrackOutput::kAsioOut:
+            return nlohmann::json{{"type", "asioOut"}, {"channel", out.asio_out_ch}};
+        case rmx::TrackOutput::kWasapiRender:
+            return nlohmann::json{{"type", "wasapi"}, {"deviceId", out.wasapi_id}};
+        case rmx::TrackOutput::kNone:
+            return nullptr;
+    }
+    return nullptr;
+}
+
+nlohmann::json tracks_json() {
     auto arr = nlohmann::json::array();
-    for (const auto& s : g_engine.rack()) {
-        auto params = nlohmann::json::array();
-        for (const auto& [id, v] : s.param_values)
-            params.push_back({{"paramId", id}, {"normalized", v}});
+    for (const auto& t : g_engine.tracks()) {
+        auto plugins = nlohmann::json::array();
+        for (const auto& s : t.chain) {
+            auto params = nlohmann::json::array();
+            for (const auto& [id, v] : s.param_values)
+                params.push_back({{"paramId", id}, {"normalized", v}});
+            plugins.push_back({
+                {"instanceId", s.instance_id},
+                {"name", s.name},
+                {"pluginPath", s.module_path},
+                {"classId", s.class_id},
+                {"bypassed", s.bypass},
+                {"params", params},
+            });
+        }
         arr.push_back({
-            {"instanceId", s.instance_id},
-            {"name", s.name},
-            {"pluginPath", s.module_path},
-            {"classId", s.class_id},
-            {"bypassed", s.bypass},
-            {"params", params},
+            {"trackId", t.track_id},
+            {"kind", rmx::track_kind_str(t.kind)},
+            {"name", t.name},
+            {"color", t.color},
+            {"source", source_json(t.source)},
+            {"dests", t.dests},
+            {"output", output_json(t.output)},
+            {"gain", t.gain},
+            {"mute", t.mute},
+            {"plugins", plugins},
         });
     }
     return arr;
@@ -93,18 +137,16 @@ nlohmann::json status_json() {
         {"outputLatency", s.output_latency ? nlohmann::json(s.output_latency)
                                            : nlohmann::json(nullptr)},
         {"xruns", s.xruns},
-        {"source", s.source},
-        {"sineFreq", s.sine_freq},
-        {"inputMono", s.input_mono},
+        {"trackCount", s.track_count},
         {"pluginFails", s.plugin_fails},
-        {"rack", rack_json()},
+        {"tracks", tracks_json()},
         {"error", s.error.empty() ? nlohmann::json(nullptr) : nlohmann::json(s.error)},
     };
     return j;
 }
 
 nlohmann::json snapshot_payload() {
-    return rmx::make_snapshot_json(g_epoch.load(), status_json(), nlohmann::json::array());
+    return rmx::make_snapshot_json(g_epoch.load(), status_json(), tracks_json());
 }
 
 // 成功 mutation:epoch 前進、對在線 client 廣播 status event(main thread 呼)
@@ -112,7 +154,7 @@ void after_mutation(HANDLE client) {
     uint64_t epoch = g_epoch.fetch_add(1) + 1;
     send_frame(client, rmx::make_event("status", status_json()));
     (void)epoch;
-    rmx::EditorHost::instance().notify_rack_changed();  // host 視窗 tab 同步
+    rmx::EditorHost::instance().notify_tracks_changed();  // host 視窗 tab 同步
 }
 
 // EditorHost 內部指令(bypass / 載入 preset):main thread 排隊執行,這裡持鎖
@@ -146,7 +188,7 @@ bool dispatch(HANDLE client, const Command& c) {
     if (c.protocol_version != rmx::kProtocolVersion) {
         send_frame(client, rmx::make_reply_err(c.id, g_epoch.load(),
                                                "unsupported_version",
-                                               "server speaks protocol v1"));
+                                               "server speaks protocol v2"));
         return false;
     }
     const uint64_t epoch = g_epoch.load();
@@ -176,6 +218,8 @@ bool dispatch(HANDLE client, const Command& c) {
                 {"maxBufferSize", d.max_buffer},
                 {"preferredBufferSize", d.preferred_buffer},
                 {"bufferSizes", d.buffer_sizes},
+                {"inputNames", d.input_names},
+                {"outputNames", d.output_names},
             });
         }
         ok(nlohmann::json{{"devices", devices}});
@@ -192,10 +236,7 @@ bool dispatch(HANDLE client, const Command& c) {
                 c.payload.contains("bufferSize") && c.payload["bufferSize"].is_number_unsigned()
                     ? std::optional<uint32_t>{c.payload["bufferSize"].get<uint32_t>()}
                     : std::optional<uint32_t>{};
-            const auto mono = c.payload.contains("inputMono") && c.payload["inputMono"].is_boolean()
-                                  ? std::optional<bool>{c.payload["inputMono"].get<bool>()}
-                                  : std::optional<bool>{};
-            if (g_engine.start(c.payload["deviceKey"].get<std::string>(), rate, buffer, mono, err)) {
+            if (g_engine.start(c.payload["deviceKey"].get<std::string>(), rate, buffer, err)) {
                 after_mutation(client);
                 ok(status_json());
             } else {
@@ -230,14 +271,124 @@ bool dispatch(HANDLE client, const Command& c) {
             }).detach();
             ok(nlohmann::json{{"panel", true}});
         }
-    } else if (c.kind == "set_source") {
+    } else if (c.kind == "track_add") {
         std::lock_guard<std::mutex> lock(g_engine_mutex);
-        const bool passthrough = c.payload["source"].get<std::string>() == "passthrough";
-        const float freq = c.payload["sineFreq"].get<float>();
+        rmx::TrackKind kind = rmx::TrackKind::kAudio;
+        const auto ks = c.payload["kind"].get<std::string>();
+        if (ks == "app") kind = rmx::TrackKind::kApp;
+        else if (ks == "fx") kind = rmx::TrackKind::kFx;
+        else if (ks == "output") kind = rmx::TrackKind::kOutput;
+        std::string name;
+        if (c.payload.contains("name") && c.payload["name"].is_string())
+            name = c.payload["name"].get<std::string>();
+        std::uint32_t color = 0;
+        if (c.payload.contains("color") && c.payload["color"].is_number_unsigned())
+            color = c.payload["color"].get<std::uint32_t>();
+        std::uint32_t track_id = 0;
         std::string err;
-        if (g_engine.set_source(passthrough, freq, err)) {
+        if (g_engine.track_add(kind, name, color, track_id, err)) {
             after_mutation(client);
-            ok(status_json());
+            ok(nlohmann::json{{"trackId", track_id}, {"tracks", tracks_json()}});
+        } else {
+            fail("bad_command", err);
+        }
+    } else if (c.kind == "track_remove") {
+        std::lock_guard<std::mutex> lock(g_engine_mutex);
+        std::string err;
+        if (g_engine.track_remove(c.payload["trackId"].get<std::uint32_t>(), err)) {
+            after_mutation(client);
+            ok(nlohmann::json{{"tracks", tracks_json()}});
+        } else {
+            fail("track_not_found", err);
+        }
+    } else if (c.kind == "track_set") {
+        std::lock_guard<std::mutex> lock(g_engine_mutex);
+        auto opt_str = [&](const char* k) -> std::optional<std::string> {
+            return c.payload.contains(k) && c.payload[k].is_string()
+                       ? std::optional<std::string>{c.payload[k].get<std::string>()}
+                       : std::nullopt;
+        };
+        auto opt_u32 = [&](const char* k) -> std::optional<std::uint32_t> {
+            return c.payload.contains(k) && c.payload[k].is_number_unsigned()
+                       ? std::optional<std::uint32_t>{c.payload[k].get<std::uint32_t>()}
+                       : std::nullopt;
+        };
+        auto opt_f32 = [&](const char* k) -> std::optional<float> {
+            return c.payload.contains(k) && c.payload[k].is_number()
+                       ? std::optional<float>{c.payload[k].get<float>()}
+                       : std::nullopt;
+        };
+        auto opt_bool = [&](const char* k) -> std::optional<bool> {
+            return c.payload.contains(k) && c.payload[k].is_boolean()
+                       ? std::optional<bool>{c.payload[k].get<bool>()}
+                       : std::nullopt;
+        };
+        std::string err;
+        if (g_engine.track_set(c.payload["trackId"].get<std::uint32_t>(), opt_str("name"),
+                               opt_u32("color"), opt_f32("gain"), opt_bool("mute"), err)) {
+            after_mutation(client);
+            ok(nlohmann::json{{"tracks", tracks_json()}});
+        } else {
+            fail("bad_command", err);
+        }
+    } else if (c.kind == "track_set_source" || c.kind == "track_set_output" ||
+               c.kind == "track_set_dests") {
+        std::lock_guard<std::mutex> lock(g_engine_mutex);
+        const auto track_id = c.payload["trackId"].get<std::uint32_t>();
+        std::string err, code("bad_command");
+        bool okr = false;
+        if (c.kind == "track_set_source") {
+            rmx::TrackSource src;
+            const auto& sj = c.payload["source"];
+            if (!sj.is_null()) {
+                const auto t = sj["type"].get<std::string>();
+                if (t == "sine") {
+                    src.type = rmx::TrackSource::kSine;
+                    src.sine_freq = sj["freq"].get<float>();
+                } else if (t == "asioIn") {
+                    src.type = rmx::TrackSource::kAsioIn;
+                    src.asio_in_ch = sj["channel"].get<std::uint32_t>();
+                } else if (t == "app") {
+                    src.type = rmx::TrackSource::kApp;
+                    src.pid = sj["pid"].get<std::uint32_t>();
+                    if (sj.contains("name") && sj["name"].is_string())
+                        src.app_name = sj["name"].get<std::string>();
+                }
+            }
+            okr = g_engine.track_set_source(track_id, src, err, code);
+        } else if (c.kind == "track_set_output") {
+            rmx::TrackOutput out;
+            const auto& oj = c.payload["output"];
+            if (!oj.is_null()) {
+                const auto t = oj["type"].get<std::string>();
+                if (t == "asioOut") {
+                    out.type = rmx::TrackOutput::kAsioOut;
+                    out.asio_out_ch = oj["channel"].get<std::uint32_t>();
+                } else if (t == "wasapi") {
+                    out.type = rmx::TrackOutput::kWasapiRender;
+                    out.wasapi_id = oj["deviceId"].get<std::string>();
+                }
+            }
+            okr = g_engine.track_set_output(track_id, out, err, code);
+        } else {
+            std::vector<std::uint32_t> dests;
+            for (const auto& d : c.payload["dests"])
+                if (d.is_number_unsigned()) dests.push_back(d.get<std::uint32_t>());
+            okr = g_engine.track_set_dests(track_id, std::move(dests), err, code);
+        }
+        if (okr) {
+            after_mutation(client);
+            ok(nlohmann::json{{"tracks", tracks_json()}});
+        } else {
+            fail(code.c_str(), err);
+        }
+    } else if (c.kind == "track_move") {
+        std::lock_guard<std::mutex> lock(g_engine_mutex);
+        std::string err;
+        if (g_engine.track_move(c.payload["trackId"].get<std::uint32_t>(),
+                                c.payload["newIndex"].get<std::size_t>(), err)) {
+            after_mutation(client);
+            ok(nlohmann::json{{"tracks", tracks_json()}});
         } else {
             fail("bad_command", err);
         }
@@ -313,9 +464,12 @@ bool dispatch(HANDLE client, const Command& c) {
         std::lock_guard<std::mutex> lock(g_engine_mutex);
         std::uint32_t instance_id = 0;
         std::string err;
-        if (g_engine.add_plugin(module_path, class_id, instance_id, err)) {
+        const auto track_id = c.payload["trackId"].get<std::uint32_t>();
+        if (g_engine.add_plugin(track_id, module_path, class_id, instance_id, err)) {
             after_mutation(client);
-            ok(nlohmann::json{{"instanceId", instance_id}, {"rack", rack_json()}});
+            ok(nlohmann::json{{"instanceId", instance_id},
+                              {"trackId", track_id},
+                              {"tracks", tracks_json()}});
         } else {
             fail("plugin_load_failed", err);
         }
@@ -324,7 +478,7 @@ bool dispatch(HANDLE client, const Command& c) {
         std::string err;
         if (g_engine.remove_plugin(c.payload["instanceId"].get<std::uint32_t>(), err)) {
             after_mutation(client);
-            ok(nlohmann::json{{"rack", rack_json()}});
+            ok(nlohmann::json{{"tracks", tracks_json()}});
         } else {
             fail("plugin_not_found", err);
         }
@@ -334,7 +488,7 @@ bool dispatch(HANDLE client, const Command& c) {
         if (g_engine.move_plugin(c.payload["instanceId"].get<std::uint32_t>(),
                                  c.payload["newIndex"].get<std::size_t>(), err)) {
             after_mutation(client);
-            ok(nlohmann::json{{"rack", rack_json()}});
+            ok(nlohmann::json{{"tracks", tracks_json()}});
         } else {
             fail("bad_command", err);
         }
@@ -344,7 +498,7 @@ bool dispatch(HANDLE client, const Command& c) {
         if (g_engine.set_bypass(c.payload["instanceId"].get<std::uint32_t>(),
                                 c.payload["bypassed"].get<bool>(), err)) {
             after_mutation(client);
-            ok(nlohmann::json{{"rack", rack_json()}});
+            ok(nlohmann::json{{"tracks", tracks_json()}});
         } else {
             fail("plugin_not_found", err);
         }
@@ -414,7 +568,7 @@ bool dispatch(HANDLE client, const Command& c) {
                     fail("preset_io", err);
             } else if (g_engine.load_preset(instance, file, err)) {
                 after_mutation(client);
-                ok(nlohmann::json{{"rack", rack_json()}});
+                ok(nlohmann::json{{"tracks", tracks_json()}});
             } else {
                 // 檔案開不了/格式壞 = preset_io;plugin 拒套 state = plugin_state_failed
                 const bool bad_state = err.find("rejected preset") != std::string::npos;

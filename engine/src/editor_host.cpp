@@ -258,13 +258,13 @@ struct EditorHost::Impl {
         return engine != nullptr ? engine->find_slot(id) : nullptr;
     }
 
-    // 以 rack 現況重建 tab 快取 + 重繪(main thread 直接讀 rack,無需鎖)
+    // 以 tracks 現況重建 tab 快取 + 重繪(main thread 直接讀,無需鎖)
     void render_tabs() {
         tabs_data.clear();
         if (engine == nullptr) return;
-        for (const auto& s : engine->rack()) {
+        for (const auto& t : engine->plugin_tabs()) {
             tabs_data.push_back(
-                {s.instance_id, to_wide(s.name), !s.plugin->editor_capable(), s.bypass});
+                {t.instance_id, to_wide(t.label), !t.editor_capable, t.bypass});
         }
         if (tabs != nullptr) InvalidateRect(tabs, nullptr, FALSE);
     }
@@ -396,15 +396,15 @@ struct EditorHost::Impl {
         return true;
     }
 
-    // active 遺失後的自動切換:opened_ids 依 rack 序找第一個能 attach 的。
+    // active 遺失後的自動切換:opened_ids 依 tab 序找第一個能 attach 的。
     // 絕不自動開使用者沒開過的 plugin(能力會 resurrect 關掉的 editor = 翻來覆去)
     bool switch_to_next() {
         std::string err;
-        for (const auto& s : engine->rack()) {
-            if (std::find(opened_ids.begin(), opened_ids.end(), s.instance_id) ==
+        for (const auto& t : engine->plugin_tabs()) {
+            if (std::find(opened_ids.begin(), opened_ids.end(), t.instance_id) ==
                 opened_ids.end())
                 continue;
-            if (activate(s.instance_id, err)) return true;
+            if (activate(t.instance_id, err)) return true;
         }
         return false;
     }
@@ -469,7 +469,7 @@ void EditorHost::close(std::uint32_t instance_id) noexcept {
     }
 }
 
-void EditorHost::notify_rack_changed() {
+void EditorHost::notify_tracks_changed() {
     if (impl_->wnd == nullptr) return;
     auto& ids = impl_->opened_ids;
     // prune:開過的 id 可能已被 remove_plugin 移除

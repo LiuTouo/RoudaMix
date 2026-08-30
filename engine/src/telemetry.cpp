@@ -132,8 +132,8 @@ void MeterAccumulator::compute_spectrum(float* out_db) noexcept {
 }
 
 void MeterAccumulator::publish(TelemetryBlockShm& block, std::uint64_t xruns_total,
-                                const std::uint32_t* instance_ids, std::size_t id_count,
-                                bool running) noexcept {
+                                const std::uint32_t* instance_ids, const std::uint8_t* kinds,
+                                std::size_t id_count, bool running) noexcept {
     TelemetryBlockShm next{};
     next.magic = kTelemetryMagic;
     next.abi_version = kTelemetryAbiVersion;
@@ -146,8 +146,10 @@ void MeterAccumulator::publish(TelemetryBlockShm& block, std::uint64_t xruns_tot
     next.strip_count = static_cast<std::uint32_t>(id_count < kTelemetryStrips
                                                       ? id_count
                                                       : kTelemetryStrips);
-    for (std::size_t s = 0; s < kTelemetryStrips; ++s)
+    for (std::size_t s = 0; s < kTelemetryStrips; ++s) {
         next.strips[s].instance_id = s < id_count ? instance_ids[s] : 0u;
+        next.strips[s].kind = s < id_count ? kinds[s] : 0u;
+    }
 
     for (std::size_t s = 0; s < kTelemetryStrips; ++s) {
         const std::uint32_t n = sample_counts_[s].exchange(0, std::memory_order_relaxed);

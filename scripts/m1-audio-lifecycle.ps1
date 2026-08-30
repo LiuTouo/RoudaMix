@@ -4,7 +4,7 @@ $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Core
 
 $engineExe = "$PSScriptRoot\..\engine\build\Release\roudamix-engine.exe"
-$appExe = "$PSScriptRoot\..\target\debug\roudamix-app.exe"
+$appExe = "$PSScriptRoot\..\target\release\roudamix-app.exe"
 
 # 清場
 Get-Process roudamix-app, roudamix-engine -ErrorAction SilentlyContinue | Stop-Process -Force
@@ -42,13 +42,28 @@ try {
     $c = New-Object System.IO.Pipes.NamedPipeClientStream(".", "roudamix-engine", [System.IO.Pipes.PipeDirection]::InOut)
     $c.Connect(3000)
     $null = Read-Frame $c  # snapshot push
-    Send-Frame $c '{"protocolVersion":1,"id":1,"kind":"list_devices","payload":{}}'
-    $devs = (Wait-Reply $c 1).result.devices
+    # M5:v2 預設零軌 = 靜音。sine 軌路由到輸出軌(ASIO 0/1),strip0 才有訊號
+    Send-Frame $c '{"protocolVersion":2,"id":1,"kind":"track_add","payload":{"kind":"audio"}}'
+    $tr = Wait-Reply $c 1
+    $tid = $tr.result.trackId
+    $srcJson = @{ protocolVersion = 2; id = 2; kind = "track_set_source"; payload = @{ trackId = $tid; source = @{ type = "sine"; freq = 440 } } } | ConvertTo-Json -Compress
+    Send-Frame $c $srcJson
+    $null = Wait-Reply $c 2
+    Send-Frame $c '{"protocolVersion":2,"id":3,"kind":"track_add","payload":{"kind":"output","name":"Mon"}}'
+    $oid = (Wait-Reply $c 3).result.trackId
+    $outJson = @{ protocolVersion = 2; id = 4; kind = "track_set_output"; payload = @{ trackId = $oid; output = @{ type = "asioOut"; channel = 0 } } } | ConvertTo-Json -Compress
+    Send-Frame $c $outJson
+    $null = Wait-Reply $c 4
+    $dJson = @{ protocolVersion = 2; id = 5; kind = "track_set_dests"; payload = @{ trackId = $tid; dests = @($oid) } } | ConvertTo-Json -Compress
+    Send-Frame $c $dJson
+    $null = Wait-Reply $c 5
+    Send-Frame $c '{"protocolVersion":2,"id":6,"kind":"list_devices","payload":{}}'
+    $devs = (Wait-Reply $c 6).result.devices
     if (-not $devs -or $devs.Count -eq 0) { throw "no ASIO device" }
     $key = $devs[0].deviceKey
-    $devJson = @{ protocolVersion = 1; id = 2; kind = "start"; payload = @{ deviceKey = $key; sampleRate = $null } } | ConvertTo-Json -Compress
+    $devJson = @{ protocolVersion = 2; id = 7; kind = "start"; payload = @{ deviceKey = $key; sampleRate = $null } } | ConvertTo-Json -Compress
     Send-Frame $c $devJson
-    $rep = Wait-Reply $c 2
+    $rep = Wait-Reply $c 7
     if ($rep.ok -ne $true -or $rep.result.running -ne $true) { throw "start failed: $($rep | ConvertTo-Json -Compress)" }
     Write-Host "start OK  device=$($devs[0].name)  $($rep.result.sampleRate) Hz buf=$($rep.result.bufferSize)"
     # 斷開 pipe — engine 照跑(pipe 單 instance,讓位給 app)
@@ -99,7 +114,7 @@ try {
     $c2 = New-Object System.IO.Pipes.NamedPipeClientStream(".", "roudamix-engine", [System.IO.Pipes.PipeDirection]::InOut)
     $c2.Connect(3000)
     $null = Read-Frame $c2
-    Send-Frame $c2 '{"protocolVersion":1,"id":9,"kind":"shutdown_engine","payload":{}}'
+    Send-Frame $c2 '{"protocolVersion":2,"id":9,"kind":"shutdown_engine","payload":{}}'
     $null = Wait-Reply $c2 9
     $c2.Close()
     Start-Sleep -Seconds 2

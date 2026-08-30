@@ -302,7 +302,7 @@ bool AsioDevice::probe(const std::string& clsid, std::string& err) {
         cap.latency_valid = true;
     }
 
-    // per-channel sample types
+    // per-channel sample types + 名稱
     bool types_ok = true;
     for (long i = 0; i < in_count && types_ok; ++i) {
         ASIOChannelInfo info{};
@@ -313,6 +313,7 @@ bool AsioDevice::probe(const std::string& clsid, std::string& err) {
             break;
         }
         cap.input_types.push_back(map_asio_sample_type(info.type));
+        cap.input_names.push_back(info.name);
     }
     for (long o = 0; o < out_count && types_ok; ++o) {
         ASIOChannelInfo info{};
@@ -323,6 +324,7 @@ bool AsioDevice::probe(const std::string& clsid, std::string& err) {
             break;
         }
         cap.output_types.push_back(map_asio_sample_type(info.type));
+        cap.output_names.push_back(info.name);
     }
     if (!types_ok) {
         err = "getChannelInfo failed";
@@ -339,15 +341,15 @@ bool AsioDevice::probe(const std::string& clsid, std::string& err) {
     return true;
 }
 
-bool AsioDevice::prepare(std::uint32_t sample_rate, std::size_t in_count, std::size_t out_count,
+bool AsioDevice::prepare(std::uint32_t sample_rate,
+                         const std::vector<std::uint32_t>& in_channels,
+                         const std::vector<std::uint32_t>& out_channels,
                          std::uint32_t buffer_size, std::string& err) {
     if (!impl_ || !impl_->driver_) {
         err = "device not probed";
         return false;
     }
-    in_count = std::min(in_count, cap_.input_types.size());
-    out_count = std::min(out_count, cap_.output_types.size());
-    if (out_count == 0) {
+    if (out_channels.empty()) {
         err = "no output channel";
         return false;
     }
@@ -390,17 +392,29 @@ bool AsioDevice::prepare(std::uint32_t sample_rate, std::size_t in_count, std::s
     impl->buffer_infos_.clear();
     impl->input_types_.clear();
     impl->output_types_.clear();
-    for (std::size_t i = 0; i < in_count; ++i) {
-        if (pcm_bytes_per_sample(cap_.input_types[i]) == 0) continue;  // 跳過不支援型別通道
+    input_map_.clear();
+    output_map_.clear();
+    for (const auto ch : in_channels) {
+        if (ch >= cap_.input_types.size()) {
+            err = "input channel " + std::to_string(ch) + " out of range";
+            return false;
+        }
+        if (pcm_bytes_per_sample(cap_.input_types[ch]) == 0) continue;  // 跳過不支援型別通道
         impl->buffer_infos_.push_back(
-            {ASIOTrue, static_cast<long>(i), {nullptr, nullptr}});
-        impl->input_types_.push_back(cap_.input_types[i]);
+            {ASIOTrue, static_cast<long>(ch), {nullptr, nullptr}});
+        impl->input_types_.push_back(cap_.input_types[ch]);
+        input_map_.push_back(ch);
     }
-    for (std::size_t o = 0; o < out_count; ++o) {
-        if (pcm_bytes_per_sample(cap_.output_types[o]) == 0) continue;
+    for (const auto ch : out_channels) {
+        if (ch >= cap_.output_types.size()) {
+            err = "output channel " + std::to_string(ch) + " out of range";
+            return false;
+        }
+        if (pcm_bytes_per_sample(cap_.output_types[ch]) == 0) continue;
         impl->buffer_infos_.push_back(
-            {ASIOFalse, static_cast<long>(o), {nullptr, nullptr}});
-        impl->output_types_.push_back(cap_.output_types[o]);
+            {ASIOFalse, static_cast<long>(ch), {nullptr, nullptr}});
+        impl->output_types_.push_back(cap_.output_types[ch]);
+        output_map_.push_back(ch);
     }
     if (impl->buffer_infos_.empty()) {
         err = "no usable channel pair";

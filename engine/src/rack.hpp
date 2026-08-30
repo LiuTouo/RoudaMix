@@ -16,7 +16,6 @@
 namespace rmx {
 
 constexpr std::size_t kParamRingSize = 256;  // 2 的冪
-constexpr std::size_t kMaxRackSlots = 15;    // telemetry 16 strips - 1(strip 0 = engine out)
 constexpr std::size_t kMaxParamEditsPerBlock = 64;
 constexpr std::uint32_t kMaxBlockFrames = 8192;  // RT ping-pong bus 上限(ASIO 遠低於此)
 

@@ -1,1 +1,1 @@
-{"protocolVersion": 1, "id": 53, "kind": "start", "payload": {"sampleRate": 48000}}
+{"protocolVersion": 2, "id": 53, "kind": "start", "payload": {"sampleRate": 48000}}

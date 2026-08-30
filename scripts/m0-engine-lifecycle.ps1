@@ -37,7 +37,7 @@ try {
     $snap1 = Read-Frame $c1
     if ($snap1.kind -ne "snapshot") { throw "expected snapshot event, got $($snap1.kind)" }
     $epoch1 = $snap1.payload.epoch
-    Send-Frame $c1 '{"protocolVersion":1,"id":1,"kind":"ping","payload":{}}'
+    Send-Frame $c1 '{"protocolVersion":2,"id":1,"kind":"ping","payload":{}}'
     $rep = Read-Frame $c1
     if ($rep.ok -ne $true -or $rep.result.engineVersion -ne "0.1.0") { throw "bad ping reply: $($rep | ConvertTo-Json -Compress)" }
     Write-Host "attach1 OK  epoch=$epoch1  engine=$($rep.result.engineVersion)"
@@ -53,7 +53,7 @@ try {
     $snap2 = Read-Frame $c2
     $epoch2 = $snap2.payload.epoch
     if ($epoch2 -ne $epoch1) { throw "epoch changed: $epoch1 -> $epoch2" }
-    Send-Frame $c2 '{"protocolVersion":1,"id":2,"kind":"shutdown_engine","payload":{}}'
+    Send-Frame $c2 '{"protocolVersion":2,"id":2,"kind":"shutdown_engine","payload":{}}'
     $rep2 = Read-Frame $c2
     if ($rep2.ok -ne $true) { throw "shutdown reply not ok" }
     $c2.Close()

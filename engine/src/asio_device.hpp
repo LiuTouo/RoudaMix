@@ -34,6 +34,8 @@ struct DeviceCapability {
     std::vector<std::uint32_t> sample_rates;  // canSampleRate 驗證清單
     std::vector<PcmType> input_types;         // per-channel sample type
     std::vector<PcmType> output_types;
+    std::vector<std::string> input_names;     // per-channel 名稱(getChannelInfo;UI 下拉用)
+    std::vector<std::string> output_names;
 
     // granularity 展開的合法 buffer 清單(UI 下拉直接用;空 = 常見值過濾 [min,max])
     [[nodiscard]] std::vector<std::uint32_t> buffer_options() const;
@@ -64,11 +66,12 @@ public:
     [[nodiscard]] const std::string& clsid() const { return clsid_; }
     [[nodiscard]] const std::string& name() const { return name_; }
 
-    // 建緩衝:前 in_count 輸入 / 前 out_count 輸出、設取樣率、單例 gate。
-    // buffer_size = 0 用 driver preferred;否則需在 [min,max] 內(driver 是
-    // 最終權威,granularity 不合 createBuffers 會失敗回 err)
-    bool prepare(std::uint32_t sample_rate, std::size_t in_count, std::size_t out_count,
-                 std::uint32_t buffer_size, std::string& err);
+    // 建緩衝:顯式 channel index 集合(M5:軌道自選 pair,不再「前 N 軌」)、
+    // 設取樣率、單例 gate。buffer_size = 0 用 driver preferred;否則需在
+    // [min,max] 內(driver 是最終權威,granularity 不合 createBuffers 會失敗回 err)
+    bool prepare(std::uint32_t sample_rate, const std::vector<std::uint32_t>& in_channels,
+                 const std::vector<std::uint32_t>& out_channels, std::uint32_t buffer_size,
+                 std::string& err);
     bool start(std::string& err);
     void stop() noexcept;
     void close() noexcept;  // 停 + dispose + 關 driver
@@ -83,6 +86,14 @@ public:
     void set_callback(IAudioCallback* callback) noexcept { callback_ = callback; }
     [[nodiscard]] std::uint32_t block_size() const noexcept { return block_size_; }
     [[nodiscard]] std::uint64_t callbacks() const noexcept;
+    // scratch 位置 → 裝置 channel index(prepare 後有效;AudioEngine 解析
+    // 軌道 source/output 對應 block.inputs/outputs 哪個位置用)
+    [[nodiscard]] const std::vector<std::uint32_t>& input_map() const noexcept {
+        return input_map_;
+    }
+    [[nodiscard]] const std::vector<std::uint32_t>& output_map() const noexcept {
+        return output_map_;
+    }
 
 private:
     struct Impl;
@@ -99,6 +110,8 @@ private:
     std::atomic<std::uint32_t> notifications_{};
     std::atomic<bool> running_{false};
     std::uint32_t block_size_{};
+    std::vector<std::uint32_t> input_map_;   // scratch index → 裝置 channel
+    std::vector<std::uint32_t> output_map_;
 
     friend struct Impl;
 };

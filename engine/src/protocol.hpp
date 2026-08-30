@@ -10,7 +10,7 @@
 
 namespace rmx {
 
-inline constexpr uint32_t kProtocolVersion = 1;
+inline constexpr uint32_t kProtocolVersion = 2;
 inline constexpr size_t kMaxFrameBytes = 1024 * 1024;
 inline constexpr const char* kEngineVersion = "0.1.0";
 inline constexpr const char* kPipeName = "\\\\.\\pipe\\roudamix-engine";
@@ -57,6 +57,6 @@ nlohmann::json make_event(std::string kind, nlohmann::json payload);
 
 // §8 共用結構
 nlohmann::json make_snapshot_json(uint64_t epoch, const nlohmann::json& status,
-                                  const nlohmann::json& rack);
+                                  const nlohmann::json& tracks);
 
 }  // namespace rmx

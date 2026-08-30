@@ -46,8 +46,8 @@ public:
     // close_editor 命令:active = detach + 自動切下一個開著的,沒有則關窗;
     // 非 active = 只從清單移除。冪等
     void close(std::uint32_t instance_id) noexcept;
-    // rack 異動後(main.cpp after_mutation):同步 tab 列;active 被移除時自動切換/關窗
-    void notify_rack_changed();
+    // tracks 異動後(main.cpp after_mutation):同步 tab 列;active 被移除時自動切換/關窗
+    void notify_tracks_changed();
     // message loop 結束、engine 拆解前呼叫(detach view、摧毀視窗)
     void shutdown() noexcept;
 
