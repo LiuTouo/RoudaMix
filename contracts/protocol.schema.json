@@ -45,7 +45,8 @@
           "required": ["type", "channel"],
           "properties": {
             "type": { "const": "asioIn" },
-            "channel": { "$ref": "#/$defs/u32" }
+            "channel": { "$ref": "#/$defs/u32" },
+            "mono": { "type": "boolean" }
           }
         },
         {

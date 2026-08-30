@@ -37,6 +37,7 @@ struct TrackSource {
     std::uint32_t asio_in_ch{};  // pair 基底
     std::uint32_t pid{};         // kApp(M5b)
     std::string app_name;        // UI 顯示(M5b;session 存名不存 pid)
+    bool mono{};                 // kAsioIn:單聲道來源(asio_in_ch 複製到 L/R;Studio One 式輸入格式)
     bool operator==(const TrackSource&) const = default;
 };
 

@@ -82,7 +82,7 @@ render 裝置,`list_render_devices` 列 endpoints)。每軌一條 VST 鏈
 | `track_set_source` | `{ "trackId": u32, "source": TrackSource? }` | `{ "tracks": [Track] }` | asioIn pair 被別軌占用 → `device_busy`;kind `fx`/`output` 送非 null source → `bad_command` |
 | `track_set_dests` | `{ "trackId": u32, "dests": [u32] }` | `{ "tracks": [Track] }` | 多選 = 加總;含自己 → `bad_command`;未知 id → `track_not_found`;造成環 → `cycle_detected` 且**不套用** |
 | `track_set_output` | `{ "trackId": u32, "output": TrackOutput? }` | `{ "tracks": [Track] }` | asioOut pair 被別軌占用 → `device_busy`;wasapi deviceId 不存在 → `device_busy`;非 output 軌送非 null → `bad_command` |
-| `track_move` | `{ "trackId": u32, "newIndex": u32 }` | `{ "tracks": [Track] }` | 同 kind 群組內重排(UI 欄內上下移) |
+| `track_move` | `{ "trackId": u32, "newIndex": u32 }` | `{ "tracks": [Track] }` | master 陣列絕對索引重排(erase+insert;newIndex 超尾 = 移到尾);UI 輸入/輸出帶拖放用 |
 | `scan_plugins` | `{ "roots": [str]? }` | `{ "plugins": [ScanModule] }` | 同步掃描(數秒);空 roots = 預設 `C:\Program Files\Common Files\VST3`、`C:\Program Files\VST3`。載入失敗的 module 略過不 fail。**掃描與 `add_plugin` 的 module 載入驗證在隔離 worker process**(`roudamix-worker.exe`)執行:壞 module 崩潰只死 worker,engine 不受污染;worker 掛掉時掃描回報已完成的增量結果 |
 | `add_plugin` | `{ "trackId": u32, "path": str, "classId": str? }` | `{ "instanceId": u32, "trackId": u32, "tracks": [Track] }` | classId 省 = module 內第一個 Audio Effect class;追加到該軌鏈尾(無上限);失敗 `plugin_load_failed` |
 | `remove_plugin` | `{ "instanceId": u32 }` | `{ "tracks": [Track] }` | |

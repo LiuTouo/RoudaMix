@@ -68,7 +68,9 @@ nlohmann::json source_json(const rmx::TrackSource& src) {
         case rmx::TrackSource::kSine:
             return nlohmann::json{{"type", "sine"}, {"freq", src.sine_freq}};
         case rmx::TrackSource::kAsioIn:
-            return nlohmann::json{{"type", "asioIn"}, {"channel", src.asio_in_ch}};
+            return nlohmann::json{{"type", "asioIn"},
+                                  {"channel", src.asio_in_ch},
+                                  {"mono", src.mono}};
         case rmx::TrackSource::kApp:
             return nlohmann::json{{"type", "app"},
                                   {"pid", src.pid},
@@ -368,6 +370,8 @@ bool dispatch(HANDLE client, const Command& c) {
                 } else if (t == "asioIn") {
                     src.type = rmx::TrackSource::kAsioIn;
                     src.asio_in_ch = sj["channel"].get<std::uint32_t>();
+                    if (sj.contains("mono") && sj["mono"].is_boolean())
+                        src.mono = sj["mono"].get<bool>();
                 } else if (t == "app") {
                     src.type = rmx::TrackSource::kApp;
                     src.pid = sj["pid"].get<std::uint32_t>();

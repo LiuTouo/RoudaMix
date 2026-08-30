@@ -16,7 +16,9 @@ nlohmann::json source_to_json(const TrackSource& src) {
         case TrackSource::kSine:
             return nlohmann::json{{"type", "sine"}, {"freq", src.sine_freq}};
         case TrackSource::kAsioIn:
-            return nlohmann::json{{"type", "asioIn"}, {"channel", src.asio_in_ch}};
+            return nlohmann::json{{"type", "asioIn"},
+                                  {"channel", src.asio_in_ch},
+                                  {"mono", src.mono}};
         // app:存程序名不存 pid(pid 跨載入無意義;load 對不到 = 該軌靜音不 fail)
         case TrackSource::kApp:
             return src.app_name.empty()
@@ -38,6 +40,7 @@ TrackSource source_from_json(const nlohmann::json& j) {
     } else if (t == "asioIn" && j.contains("channel") && j["channel"].is_number_unsigned()) {
         src.type = TrackSource::kAsioIn;
         src.asio_in_ch = j["channel"].get<std::uint32_t>();
+        if (j.contains("mono") && j["mono"].is_boolean()) src.mono = j["mono"].get<bool>();
     } else if (t == "app" && j.contains("name") && j["name"].is_string()) {
         src.type = TrackSource::kApp;
         src.app_name = j["name"].get<std::string>();

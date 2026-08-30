@@ -162,6 +162,9 @@ private:
     void swap_graph() noexcept;             // master 拷貝成新 graph、atomic 換、舊 graph 退役
     void retire_graph() noexcept;           // graph 退場(RT 改讀 nullptr)
     void clear_expired_retired(bool force) noexcept;  // grace > 500ms 才刪
+    // 跑著時軌道動了 ASIO pair:以最新 source/output 聯集重建裝置 buffer
+    // (createBuffers 只能在 stop 狀態;聯集沒變 = 不動)。失敗 = 串流已停
+    bool rebuild_asio_channels(std::string& err);
     RackSlot* find_slot_mut(std::uint32_t instance_id) noexcept;
     TrackNode* find_track_mut(std::uint32_t track_id) noexcept;
     // 同 ASIO pair 全 engine 只能一軌用(source 與 output 各自方向內查重)

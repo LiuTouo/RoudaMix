@@ -15,6 +15,7 @@ export interface TrackSource {
   type: "sine" | "asioIn" | "app";
   freq?: number; // sine
   channel?: number; // asioIn(pair 基底)
+  mono?: boolean; // asioIn:單聲道來源(channel 複製到 L/R)
   pid?: number; // app(M5b)
   name?: string; // app 顯示名
 }
