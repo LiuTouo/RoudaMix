@@ -30,3 +30,21 @@ export function onEngineEvent(
 export function onMeters(cb: (m: MetersFrame) => void) {
   return listen<MetersFrame>("meters", (e) => cb(e.payload));
 }
+
+// ---------- 應用層設定(bridge settings.json) ----------
+
+export type AppSettings = {
+  startupMode: "blank" | "last" | "folder";
+  sessionDir: string | null;
+  /** folder 模式:sessionDir 內選定的檔名(空 = 空白 session) */
+  startupFile: string | null;
+  /** last 模式:上次存/載的路徑 */
+  lastSessionPath: string | null;
+};
+
+export const getSettings = () => invoke<AppSettings>("get_settings");
+
+export const setSettings = (patch: Partial<AppSettings>) =>
+  invoke<AppSettings>("set_settings", { patch });
+
+export const listSessions = (dir: string) => invoke<string[]>("list_sessions", { dir });

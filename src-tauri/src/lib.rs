@@ -4,6 +4,7 @@
 mod bridge;
 mod commands;
 mod protocol;
+mod settings;
 mod shm;
 mod spawn;
 
@@ -21,7 +22,10 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::connect_status,
-            commands::engine_command
+            commands::engine_command,
+            settings::get_settings,
+            settings::set_settings,
+            settings::list_sessions
         ])
         .run(tauri::generate_context!())
         .expect("tauri run failed");
