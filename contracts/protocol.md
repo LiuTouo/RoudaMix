@@ -63,7 +63,7 @@ RoudaMix engine(process `roudamix-engine.exe`)與 UI bridge(Tauri/Rust)之間的
 ## 6. 命令表
 
 Track model(§8 `Track`):多軌 DAG。輸入軌 kind `audio`(來源 = ASIO 輸入 pair 或 sine)、
-`app`(來源 = 指定程序 process loopback,**M5b 實作**,本版送 app source 回 `bad_command`)、
+`app`(來源 = 指定程序 process loopback,`list_audio_apps` 列正在出聲的 app)、
 `fx`(無來源,靠上游 dest 指入);輸出軌 kind `output`(sink = ASIO 輸出 pair 或 WASAPI
 render 裝置,**M5c 實作 wasapi**,本版送 wasapi 回 `bad_command`)。每軌一條 VST 鏈
 (無上限)、gain/mute(post-fader)、多選 dests(加總;control 面保證無環)。
@@ -98,8 +98,7 @@ render 裝置,**M5c 實作 wasapi**,本版送 wasapi 回 `bad_command`)。每軌
 | `load_session` | `{ "path": str }` | `{ "deviceKey": str?, "sampleRate": u32?, "bufferSize": u32? }` | 全軌重建(壞軌/消失 module 略過;dests 以舊 id→新 id map 重接);`roudamixSession != 2` 一律 `session_io` 拒載(v1 不支援);不自動 start;成功 = mutation(廣播 status) |
 | `shutdown_engine` | `{}` | `{}` | 回 ack 後退出 |
 
-M5b/M5c 保留(M5a 送了回 `internal` not implemented):`list_audio_apps` `{}` →
-`{ "apps": [{ "pid": u32, "name": str }] }`;`list_render_devices` `{}` →
+M5c 保留(M5a/M5b 送了回 `internal` not implemented):`list_render_devices` `{}` →
 `{ "devices": [{ "id": str, "name": str, "default": bool, "sampleRate": u32 }] }`。
 
 Events:
@@ -115,8 +114,10 @@ Events:
 `unsupported_version`、`bad_frame`、`bad_command`、`not_running`、`already_running`、
 `device_open_failed`、`device_lost`、`track_not_found`、`cycle_detected`、`device_busy`、
 `plugin_not_found`、`plugin_load_failed`、`plugin_no_editor`、`param_not_found`、
-`session_io`、`preset_io`、`plugin_state_failed`、`internal`。
-(M5b 追加 `app_not_found`、`unsupported_windows`。)
+`session_io`、`preset_io`、`plugin_state_failed`、`app_not_found`、`unsupported_windows`、
+`internal`。
+(`app_not_found`:app 來源的 pid 不存在/程序已結束;`unsupported_windows`:
+process loopback 需 Win10 2004+,舊系統 activation 失敗。)
 
 錯誤碼只增不改語意;client 對未知錯誤碼當 `internal` 顯示。
 
@@ -125,9 +126,11 @@ Events:
 ```
 DeviceInfo   { deviceKey: str, name: str, maxIn: u16, maxOut: u16, sampleRates: [u32], currentSampleRate: u32, minBufferSize: u32, maxBufferSize: u32, preferredBufferSize: u32, bufferSizes: [u32], inputNames: [str], outputNames: [str] }
 EngineStatus { running: bool, deviceKey: str?, sampleRate: f32, bufferSize: u32?, inputLatency: u32?, outputLatency: u32?, xruns: u64, trackCount: u32, pluginFails: u32, tracks: [Track], error: str? }
-Track        { trackId: u32, kind: "audio"|"app"|"fx"|"output", name: str, color: u32(0xRRGGBB), source: TrackSource, dests: [u32], output: TrackOutput, gain: f32, mute: bool, plugins: [RackSlot] }
+Track        { trackId: u32, kind: "audio"|"app"|"fx"|"output", name: str, color: u32(0xRRGGBB), source: TrackSource, dests: [u32], output: TrackOutput, gain: f32, mute: bool, plugins: [RackSlot], error: str? }
+               (error 非 null = 該軌 capture/裝置失效等軌道級錯誤;恢復時清空)
 TrackSource  = null | { type: "sine", freq: f32 } | { type: "asioIn", channel: u32 } | { type: "app", pid: u32, name: str? }
-               (null = 無來源/FX 軌;asioIn channel = pair 基底,取 ch 與 ch+1;app = M5b)
+               (null = 無來源/FX 軌;asioIn channel = pair 基底,取 ch 與 ch+1;
+                app = process loopback 抓該程序樹的音訊,pid 0 + name = 載入時重解析,找不到 = 軌 error)
 TrackOutput  = null | { type: "asioOut", channel: u32 } | { type: "wasapi", deviceId: str }
                (null = 不落地;asioOut channel = pair 基底;wasapi = M5c)
 RackSlot     { instanceId: u32, name: str, pluginPath: str, classId: str, bypassed: bool, params: [{ paramId: u32, normalized: f32 }] }

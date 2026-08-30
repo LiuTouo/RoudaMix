@@ -38,6 +38,7 @@ std::mutex g_engine_mutex;  // dispatch 序列化(engine 控制面非 RT)
 // main thread 的 message-only window + 自訂訊息(pipe thread → main 的 task 隊列)
 constexpr UINT WM_APP_TASK = WM_APP + 1;      // LPARAM = Task*(main 處理後 delete)
 constexpr UINT WM_APP_QUIT = WM_APP + 2;      // shutdown_engine:main loop 退出
+constexpr UINT WM_APP_CAPTURE_ERR = WM_APP + 4;  // WPARAM = track_id(app capture 偵錯)
 constexpr wchar_t kMainWndClass[] = L"RmxEngineMain";
 HWND g_main_hwnd = nullptr;
 std::mutex g_write_mutex;  // pipe thread 與 main 都會寫:幀序列化
@@ -119,6 +120,7 @@ nlohmann::json tracks_json() {
             {"gain", t.gain},
             {"mute", t.mute},
             {"plugins", plugins},
+            {"error", t.track_error.empty() ? nlohmann::json(nullptr) : nlohmann::json(t.track_error)},
         });
     }
     return arr;
@@ -223,6 +225,13 @@ bool dispatch(HANDLE client, const Command& c) {
             });
         }
         ok(nlohmann::json{{"devices", devices}});
+    } else if (c.kind == "list_audio_apps") {
+        // 主 thread COM(STA)列舉 active audio sessions;不持鎖(純讀系統狀態)
+        nlohmann::json apps = nlohmann::json::array();
+        for (const auto& a : g_engine.list_audio_apps()) {
+            apps.push_back({{"pid", a.pid}, {"name", a.name}});
+        }
+        ok(nlohmann::json{{"apps", apps}});
     } else if (c.kind == "start") {
         std::lock_guard<std::mutex> lock(g_engine_mutex);
         if (g_engine.status().running) {
@@ -667,6 +676,14 @@ LRESULT CALLBACK main_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
         }
         return 0;
     }
+    if (msg == WM_APP_CAPTURE_ERR) {
+        // app capture pump 偵錯(pump thread → callback → PostMessage):
+        // 標軌 error、收 capture、廣播 status(UI 顯示軌道出錯)
+        std::lock_guard<std::mutex> lock(g_engine_mutex);
+        g_engine.handle_capture_failed(static_cast<std::uint32_t>(wp));
+        if (g_active_pipe.load() != nullptr) after_mutation(g_active_pipe.load());
+        return 0;
+    }
     if (msg == WM_APP_QUIT) {
         PostQuitMessage(0);
         return 0;
@@ -820,6 +837,10 @@ int main() {
 
     rmx::EditorHost::instance().set_engine(&g_engine);
     rmx::EditorHost::instance().set_command_target(g_main_hwnd);
+    // M5b:app capture 偵錯 → main thread 排隊( pump thread 禁碰 pipe/鎖)
+    g_engine.set_capture_failed_cb([](std::uint32_t track_id) {
+        PostMessageW(g_main_hwnd, WM_APP_CAPTURE_ERR, track_id, 0);
+    });
 
     std::thread pipe_thread(pipe_serve_thread);
     std::thread watchdog(idle_watchdog);

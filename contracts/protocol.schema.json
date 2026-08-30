@@ -95,7 +95,8 @@
         "output": { "$ref": "#/$defs/trackOutput" },
         "gain": { "type": "number", "minimum": 0, "maximum": 4 },
         "mute": { "type": "boolean" },
-        "plugins": { "type": "array", "items": { "$ref": "#/$defs/rackSlot" } }
+        "plugins": { "type": "array", "items": { "$ref": "#/$defs/rackSlot" } },
+        "error": { "type": ["string", "null"] }
       }
     },
 
@@ -174,6 +175,7 @@
         "unsupported_version", "bad_frame", "bad_command", "not_running",
         "already_running", "device_open_failed", "device_lost",
         "track_not_found", "cycle_detected", "device_busy",
+        "app_not_found", "unsupported_windows",
         "plugin_not_found", "plugin_load_failed", "plugin_no_editor",
         "param_not_found", "session_io", "preset_io", "plugin_state_failed",
         "internal"
@@ -209,6 +211,16 @@
             "protocolVersion": { "const": 2 },
             "id": { "$ref": "#/$defs/u64" },
             "kind": { "const": "list_devices" },
+            "payload": { "type": "object" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["protocolVersion", "id", "kind", "payload"],
+          "properties": {
+            "protocolVersion": { "const": 2 },
+            "id": { "$ref": "#/$defs/u64" },
+            "kind": { "const": "list_audio_apps" },
             "payload": { "type": "object" }
           }
         },

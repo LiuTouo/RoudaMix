@@ -52,6 +52,7 @@ add_executable(roudamix-engine
     src/telemetry.cpp
     src/track_graph.cpp
     src/audio_engine.cpp
+    src/app_capture.cpp
     src/vst3_host.cpp
     src/editor_host.cpp
     src/session.cpp
@@ -59,7 +60,7 @@ add_executable(roudamix-engine
 )
 target_include_directories(roudamix-engine PRIVATE src)
 target_include_directories(roudamix-engine SYSTEM PRIVATE third_party)
-target_link_libraries(roudamix-engine PRIVATE asio_sdk vst3_sdk user32 ole32 gdi32)
+target_link_libraries(roudamix-engine PRIVATE asio_sdk vst3_sdk user32 ole32 gdi32 mmdevapi psapi)
 if(MSVC)
     target_compile_options(roudamix-engine PRIVATE /W4 /utf-8)
     # 診斷用:SEH address 反查(roudamix-engine.map)
@@ -110,11 +111,11 @@ add_test(NAME vst3_host COMMAND vst3_host_test)
 
 # session 檔案序列化/載入(無 plugin 環境;真 plugin roundtrip 走 m5a-engine-tracks.ps1)
 add_executable(session_test tests/session_test.cpp src/session.cpp src/audio_engine.cpp
-    src/track_graph.cpp
+    src/track_graph.cpp src/app_capture.cpp
     src/asio_device.cpp src/pcm_convert.cpp src/telemetry.cpp src/vst3_host.cpp)
 target_include_directories(session_test PRIVATE src)
 target_include_directories(session_test SYSTEM PRIVATE third_party)
-target_link_libraries(session_test PRIVATE asio_sdk vst3_sdk user32)
+target_link_libraries(session_test PRIVATE asio_sdk vst3_sdk user32 ole32 mmdevapi psapi)
 if(MSVC)
     target_compile_options(session_test PRIVATE /W4 /utf-8)
 endif()

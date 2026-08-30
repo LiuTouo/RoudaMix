@@ -269,9 +269,7 @@
     <div class="colhead">
       <span class="coltitle">輸入</span>
       <button class="mini" onclick={() => addTrack("audio")}>＋ Audio</button>
-      <button class="mini" onclick={() => addTrack("app")} disabled title="M5b:App 擷取">
-        ＋ App
-      </button>
+      <button class="mini" onclick={() => addTrack("app")}>＋ App</button>
       <button class="mini" onclick={() => addTrack("fx")}>＋ FX</button>
     </div>
     <div class="colbody">

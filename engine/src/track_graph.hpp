@@ -14,6 +14,8 @@
 
 namespace rmx {
 
+class AppCapture;  // M5b:process loopback capture(app 軌;shared_ptr 跨 snapshot)
+
 enum class TrackKind : std::uint8_t { kAudio, kApp, kFx, kOutput };
 
 inline const char* track_kind_str(TrackKind k) noexcept {
@@ -76,6 +78,8 @@ struct TrackNode {
     std::uint32_t track_strip{kNoStrip};       // telemetry strip(軌)
     std::vector<std::uint32_t> chain_strips;   // 平行於 chain(plugin 錶)
     std::shared_ptr<TrackRt> buf;
+    std::shared_ptr<AppCapture> capture;  // M5b:app 軌的 loopback pump(master 與 snapshot 共用)
+    std::string track_error;              // control 面:capture 失敗等原因(UI 顯示;空 = 無)
 };
 
 struct TrackGraph {

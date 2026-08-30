@@ -6,6 +6,7 @@
   import { engineCommand } from "./ipc";
   import { cssColor, parseColor, stripOfTrack } from "./tracks";
   import type {
+    AudioApp,
     DeviceInfo,
     MeterStrip,
     RackSlot,
@@ -32,6 +33,8 @@
   let scanning = $state(false);
   let scanned = $state(false);
   let modules = $state<ScanModule[]>([]);
+  // app 程序清單(focus 時拉一次,保持常新)
+  let apps = $state<AudioApp[]>([]);
 
   const dev = $derived(devices.find((d) => d.deviceKey === selectedDeviceKey) ?? null);
   const isOutput = $derived(track.kind === "output");
@@ -63,6 +66,36 @@
       }
     } catch (e) {
       err = String(e);
+    }
+  }
+
+  async function loadApps() {
+    try {
+      const r = await engineCommand("list_audio_apps", {});
+      apps = (r.apps as AudioApp[]) ?? [];
+    } catch (e) {
+      err = String(e);
+    }
+  }
+
+  async function setAppSource(value: string) {
+    err = "";
+    if (value === "") {
+      try {
+        await engineCommand("track_set_source", { trackId: track.trackId, source: null });
+      } catch (e) {
+        err = String(e);
+      }
+      return;
+    }
+    const app = apps.find((a) => a.pid === Number(value));
+    try {
+      await engineCommand("track_set_source", {
+        trackId: track.trackId,
+        source: { type: "app", pid: Number(value), name: app?.name },
+      });
+    } catch (e) {
+      err = String(e); // app_not_found / unsupported_windows 等
     }
   }
 
@@ -246,8 +279,16 @@
       </select>
     {:else if track.kind === "app"}
       <span class="lbl">輸入</span>
-      <select disabled title="M5b:指定 App(process loopback)">
-        <option>App(M5b)</option>
+      <select
+        value={track.source?.type === "app" ? String(track.source.pid) : ""}
+        onfocus={loadApps}
+        onchange={(e) => setAppSource(e.currentTarget.value)}
+        title="抓該 App 的聲音(process loopback);清單 = 正在出聲的程式"
+      >
+        <option value="">(選 App — 點此重新整理)</option>
+        {#each apps as a (a.pid)}
+          <option value={a.pid}>{a.name}</option>
+        {/each}
       </select>
     {:else if track.kind === "fx"}
       <span class="lbl dim" title="FX 軌:上游軌把輸出指到這裡(insert 型)">insert · 無輸入</span>
@@ -360,8 +401,8 @@
 
   <div class="colorbar" style="background:{cssColor(track.color)}"></div>
 
-  {#if err}
-    <p class="err mono">{err}</p>
+  {#if err || track.error}
+    <p class="err mono">{err || track.error}</p>
   {/if}
 </div>
 

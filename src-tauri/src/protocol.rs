@@ -107,7 +107,8 @@ fn err<S: Into<String>>(s: S) -> ProtocolError {
 // ---------- per-kind payload(§6)----------
 
 pub const COMMAND_KINDS: &[&str] = &[
-    "ping", "get_snapshot", "list_devices", "start", "stop", "open_device_panel",
+    "ping", "get_snapshot", "list_devices", "list_audio_apps", "start", "stop",
+    "open_device_panel",
     "track_add", "track_remove", "track_set", "track_set_source", "track_set_dests",
     "track_set_output", "track_move",
     "scan_plugins", "add_plugin", "remove_plugin", "move_plugin", "set_bypass", "set_param",
@@ -276,7 +277,7 @@ fn validate_command_payload(c: &CommandEnvelope) -> Result<(), ProtocolError> {
             Some(V::Number(n)) if n.as_u64().is_some() => Ok(()),
             _ => Err(err("payload.hwnd must be u64")),
         },
-        "ping" | "get_snapshot" | "list_devices" | "stop" | "shutdown_engine"
+        "ping" | "get_snapshot" | "list_devices" | "list_audio_apps" | "stop" | "shutdown_engine"
         | "open_device_panel" => {
             if p.is_empty() { Ok(()) } else { Err(err("payload must be empty object")) }
         }
@@ -295,6 +296,7 @@ fn known_error_code(c: &str) -> bool {
     [
         "unsupported_version", "bad_frame", "bad_command", "not_running", "already_running",
         "device_open_failed", "device_lost", "track_not_found", "cycle_detected", "device_busy",
+        "app_not_found", "unsupported_windows",
         "plugin_not_found", "plugin_load_failed", "plugin_no_editor", "param_not_found",
         "session_io", "preset_io", "plugin_state_failed", "internal",
     ]

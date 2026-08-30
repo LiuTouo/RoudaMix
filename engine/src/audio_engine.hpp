@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -49,6 +50,19 @@ public:
         std::vector<std::string> output_names;
     };
     std::vector<DeviceSummary> list_devices();
+
+    // M5b:正在出聲的 app(active audio sessions;UI 程序選擇器用)
+    struct AudioAppInfo {
+        std::uint32_t pid{};
+        std::string name;
+    };
+    std::vector<AudioAppInfo> list_audio_apps();
+    // M5b:app capture pump 偵錯(程序結束/裝置失效)→ main thread PostMessage
+    // 轉 handle_capture_failed(track_id);engine 不鎖、不碰 pipe
+    void set_capture_failed_cb(std::function<void(std::uint32_t)> cb) {
+        capture_failed_cb_ = std::move(cb);
+    }
+    void handle_capture_failed(std::uint32_t track_id);  // main thread 專屬
 
     bool start(const std::string& device_key, std::optional<std::uint32_t> sample_rate,
                std::optional<std::uint32_t> buffer_size, std::string& err);
@@ -146,6 +160,11 @@ private:
     // 同 ASIO pair 全 engine 只能一軌用(source 與 output 各自方向內查重)
     bool asio_in_pair_busy(std::uint32_t ch, std::uint32_t except_track) const noexcept;
     bool asio_out_pair_busy(std::uint32_t ch, std::uint32_t except_track) const noexcept;
+    // M5b:app capture 生命週期(控制面)。ensure 失敗 = t.track_error 帶原因
+    bool ensure_capture(TrackNode& t, std::uint32_t dst_rate, std::string& err);
+    void stop_capture(TrackNode& t) noexcept;
+    void stop_captures() noexcept;
+    std::function<void(std::uint32_t)> capture_failed_cb_;
 };
 
 }  // namespace rmx

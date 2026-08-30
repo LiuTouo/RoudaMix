@@ -9,7 +9,7 @@ namespace {
 
 const std::set<std::string>& command_kinds() {
     static const std::set<std::string> k = {
-        "ping", "get_snapshot", "list_devices", "start", "stop",
+        "ping", "get_snapshot", "list_devices", "list_audio_apps", "start", "stop",
         "open_device_panel",
         "track_add", "track_remove", "track_set", "track_set_source",
         "track_set_dests", "track_set_output", "track_move",
@@ -35,6 +35,7 @@ const std::set<std::string>& error_codes() {
         "unsupported_version", "bad_frame", "bad_command", "not_running",
         "already_running", "device_open_failed", "device_lost",
         "track_not_found", "cycle_detected", "device_busy",
+        "app_not_found", "unsupported_windows",
         "plugin_not_found", "plugin_load_failed", "plugin_no_editor",
         "param_not_found", "session_io", "preset_io", "plugin_state_failed",
         "internal",
@@ -190,6 +191,7 @@ void validate_command_payload(const std::string& kind, const nlohmann::json& p) 
         // 浮動視窗:無工作列項、隨主程式最小化)。u64:HWND 64-bit 上 8 bytes
         if (!has("hwnd") || !is_u64(p["hwnd"])) reject("payload.hwnd must be u64");
     } else if (kind == "ping" || kind == "get_snapshot" || kind == "list_devices" ||
+               kind == "list_audio_apps" ||
                kind == "stop" || kind == "shutdown_engine" || kind == "open_device_panel") {
         if (!p.empty()) reject("payload must be empty object");
     }

@@ -25,6 +25,11 @@ export interface TrackOutput {
   deviceId?: string; // wasapi(M5c)
 }
 
+export interface AudioApp {
+  pid: number;
+  name: string;
+}
+
 export interface Track {
   trackId: number;
   kind: "audio" | "app" | "fx" | "output";
@@ -36,6 +41,7 @@ export interface Track {
   gain: number; // 線性 [0,4]
   mute: boolean;
   plugins: RackSlot[];
+  error?: string | null; // 軌道級錯誤(capture 失效等)
 }
 
 export interface EngineStatus {

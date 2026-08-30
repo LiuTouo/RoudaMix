@@ -199,11 +199,11 @@ console.log('__engine_status__ stub installed');
         return $r.result.result.value
     }
 
-    # --- 3. 儀表板骨架:左右欄 + 新增鈕(App disabled)---
+    # --- 3. 儀表板骨架:左右欄 + 新增鈕(M5b 起 App enabled)---
     $layout = EvalJs "(() => ({ cols: document.querySelectorAll('.colhead').length, leftBtns: document.querySelector('.colhead') ? document.querySelector('.colhead').querySelectorAll('button').length : 0, leftDisabled: document.querySelector('.colhead') ? document.querySelector('.colhead').querySelectorAll('button:disabled').length : 0, outColBtns: document.querySelectorAll('.colhead')[1] ? document.querySelectorAll('.colhead')[1].querySelectorAll('button').length : 0 }))()" 5000
     Assert ($layout.cols -eq 2) "two track columns (got $($layout.cols))"
     Assert ($layout.leftBtns -eq 3) "3 input add buttons (got $($layout.leftBtns))"
-    Assert ($layout.leftDisabled -eq 1) 'App add button disabled (M5b)'
+    Assert ($layout.leftDisabled -eq 0) 'no add buttons disabled (App live since M5b)'
     Assert ($layout.outColBtns -eq 1) '1 output add button'
     Write-Host "layout: cols=$($layout.cols) leftBtns=$($layout.leftBtns)(disabled $($layout.leftDisabled)) outBtns=$($layout.outColBtns)"
 

@@ -1,10 +1,17 @@
 #include "audio_engine.hpp"
 
+#include <windows.h>
+
+#include <audiopolicy.h>
+#include <mmdeviceapi.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+
+#include "app_capture.hpp"
 
 namespace rmx {
 
@@ -79,6 +86,88 @@ std::vector<AudioEngine::DeviceSummary> AudioEngine::list_devices() {
     return result;
 }
 
+// M5b:預設 render 裝置的 active audio sessions = 正在出聲的 app。
+// 呼叫端 = main thread(STA);列舉失敗(無裝置等)= 空清單不報錯
+std::vector<AudioEngine::AudioAppInfo> AudioEngine::list_audio_apps() {
+    std::vector<AudioAppInfo> apps;
+    IMMDeviceEnumerator* enumerator = nullptr;
+    IMMDevice* device = nullptr;
+    IAudioSessionManager2* manager = nullptr;
+    IAudioSessionEnumerator* sessions = nullptr;
+    auto release_all = [&]() {
+        if (sessions != nullptr) sessions->Release();
+        if (manager != nullptr) manager->Release();
+        if (device != nullptr) device->Release();
+        if (enumerator != nullptr) enumerator->Release();
+    };
+    HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+                                  __uuidof(IMMDeviceEnumerator),
+                                  reinterpret_cast<void**>(&enumerator));
+    if (FAILED(hr)) return apps;
+    if (FAILED(enumerator->GetDefaultAudioEndpoint(eRender, eMultimedia, &device)) ||
+        device == nullptr) {
+        release_all();
+        return apps;
+    }
+    if (FAILED(device->Activate(__uuidof(IAudioSessionManager2), CLSCTX_ALL, nullptr,
+                                reinterpret_cast<void**>(&manager))) ||
+        manager == nullptr) {
+        release_all();
+        return apps;
+    }
+    if (FAILED(manager->GetSessionEnumerator(&sessions)) || sessions == nullptr) {
+        release_all();
+        return apps;
+    }
+    int count = 0;
+    if (FAILED(sessions->GetCount(&count))) {
+        release_all();
+        return apps;
+    }
+    const std::uint32_t self_pid = GetCurrentProcessId();
+    for (int i = 0; i < count; ++i) {
+        IAudioSessionControl* control = nullptr;
+        if (FAILED(sessions->GetSession(i, &control)) || control == nullptr) continue;
+        IAudioSessionControl2* control2 = nullptr;
+        if (SUCCEEDED(control->QueryInterface(__uuidof(IAudioSessionControl2),
+                                             reinterpret_cast<void**>(&control2))) &&
+            control2 != nullptr) {
+            AudioSessionState state = AudioSessionStateInactive;
+            DWORD pid = 0;
+            if (control2->GetState(&state) == S_OK && state == AudioSessionStateActive &&
+                control2->GetProcessId(&pid) == S_OK && pid != 0 && pid != self_pid) {
+                bool known = false;
+                for (const auto& a : apps) known = known || a.pid == pid;
+                if (!known) {
+                    AudioAppInfo info;
+                    info.pid = pid;
+                    // session display name 常空:直接用 exe basename
+                    for (const auto& [p, n] : list_process_basenames()) {
+                        if (p == pid) {
+                            info.name = n;
+                            break;
+                        }
+                    }
+                    if (info.name.empty()) info.name = "pid " + std::to_string(pid);
+                    apps.push_back(std::move(info));
+                }
+            }
+            control2->Release();
+        }
+        control->Release();
+    }
+    release_all();
+    return apps;
+}
+
+// M5b:capture pump 失敗(main thread 經 callback 轉入;持 g_engine_mutex)
+void AudioEngine::handle_capture_failed(std::uint32_t track_id) {
+    TrackNode* t = find_track_mut(track_id);
+    if (t == nullptr || t->capture == nullptr) return;
+    t->track_error = t->capture->pump_error().empty() ? "capture failed" : t->capture->pump_error();
+    t->capture.reset();
+}
+
 bool AudioEngine::start(const std::string& device_key,
                         std::optional<std::uint32_t> sample_rate,
                         std::optional<std::uint32_t> buffer_size, std::string& err) {
@@ -127,6 +216,15 @@ bool AudioEngine::start(const std::string& device_key,
         return false;
     }
     device_.set_callback(this);
+
+    // M5b:app 軌 capture 啟動(失敗 = 該軌 track_error,不擋 start;其他軌照跑)
+    for (auto& t : tracks_) {
+        if (t.source.type == TrackSource::kApp) {
+            stop_capture(t);
+            std::string cap_err;
+            (void)ensure_capture(t, rate, cap_err);
+        }
+    }
 
     // 全部軌的 plugin 先 initialize + 進 RT graph,再開 device —— callback 一啟動
     // 就拿到已就緒的 plugin(順序反了 RT 會拿到未 initialize 的鏈,process 全 fail)。
@@ -219,6 +317,7 @@ void AudioEngine::stop() noexcept {
     retire_graph();
     for (auto& t : tracks_)
         for (auto& slot : t.chain) slot.plugin->terminate();
+    stop_captures();
     clear_expired_retired(/*force=*/true);
 }
 
@@ -352,6 +451,7 @@ bool AudioEngine::track_remove(std::uint32_t track_id, std::string& err) {
     for (auto& slot : it->chain) {
         if (slot.plugin->editor_open()) slot.plugin->close_editor();
     }
+    stop_capture(*it);  // M5b:capture pump 先收(join)再毀節點
     tracks_.erase(it);
     // 其他軌 dests 的懸空引用一併清
     for (auto& t : tracks_) {
@@ -392,7 +492,44 @@ bool AudioEngine::track_set_source(std::uint32_t track_id, const TrackSource& so
         return false;
     }
     if (source.type == TrackSource::kApp) {
-        err = "app capture not available yet (M5b)";
+        if (t->kind != TrackKind::kApp) {
+            err = "only app tracks take an app source";
+            code = "bad_command";
+            return false;
+        }
+        if (source.pid == 0 && source.app_name.empty()) {
+            err = "app source needs pid or name";
+            code = "bad_command";
+            return false;
+        }
+        if (source.pid != 0 && !process_exists(source.pid)) {
+            err = "process " + std::to_string(source.pid) + " not found";
+            code = "app_not_found";
+            return false;
+        }
+        t->source = source;
+        stop_capture(*t);
+        t->track_error.clear();
+        // running 中即時啟動;失敗 = 命令失敗 + 回滾(未啟動 = start 時再試,軟失敗)
+        if (device_.running()) {
+            const auto rate = rt_sample_rate_.load(std::memory_order_relaxed);
+            std::string cap_err;
+            if (!ensure_capture(*t, rate, cap_err)) {
+                t->source = TrackSource{};
+                err = cap_err;
+                code = cap_err.find("process loopback") != std::string::npos
+                           ? "unsupported_windows"
+                           : (cap_err.find("process not found") != std::string::npos
+                                  ? "app_not_found"
+                                  : "bad_command");
+                return false;
+            }
+        }
+        swap_graph();
+        return true;
+    }
+    if (t->kind == TrackKind::kApp && source.type != TrackSource::kNone) {
+        err = "app track takes an app source";
         code = "bad_command";
         return false;
     }
@@ -423,8 +560,41 @@ bool AudioEngine::track_set_source(std::uint32_t track_id, const TrackSource& so
         }
     }
     t->source = source;
+    t->track_error.clear();
+    if (source.type != TrackSource::kApp) stop_capture(*t);
     swap_graph();
     return true;
+}
+
+// M5b:capture 生命週期(控制面;pid=0 時依 app_name 重解析 — session 載入路徑)
+bool AudioEngine::ensure_capture(TrackNode& t, std::uint32_t dst_rate, std::string& err) {
+    std::uint32_t pid = t.source.pid;
+    if (pid == 0 && !t.source.app_name.empty()) pid = find_pid_by_name(t.source.app_name);
+    if (pid == 0 || !process_exists(pid)) {
+        t.track_error = "app not running" +
+                        (t.source.app_name.empty() ? "" : ": " + t.source.app_name);
+        err = t.track_error;
+        return false;
+    }
+    auto cap = AppCapture::create(pid, dst_rate, [this, tid = t.track_id] {
+        if (capture_failed_cb_) capture_failed_cb_(tid);
+    }, err);
+    if (cap == nullptr) {
+        t.track_error = err;
+        return false;
+    }
+    t.track_error.clear();
+    t.capture = std::move(cap);
+    return true;
+}
+
+void AudioEngine::stop_capture(TrackNode& t) noexcept {
+    if (t.capture != nullptr) t.capture->stop();
+    t.capture.reset();
+}
+
+void AudioEngine::stop_captures() noexcept {
+    for (auto& t : tracks_) stop_capture(t);
 }
 
 bool AudioEngine::track_set_dests(std::uint32_t track_id, std::vector<std::uint32_t> dests,
@@ -829,8 +999,12 @@ void AudioEngine::process(const AudioBlock& block) noexcept {
                 break;
             }
             case TrackSource::kApp:
+                // M5b:process loopback FIFO 讀(漂移校正內建;無 capture = 靜音)
+                if (n.capture != nullptr)
+                    n.capture->read(cur_l, cur_r, frames, static_cast<std::uint32_t>(rate));
+                break;
             case TrackSource::kNone:
-                break;  // M5b:kApp 在此從 capture FIFO 讀
+                break;
         }
 
         // VST 鏈 ping-pong(每 slot 就地)
