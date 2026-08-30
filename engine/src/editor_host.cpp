@@ -19,6 +19,7 @@
 
 #include <windows.h>
 #include <windowsx.h>
+#include <gdiplus.h>
 
 #include <shobjidl.h>
 
@@ -49,17 +50,18 @@ constexpr wchar_t kClientClassName[] = L"RmxEditorClient";
 #endif
 
 // 深色主題(zinc 系,貼 app 風格)
-constexpr COLORREF kStripBg = RGB(24, 24, 27);
-constexpr COLORREF kTabActiveBg = RGB(39, 39, 42);
-constexpr COLORREF kAccent = RGB(59, 130, 246);
-constexpr COLORREF kTextActive = RGB(244, 244, 245);
-constexpr COLORREF kTextIdle = RGB(161, 161, 170);
-constexpr COLORREF kTextDim = RGB(82, 82, 91);
-constexpr COLORREF kOnGreen = RGB(74, 222, 128);
-constexpr COLORREF kBtnBorder = RGB(82, 82, 91);
+// 對齊主程式 ui/app.css 色票(去網頁感第一步 = 同一個深色系)
+constexpr COLORREF kStripBg = RGB(0x1c, 0x1f, 0x24);     // = --bg-panel
+constexpr COLORREF kTabActiveBg = RGB(0x24, 0x28, 0x2e); // = --bg-raised
+constexpr COLORREF kAccent = RGB(0x4d, 0xa3, 0xff);      // = --accent
+constexpr COLORREF kTextActive = RGB(0xd8, 0xdc, 0xe2);  // = --text
+constexpr COLORREF kTextIdle = RGB(0x8a, 0x91, 0x9b);    // = --text-dim
+constexpr COLORREF kTextDim = RGB(0x56, 0x5b, 0x64);
+constexpr COLORREF kOnGreen = RGB(0x3d, 0xdc, 0x84);     // = --ok
+constexpr COLORREF kBtnBorder = RGB(0x33, 0x38, 0x3f);   // = --border
 
 HFONT strip_font() {
-    static HFONT f = CreateFontW(-12, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0,
+    static HFONT f = CreateFontW(-13, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0,
                                  CLEARTYPE_QUALITY, 0, L"Segoe UI");
     return f;
 }
@@ -547,28 +549,30 @@ LRESULT CALLBACK host_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
 // ---- 頂部列:帶1 tabs + 帶2 bypass/preset(全部自繪 + hit-test,單一 HWND)----
 
 void draw_power_icon(HDC dc, int cx, int cy, double rad, bool bypassed) {
-    // 極簡電源鍵:圓(頂部 60° 開口)+ 豎線穿過開口。bypassed = 灰、開 = 綠。
-    // GDI Arc 的方向在螢幕座標(y 向下)會反直覺,直接算折線點,不賭方向
-    const COLORREF color = bypassed ? kTextIdle : kOnGreen;
-    const HPEN pen = CreatePen(PS_SOLID, 2, color);
-    const HGDIOBJ old_pen = SelectObject(dc, pen);
-    const HGDIOBJ old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
-    constexpr double kPi = 3.14159265358979;
-    // 120° 走長路經 180/270/0° 到 60°(0° = 數學 x 正向;y 取負 = 螢幕向下)
-    POINT pts[49];
-    int n = 0;
-    for (int i = 0; i <= 48; ++i) {
-        const double deg = 120.0 + 300.0 * i / 48.0;
-        const double a = deg * kPi / 180.0;
-        pts[n++] = POINT{static_cast<LONG>(cx + rad * std::cos(a)),
-                         static_cast<LONG>(cy - rad * std::sin(a))};
-    }
-    Polyline(dc, pts, n);
-    MoveToEx(dc, static_cast<int>(cx), static_cast<int>(cy - rad - 3), nullptr);
-    LineTo(dc, static_cast<int>(cx), static_cast<int>(cy - rad * 0.25));
-    SelectObject(dc, old_pen);
-    SelectObject(dc, old_brush);
-    DeleteObject(pen);
+    // 電源鍵(比照 UI 端使用者提供 SVG):開 = 綠 #16A34A、bypass = 黑。
+    // GDI 筆無反鋸齒 + 折線頂點取整數 = 線條抖;改 GDI+(AA + 浮點座標)。
+    // 圓(頂部 90° 開口)+ 豎線從頂穿到圓心;筆寬 = SVG 40/236 比例。
+    static const ULONG_PTR gdip_token = [] {
+        Gdiplus::GdiplusStartupInput in;
+        ULONG_PTR t = 0;
+        Gdiplus::GdiplusStartup(&t, &in, nullptr);
+        return t;
+    }();
+    (void)gdip_token;
+    const Gdiplus::Color color = bypassed ? Gdiplus::Color(255, 0, 0, 0)
+                                          : Gdiplus::Color(255, 0x16, 0xA3, 0x4A);
+    const float penw = (std::max)(2.0f, static_cast<float>(rad * 40.0 / 236.0));
+    Gdiplus::Graphics g(dc);
+    g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+    Gdiplus::Pen pen(color, penw);
+    pen.SetStartCap(Gdiplus::LineCapRound);
+    pen.SetEndCap(Gdiplus::LineCapRound);
+    const float r = static_cast<float>(rad);
+    // 螢幕座標(y 向下)0°=右、90°=下;從右上 315° 順時針掃 270° = 頂部 90° 開口
+    g.DrawArc(&pen, static_cast<float>(cx) - r, static_cast<float>(cy) - r, 2 * r, 2 * r,
+              315.0f, 270.0f);
+    g.DrawLine(&pen, static_cast<float>(cx), static_cast<float>(cy) - r - penw,
+               static_cast<float>(cx), static_cast<float>(cy));
 }
 
 HPEN btn_border_pen() noexcept {
@@ -576,11 +580,11 @@ HPEN btn_border_pen() noexcept {
     return p;
 }
 
-// 圓角平面按鈕(zinc 填色 + 1px 邊框 + 置中文字)
+// 圓角平面按鈕(raised 填色 + 1px 邊框 + 置中文字;半徑對齊主程式 6px,圓太大 = 網頁感)
 void draw_modern_button(HDC dc, RECT r, const wchar_t* text) {
     const HGDIOBJ old_pen = SelectObject(dc, btn_border_pen());
     const HGDIOBJ old_brush = SelectObject(dc, tab_active_brush());
-    RoundRect(dc, r.left, r.top, r.right, r.bottom, 10, 10);
+    RoundRect(dc, r.left, r.top, r.right, r.bottom, 6, 6);
     SelectObject(dc, old_pen);
     SelectObject(dc, old_brush);
     SetTextColor(dc, kTextActive);
