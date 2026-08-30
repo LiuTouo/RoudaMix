@@ -19,6 +19,7 @@
 
 #include <windows.h>
 #include <windowsx.h>
+#include <dwmapi.h>
 #include <gdiplus.h>
 
 #include <shobjidl.h>
@@ -343,6 +344,14 @@ struct EditorHost::Impl {
                               WS_OVERLAPPEDWINDOW | WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT,
                               480, 360, own, nullptr, GetModuleHandleW(nullptr), this);
         if (wnd == nullptr) return false;
+        // 深色標題列:預設亮色 caption 在深色主題裡 = 割裂感(舊 Win10 無 35/36 = 略過,
+        // 20 號 immersive dark 從 1809+ 就有)
+        const BOOL dark = TRUE;
+        DwmSetWindowAttribute(wnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
+        const COLORREF cap = kStripBg, brc = kBtnBorder, txt = kTextActive;
+        DwmSetWindowAttribute(wnd, DWMWA_CAPTION_COLOR, &cap, sizeof(cap));
+        DwmSetWindowAttribute(wnd, DWMWA_BORDER_COLOR, &brc, sizeof(brc));
+        DwmSetWindowAttribute(wnd, DWMWA_TEXT_COLOR, &txt, sizeof(txt));
         frame->hwnd = wnd;
         frame->extra_cy = kStripH;
         tabs = CreateWindowExW(0, kTabsClassName, L"", WS_CHILD | WS_VISIBLE, 0, 0, 480,
