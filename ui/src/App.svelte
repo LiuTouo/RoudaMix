@@ -19,6 +19,8 @@
     getSettings,
     setSettings,
     listSessions,
+    onTrayExitRequested,
+    quitApp,
     respawnEngine,
     type AppSettings,
   } from "./lib/ipc";
@@ -128,6 +130,11 @@
   // ---- B:未儲存變更三分支 dialog ----
   let dirtyDlg = $state<HTMLDialogElement | null>(null);
   let dirtyResolve: ((c: DirtyChoice) => void) | null = null;
+  type CloseBehavior = NonNullable<AppSettings["closeBehavior"]>;
+  let closeBehaviorDlg = $state<HTMLDialogElement | null>(null);
+  let closeBehaviorResolve: ((choice: CloseBehavior | null) => void) | null = null;
+  let closeFlowActive = false;
+  let exitFlowActive = false;
   $effect(() => {
     if (settingsOpen) settingsDlg?.showModal();
     // open 才 close:dialog.close() 對未 open 的 dialog throw InvalidStateError
@@ -179,6 +186,8 @@
     unsubs.push(() => window.removeEventListener("keydown", onKeyDown));
 
     void (async () => {
+
+      sub(await onTrayExitRequested(() => void requestAppExit()));
 
       sub(
       await onConnection((c) => {
@@ -256,18 +265,12 @@
         feedLoad(); // J:負載警示 debounce(持續過載才通知)
       }),
     );
-    // ---- B:關窗前 dirty 詢問(儲存/捨棄/取消;取消 = 真的不關)----
+    // 主視窗關閉一律攔下：首次詢問關閉行為；縮至系統匣不觸發 dirty 詢問，
+    // 真正退出才沿用未儲存 Session 保護。
       sub(
-      await getCurrentWindow().onCloseRequested(async (e) => {
-        if (!dirty) return; // clean:直接關
+      await getCurrentWindow().onCloseRequested((e) => {
         e.preventDefault();
-        const choice = await askDirty();
-        const plan = resolveDirtyChoice(dirty, choice);
-        if (plan.shouldSave) {
-          const okSave = await saveSessionForClose();
-          if (!okSave) return; // 存失敗 = 不退出(不得覆蓋失敗就關)
-        }
-        if (plan.proceed || plan.shouldSave) void getCurrentWindow().destroy();
+        void requestWindowClose();
       }),
     );
 
@@ -306,6 +309,71 @@
     dirtyDlg?.close();
     dirtyResolve?.(c);
     dirtyResolve = null;
+  }
+
+  function askCloseBehavior(): Promise<CloseBehavior | null> {
+    return new Promise((resolve) => {
+      closeBehaviorResolve = resolve;
+      closeBehaviorDlg?.showModal();
+    });
+  }
+
+  function answerCloseBehavior(choice: CloseBehavior | null) {
+    closeBehaviorDlg?.close();
+    closeBehaviorResolve?.(choice);
+    closeBehaviorResolve = null;
+  }
+
+  async function rememberCloseBehavior(choice: CloseBehavior): Promise<void> {
+    try {
+      const result = await setSettings({ closeBehavior: choice });
+      appSettings = result.settings;
+      if (result.warnings.length > 0)
+        addNotice("error", "設定有部分值不合法,已回復預設", result.warnings.join("\n"));
+    } catch (e) {
+      addNotice("error", "關閉視窗偏好儲存失敗，下次仍會再次詢問", String(e));
+    }
+  }
+
+  async function requestAppExit(): Promise<void> {
+    if (exitFlowActive) return;
+    exitFlowActive = true;
+    try {
+      if (dirty) {
+        const choice = await askDirty();
+        const plan = resolveDirtyChoice(dirty, choice);
+        if (plan.shouldSave) {
+          const okSave = await saveSessionForClose();
+          if (!okSave) return;
+        }
+        if (!plan.proceed && !plan.shouldSave) return;
+      }
+      await quitApp();
+    } catch (e) {
+      addNotice("error", "程式結束失敗", String(e));
+    } finally {
+      exitFlowActive = false;
+    }
+  }
+
+  async function requestWindowClose(): Promise<void> {
+    if (closeFlowActive || exitFlowActive) return;
+    closeFlowActive = true;
+    try {
+      await settingsReady();
+      let behavior = appSettings?.closeBehavior ?? null;
+      if (!behavior) {
+        behavior = await askCloseBehavior();
+        if (!behavior) return;
+        await rememberCloseBehavior(behavior);
+      }
+      if (behavior === "tray") await getCurrentWindow().hide();
+      else await requestAppExit();
+    } catch (e) {
+      addNotice("error", "關閉視窗動作失敗", String(e));
+    } finally {
+      closeFlowActive = false;
+    }
   }
 
   /** 儲存目前 Session：已有目前檔案就覆寫，否則開存檔對話框。回傳是否成功 */
@@ -1192,6 +1260,24 @@
       <p class="err mono">{notice}</p>
     {/if}
   {:else if tab === "general"}
+    <h2>視窗</h2>
+    <div class="formrow">
+      <label class="formlabel" for="closebehavior">關閉視窗時</label>
+      <select
+        id="closebehavior"
+        value={appSettings?.closeBehavior ?? ""}
+        disabled={!appSettings}
+        onchange={(e) => {
+          if (!appSettings) return;
+          appSettings.closeBehavior = e.currentTarget.value as CloseBehavior;
+          persistSettings();
+        }}
+      >
+        <option value="" disabled>首次關閉時詢問</option>
+        <option value="tray">縮小到系統匣</option>
+        <option value="exit">關閉程式</option>
+      </select>
+    </div>
     <h2>場景</h2>
     <div class="formrow">
       <label class="formlabel" for="startupmode">啟動時</label>
@@ -1261,6 +1347,23 @@
     <p>RoudaMix</p>
     <p class="dim mono">Engine 版本:{conn.engineVersion || "未知(尚未連線)"}</p>
   {/if}
+</dialog>
+
+<!-- 首次按主視窗關閉按鈕時選擇；偏好會寫入通用設定。Esc 僅取消本次關閉。 -->
+<dialog
+  bind:this={closeBehaviorDlg}
+  class="dirtydlg"
+  oncancel={(e) => {
+    e.preventDefault();
+    answerCloseBehavior(null);
+  }}
+>
+  <p class="dirtyq">按下關閉按鈕時要執行哪個動作？</p>
+  <p class="dim">之後可在「設定 → 通用」變更。</p>
+  <div class="dirtyrow">
+    <button class="primary" onclick={() => answerCloseBehavior("tray")}>縮小到系統匣</button>
+    <button class="danger" onclick={() => answerCloseBehavior("exit")}>關閉程式</button>
+  </div>
 </dialog>
 
 <!-- B:未儲存變更三分支。取消 = 不關窗/不載入;儲存失敗 = 視同取消(不得覆蓋) -->

@@ -14,7 +14,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// blank | last | folder(不接受任意字串;非法值 normalize 回 blank + warning)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -23,6 +23,14 @@ pub enum StartupMode {
     Blank,
     Last,
     Folder,
+}
+
+/// 使用者按下主視窗關閉按鈕時的動作。None 代表尚未選擇，首次關閉時由 UI 詢問。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CloseBehavior {
+    Tray,
+    Exit,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -38,6 +46,7 @@ pub struct Settings {
     /// P1-D:最後「成功啟動」的裝置/Buffer —— 只有成功才可寫入(失敗選擇不成偏好)
     pub last_working_device: Option<String>,
     pub last_working_buffer: Option<u32>,
+    pub close_behavior: Option<CloseBehavior>,
 }
 
 impl Default for Settings {
@@ -50,6 +59,7 @@ impl Default for Settings {
             last_session_path: None,
             last_working_device: None,
             last_working_buffer: None,
+            close_behavior: None,
         }
     }
 }
@@ -58,13 +68,17 @@ fn path(app: &AppHandle) -> Option<PathBuf> {
     app.path().app_data_dir().ok().map(|d| d.join("settings.json"))
 }
 
-/// 版本 migration 階梯:vN → vN+1。目前只有 v1(無歷史版本);未來欄位搬移
+/// 版本 migration 階梯:vN → vN+1。目前為 v2；未來欄位搬移
 /// 在這裡加階段,`normalize` 拿到的永遠是當版形狀的原始 JSON。
 fn migrate(mut raw: Value) -> Value {
-    let cur = raw.get("schemaVersion").and_then(Value::as_u64).unwrap_or(0);
-    if cur == 0 && raw.is_object() {
-        // v0(無版本欄位的舊檔)= v1 形狀相同,補版本號即可
+    let cur = raw
+        .get("schemaVersion")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    if cur < SCHEMA_VERSION as u64 && raw.is_object() {
+        // v0/v1 沒有關閉行為；保留未選狀態，讓 UI 在首次關閉時詢問。
         if let Some(obj) = raw.as_object_mut() {
+            obj.entry("closeBehavior").or_insert(Value::Null);
             obj.insert("schemaVersion".into(), Value::from(SCHEMA_VERSION));
         }
     }
@@ -127,6 +141,14 @@ pub fn normalize(raw: Value) -> (Settings, Vec<String>) {
                 Some(_) | None => {
                     warnings.push("settings.lastWorkingBuffer 值不合法,已回復預設".into())
                 }
+            },
+            "closeBehavior" => match v.as_str() {
+                Some("tray") => s.close_behavior = Some(CloseBehavior::Tray),
+                Some("exit") => s.close_behavior = Some(CloseBehavior::Exit),
+                None if v.is_null() => s.close_behavior = None,
+                Some(_) | None => warnings.push(format!(
+                    "settings.closeBehavior 值不合法({v}),已回復為首次關閉時詢問"
+                )),
             },
             _ => {} // 未知鍵:保留策略(merge 寫回)
         }
@@ -338,6 +360,29 @@ mod tests {
         let m = migrate(json!({"startupMode": "last"}));
         assert_eq!(m["schemaVersion"], json!(SCHEMA_VERSION));
         assert_eq!(m["startupMode"], json!("last"));
+        assert_eq!(m["closeBehavior"], Value::Null);
+    }
+
+    #[test]
+    fn migrate_v1_adds_unselected_close_behavior() {
+        let m = migrate(json!({"schemaVersion": 1, "startupMode": "blank"}));
+        assert_eq!(m["schemaVersion"], json!(SCHEMA_VERSION));
+        assert_eq!(m["closeBehavior"], Value::Null);
+    }
+
+    #[test]
+    fn normalize_close_behavior() {
+        let (tray, tray_warnings) = normalize(json!({"closeBehavior": "tray"}));
+        assert_eq!(tray.close_behavior, Some(CloseBehavior::Tray));
+        assert!(tray_warnings.is_empty());
+
+        let (exit, exit_warnings) = normalize(json!({"closeBehavior": "exit"}));
+        assert_eq!(exit.close_behavior, Some(CloseBehavior::Exit));
+        assert!(exit_warnings.is_empty());
+
+        let (invalid, invalid_warnings) = normalize(json!({"closeBehavior": "later"}));
+        assert_eq!(invalid.close_behavior, None);
+        assert_eq!(invalid_warnings.len(), 1);
     }
 
     #[test]

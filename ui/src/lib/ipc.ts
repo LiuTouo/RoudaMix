@@ -44,6 +44,8 @@ export type AppSettings = {
   /** P1-D:最後「成功啟動」的裝置/Buffer(只有成功才寫入) */
   lastWorkingDevice?: string | null;
   lastWorkingBuffer?: number | null;
+  /** 主視窗關閉按鈕的行為；null/undefined 代表首次關閉時詢問。 */
+  closeBehavior?: "tray" | "exit" | null;
 };
 
 /** get/set 的回覆:typed settings + 載入時的 normalize 警告(可呈現) */
@@ -58,6 +60,11 @@ export const setSettings = (patch: Partial<AppSettings>) =>
   invoke<SettingsReply>("set_settings", { patch });
 
 export const listSessions = (dir: string) => invoke<string[]>("list_sessions", { dir });
+
+export const onTrayExitRequested = (cb: () => void) =>
+  listen("tray-exit-requested", cb);
+
+export const quitApp = () => invoke<void>("quit_app");
 
 /** P1-L:連線失敗/spawn 失敗時手動重試(冪等) */
 export const respawnEngine = () => invoke<void>("respawn_engine");
