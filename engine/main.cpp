@@ -49,6 +49,19 @@ std::atomic<HANDLE> g_active_pipe{nullptr};
 // 排隊 task 直接丟棄,不寫 reply(handle 可能已被 Close/重用為新連線)。
 std::atomic<uint64_t> g_conn_gen{0};
 
+// E:背景掃描 job 狀態(掃描 thread ↔ main thread;registry 進 snapshot lastScan)
+struct ScanJob {
+    std::uint64_t id{};
+    std::thread thread;
+    std::atomic<bool> running{false};
+    std::atomic<bool> cancel{false};
+};
+std::mutex g_scan_mutex;  // job 生命週期 + registry 寫入
+ScanJob g_scan_job;
+std::uint64_t g_scan_next_id = 1;
+nlohmann::json g_last_scan = nlohmann::json::array();        // OK modules(全域 registry)
+nlohmann::json g_last_scan_failed = nlohmann::json::array(); // 壞 module quarantine(診斷用)
+
 struct Task {
     uint64_t gen;
     HANDLE client;
@@ -109,11 +122,17 @@ nlohmann::json tracks_json() {
                 {"classId", s.class_id},
                 {"bypassed", s.bypass},
                 {"params", params},
+                // placeholder(missing/broken)標記:UI 黯淡顯示 + 重試/移除
+                {"availability", rmx::availability_str(s.availability)},
+                {"loadError", s.load_error.empty() ? nlohmann::json(nullptr)
+                                                   : nlohmann::json(s.load_error)},
             });
         }
+        const char* role = rmx::system_role_str(t.system_role);
         arr.push_back({
             {"trackId", t.track_id},
             {"kind", rmx::track_kind_str(t.kind)},
+            {"systemRole", role != nullptr ? nlohmann::json(role) : nlohmann::json(nullptr)},
             {"name", t.name},
             {"color", t.color},
             {"source", source_json(t.source)},
@@ -143,6 +162,7 @@ nlohmann::json status_json() {
         {"xruns", s.xruns},
         {"trackCount", s.track_count},
         {"pluginFails", s.plugin_fails},
+        {"revision", g_engine.revision()},  // 權威 dirty 版號(含 set_param)
         {"tracks", tracks_json()},
         {"error", s.error.empty() ? nlohmann::json(nullptr) : nlohmann::json(s.error)},
     };
@@ -150,7 +170,10 @@ nlohmann::json status_json() {
 }
 
 nlohmann::json snapshot_payload() {
-    return rmx::make_snapshot_json(g_epoch.load(), status_json(), tracks_json());
+    auto snap = rmx::make_snapshot_json(g_epoch.load(), status_json(), tracks_json());
+    std::lock_guard<std::mutex> lock(g_scan_mutex);
+    snap["lastScan"] = g_last_scan;  // 全域 plugin registry(重連後 UI 不用重掃)
+    return snap;
 }
 
 // 成功 mutation:epoch 前進、對在線 client 廣播 status event(main thread 呼)
@@ -159,6 +182,97 @@ void after_mutation(HANDLE client) {
     send_frame(client, rmx::make_event("status", status_json()));
     (void)epoch;
     rmx::EditorHost::instance().notify_tracks_changed();  // host 視窗 tab 同步
+}
+
+// stream 狀態變了但指令失敗(rebuild 回滾失敗 = engine 已停等):不動 epoch,
+// 廣播權威 status 讓 UI 重同步(UI 之前只靠成功路徑的 status event 會顯示 stale running)
+void push_status(HANDLE client) {
+    send_frame(client, rmx::make_event("status", status_json()));
+}
+
+// ---- E:背景掃描 job。引擎主 thread 不等 worker(reply 立即回 jobId);
+// progress/done/failed/cancelled 走 event;同時只允許一個 job(重複 start_scan
+// 共用現行 job);結果 = 全域 registry(宣告於檔案頂部,snapshot lastScan 共用)----
+
+void send_event_active(const nlohmann::json& ev) {
+    if (HANDLE c = g_active_pipe.load(std::memory_order_acquire)) send_frame(c, ev);
+}
+
+// 掃描 thread body:逐 root 跑 worker(cancel 可中斷),行解析 OK/FAIL;
+// 收尾把 registry 換掉並推結案 event。worker 不在 = fail closed(job failed,
+// 不 fallback in-process:壞 DLL 的代價是炸 engine process,不能省 worker)
+void scan_job_thread(std::uint64_t job_id, std::vector<std::filesystem::path> roots) {
+    nlohmann::json plugins = nlohmann::json::array();
+    nlohmann::json failed = nlohmann::json::array();
+    std::string job_error;
+    int outcome = 0;  // 0 = done、1 = failed、2 = cancelled
+    const std::size_t total = roots.size();
+    for (std::size_t i = 0; i < total; ++i) {
+        if (g_scan_job.cancel.load(std::memory_order_acquire)) {
+            outcome = 2;
+            break;
+        }
+        send_event_active(rmx::make_event(
+            "scan_progress",
+            {{"jobId", job_id}, {"done", i}, {"total", total}, {"root", roots[i].string()}}));
+        // 掃描在隔離 worker 跑:壞 module 崩潰只死 worker,已 flush 的行 = 增量照收
+        const auto r = rmx::sandbox::run_worker({"--scan", roots[i].string()}, 120000,
+                                                &g_scan_job.cancel);
+        if (r.cancelled) {
+            outcome = 2;
+            break;
+        }
+        if (!r.spawned) {
+            job_error = "sandbox worker unavailable (roudamix-worker.exe missing)";
+            outcome = 1;
+            break;
+        }
+        if (r.timed_out) {
+            job_error = "scan timed out after 120s (worker killed)";
+            outcome = 1;
+            break;
+        }
+        std::istringstream stream(r.output);
+        std::string line;
+        while (std::getline(stream, line)) {
+            const auto tab1 = line.find('\t');
+            if (tab1 == std::string::npos) continue;
+            const auto tab2 = line.find('\t', tab1 + 1);
+            if (tab2 == std::string::npos) continue;
+            const std::string status = line.substr(0, tab1);
+            const std::string path = line.substr(tab1 + 1, tab2 - tab1 - 1);
+            if (status == "OK") {
+                nlohmann::json classes =
+                    nlohmann::json::parse(line.substr(tab2 + 1), nullptr, false);
+                if (classes.is_discarded() || !classes.is_array() || classes.empty()) continue;
+                plugins.push_back({{"path", path}, {"classes", classes}});
+            } else if (status == "FAIL") {
+                // 壞 module 進 quarantine(診斷用);add_plugin 的 verify 也不會放它進來
+                failed.push_back({{"path", path},
+                                  {"error", line.substr(tab2 + 1)}});
+            }
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_scan_mutex);
+        g_last_scan = std::move(plugins);
+        g_last_scan_failed = std::move(failed);
+        g_scan_job.running.store(false, std::memory_order_release);
+    }
+    if (outcome == 0) {
+        std::lock_guard<std::mutex> lock(g_scan_mutex);
+        send_event_active(rmx::make_event("scan_done", {
+            {"jobId", job_id},
+            {"plugins", g_last_scan},
+            {"failed", g_last_scan_failed},
+        }));
+    } else if (outcome == 1) {
+        send_event_active(rmx::make_event(
+            "scan_failed", {{"jobId", job_id}, {"error", job_error}}));
+    } else {
+        send_event_active(
+            rmx::make_event("scan_cancelled", {{"jobId", job_id}}));
+    }
 }
 
 // EditorHost 內部指令(bypass / 載入 preset):main thread 排隊執行,這裡持鎖
@@ -263,13 +377,16 @@ bool dispatch(HANDLE client, const Command& c) {
                 ok(status_json());
             } else {
                 fail("device_open_failed", err);
+                // 失敗也廣播權威 status(engine 可能停在 stopped):UI 不得顯示 stale running
+                push_status(client);
             }
         }
     } else if (c.kind == "stop") {
         std::lock_guard<std::mutex> lock(g_engine_mutex);
-        bool was = g_engine.status().running;
+        // 冪等 stop 也推 status:UI 收到正確 stopped(reply 的 result UI 不套,
+        // status event 才是 UI 的對齊來源)
         g_engine.stop();
-        if (was) after_mutation(client);
+        after_mutation(client);
         ok(status_json());
     } else if (c.kind == "open_device_panel") {
         // controlPanel() 多數 driver 同步開視窗即返;少數 modal(關面板才返)= 凍結
@@ -405,6 +522,8 @@ bool dispatch(HANDLE client, const Command& c) {
             ok(nlohmann::json{{"tracks", tracks_json()}});
         } else {
             fail(code.c_str(), err);
+            // rebuild_asio_channels 失敗 = engine 可能已 stopped(或回滾):推權威 status
+            push_status(client);
         }
     } else if (c.kind == "track_move") {
         std::lock_guard<std::mutex> lock(g_engine_mutex);
@@ -416,8 +535,9 @@ bool dispatch(HANDLE client, const Command& c) {
         } else {
             fail("bad_command", err);
         }
-    } else if (c.kind == "scan_plugins") {
-        // 不持 g_engine_mutex:掃描可能數秒,別擋 rack mutation
+    } else if (c.kind == "start_scan") {
+        // 立即回 jobId;掃描在背景 thread(不佔 dispatch/editor thread)。
+        // 同時一個 job:已在跑 = 共用現行 job(reused = true)
         std::vector<std::filesystem::path> roots;
         if (c.payload.contains("roots") && c.payload["roots"].is_array()) {
             for (const auto& r : c.payload["roots"]) {
@@ -428,44 +548,35 @@ bool dispatch(HANDLE client, const Command& c) {
             roots = {std::filesystem::path{L"C:\\Program Files\\Common Files\\VST3"},
                      std::filesystem::path{L"C:\\Program Files\\VST3"}};
         }
-        nlohmann::json plugins = nlohmann::json::array();
-        bool scanned = false;
-        for (const auto& root : roots) {
-            // 掃描在隔離 worker 跑:壞 module 崩潰只死 worker,已 flush 的行 =
-            // 增量結果照收(契約:載入失敗略過不整批 fail)。120s 上限防掛死。
-            const auto r = rmx::sandbox::run_worker({"--scan", root.string()}, 120000);
-            if (!r.spawned) break;  // worker 不在(dev 環境):fallback in-process
-            scanned = true;
-            std::istringstream stream(r.output);
-            std::string line;
-            while (std::getline(stream, line)) {
-                const auto tab1 = line.find('\t');
-                if (tab1 == std::string::npos) continue;
-                const auto tab2 = line.find('\t', tab1 + 1);
-                if (tab2 == std::string::npos) continue;
-                const std::string status = line.substr(0, tab1);
-                const std::string path = line.substr(tab1 + 1, tab2 - tab1 - 1);
-                if (status != "OK") continue;  // FAIL 略過(等同 in-process 略過語意)
-                nlohmann::json classes =
-                    nlohmann::json::parse(line.substr(tab2 + 1), nullptr, false);
-                if (classes.is_discarded() || !classes.is_array() || classes.empty()) continue;
-                plugins.push_back({{"path", path}, {"classes", classes}});
+        std::uint64_t job_id = 0;
+        bool reused = false;
+        {
+            std::lock_guard<std::mutex> lock(g_scan_mutex);
+            if (g_scan_job.running.load(std::memory_order_acquire)) {
+                job_id = g_scan_job.id;
+                reused = true;
+            } else {
+                if (g_scan_job.thread.joinable()) g_scan_job.thread.join();  // 上輪已完,快收
+                g_scan_job.cancel.store(false, std::memory_order_release);
+                job_id = g_scan_next_id++;
+                g_scan_job.id = job_id;
+                g_scan_job.running.store(true, std::memory_order_release);
+                g_scan_job.thread = std::thread(scan_job_thread, job_id, std::move(roots));
             }
         }
-        if (!scanned) {
-            for (const auto& m : rmx::scan_vst3_dirs(roots)) {
-                auto classes = nlohmann::json::array();
-                for (const auto& ci : m.classes) {
-                    classes.push_back({{"uid", ci.uid},
-                                       {"name", ci.name},
-                                       {"vendor", ci.vendor},
-                                       {"version", ci.version},
-                                       {"subcategories", ci.subcategories}});
-                }
-                plugins.push_back({{"path", m.path.string()}, {"classes", classes}});
+        ok(nlohmann::json{{"jobId", job_id}, {"reused", reused}});
+    } else if (c.kind == "cancel_scan") {
+        std::uint64_t job_id = 0;
+        bool cancelling = false;
+        {
+            std::lock_guard<std::mutex> lock(g_scan_mutex);
+            if (g_scan_job.running.load(std::memory_order_acquire)) {
+                g_scan_job.cancel.store(true, std::memory_order_release);
+                job_id = g_scan_job.id;
+                cancelling = true;
             }
         }
-        ok(nlohmann::json{{"plugins", plugins}});
+        ok(nlohmann::json{{"jobId", job_id}, {"cancelling", cancelling}});
     } else if (c.kind == "add_plugin") {
         std::string class_id;
         if (c.payload.contains("classId") && c.payload["classId"].is_string())
@@ -526,6 +637,44 @@ bool dispatch(HANDLE client, const Command& c) {
         } else {
             fail("plugin_not_found", err);
         }
+    } else if (c.kind == "retry_plugin") {
+        // placeholder → 真 plugin。與 add_plugin 同規:先 worker sandbox preflight
+        // (fail closed:worker 不在不 in-process 試爆),過了才在 engine 內原位載回
+        std::lock_guard<std::mutex> lock(g_engine_mutex);
+        const auto instance = c.payload["instanceId"].get<std::uint32_t>();
+        std::string path_override;
+        if (c.payload.contains("path") && c.payload["path"].is_string())
+            path_override = c.payload["path"].get<std::string>();
+        const auto* slot = g_engine.find_slot(instance);
+        if (slot == nullptr) {
+            fail("plugin_not_found", "unknown instanceId");
+        } else if (!slot->is_placeholder()) {
+            fail("bad_command", "instance is not a placeholder");
+        } else {
+            const std::string& module_path =
+                path_override.empty() ? slot->module_path : path_override;
+            const std::string class_id = slot->class_id;
+            const auto st = g_engine.status();
+            const double rate =
+                st.running ? static_cast<double>(st.sample_rate) : 48000.0;
+            const std::uint32_t block =
+                st.running && st.buffer_size > 0 ? st.buffer_size : 512u;
+            std::string verr;
+            if (rmx::sandbox::worker_path().empty()) {
+                fail("plugin_load_failed",
+                     "sandbox worker unavailable (roudamix-worker.exe missing)");
+            } else if (!rmx::sandbox::verify_module(module_path, class_id, rate, block, verr)) {
+                fail("plugin_load_failed", verr);
+            } else {
+                std::string err;
+                if (g_engine.load_placeholder(instance, module_path, class_id, err)) {
+                    after_mutation(client);
+                    ok(nlohmann::json{{"instanceId", instance}, {"tracks", tracks_json()}});
+                } else {
+                    fail("plugin_load_failed", err);
+                }
+            }
+        }
     } else if (c.kind == "set_param") {
         std::lock_guard<std::mutex> lock(g_engine_mutex);
         std::string err;
@@ -542,6 +691,10 @@ bool dispatch(HANDLE client, const Command& c) {
         const auto* slot = g_engine.find_slot(c.payload["instanceId"].get<std::uint32_t>());
         if (slot == nullptr) {
             fail("plugin_not_found", "unknown instanceId");
+        } else if (slot->plugin == nullptr) {
+            // placeholder:無 metadata,回空表(UI 顯示遺失狀態即可)
+            ok(nlohmann::json{{"instanceId", slot->instance_id},
+                              {"params", nlohmann::json::array()}});
         } else {
             auto params = nlohmann::json::array();
             for (const auto& info : slot->plugin->params()) {
@@ -563,6 +716,8 @@ bool dispatch(HANDLE client, const Command& c) {
         std::string err;
         if (slot == nullptr) {
             fail("plugin_not_found", "unknown instanceId");
+        } else if (slot->plugin == nullptr) {
+            fail("plugin_no_editor", "plugin not loaded (placeholder)");
         } else if (rmx::EditorHost::instance().open(instance, err)) {
             ok(nlohmann::json{{"instanceId", instance}, {"editor", true}});
         } else {
@@ -609,7 +764,9 @@ bool dispatch(HANDLE client, const Command& c) {
         }
         std::string err;
         if (rmx::session::save(g_engine, file, err, c.payload)) {
-            ok(nlohmann::json{{"savedPath", file.string()}});
+            // revision 隨回:UI 以此定 clean 基準(非 mutation,值 = 現值)
+            ok(nlohmann::json{{"savedPath", file.string()},
+                              {"revision", g_engine.revision()}});
         } else {
             fail("session_io", err);
         }
@@ -620,10 +777,18 @@ bool dispatch(HANDLE client, const Command& c) {
         std::string err;
         if (rmx::session::load(g_engine, file, applied, err)) {
             after_mutation(client);
-            ok(applied);
+            applied["revision"] = g_engine.revision();  // UI 以此定 clean 基準(load 後不誤標 dirty)
+            ok(applied);  // 含 deviceKey/sampleRate/bufferSize + missing[](diagnostics)
         } else {
             fail("session_io", err);
         }
+    } else if (c.kind == "ensure_system_outputs") {
+        // 新 session/缺少系統輸出時補回(monitor/stream 恰好各一);沒得補 = no-op
+        std::lock_guard<std::mutex> lock(g_engine_mutex);
+        if (g_engine.ensure_system_outputs()) {
+            after_mutation(client);
+        }
+        ok(nlohmann::json{{"tracks", tracks_json()}, {"revision", g_engine.revision()}});
     } else if (c.kind == "set_editor_owner") {
         // UI 主視窗 HWND:editor host 掛成 owned 浮動視窗(無工作列項、隨主程式)
         rmx::EditorHost::instance().set_owner(
@@ -867,6 +1032,10 @@ int main() {
     }
 
     g_exiting.store(true);
+    // 掃描 job 收工(cancel 旗標讓 worker wait 100ms 內退出;thread 收完 registry
+    // 才離開)。此時 message loop 已停,不會有並發的 start_scan,直接 join
+    g_scan_job.cancel.store(true, std::memory_order_release);
+    if (g_scan_job.thread.joinable()) g_scan_job.thread.join();
     // shutdown_engine 的 ack 已寫進 pipe buffer,但 client 可能還沒讀 —— process
     // 關 pipe handle 會連未讀資料一起丟(client 收 EOF 而非 ack)。短等它收走。
     Sleep(150);

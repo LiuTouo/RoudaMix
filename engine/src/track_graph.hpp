@@ -29,6 +29,19 @@ inline const char* track_kind_str(TrackKind k) noexcept {
     return "audio";
 }
 
+// 系統輸出角色:每個 session 恰好一條 monitor(監聽)+ 一條 stream(串流)。
+// 穩定 ID,不靠名稱;使用者可改名/改 sink/routing,但不可刪除(engine track_remove 擋)。
+enum class SystemRole : std::uint8_t { kNone, kMonitor, kStream };
+
+inline const char* system_role_str(SystemRole r) noexcept {
+    switch (r) {
+        case SystemRole::kMonitor: return "monitor";
+        case SystemRole::kStream: return "stream";
+        case SystemRole::kNone: break;
+    }
+    return nullptr;
+}
+
 // 來源:kNone = FX/output 軌(bus 已含上游 sum);kSine = 測試音;kAsioIn =
 // 裝置輸入 pair(ch 與 ch+1);kApp = process loopback(M5b)。
 struct TrackSource {
@@ -65,6 +78,7 @@ constexpr std::uint32_t kNoStrip = 0xFFFFFFFFu;  // 超出 telemetry 預算 = �
 struct TrackNode {
     std::uint32_t track_id{};
     TrackKind kind{TrackKind::kAudio};
+    SystemRole system_role{SystemRole::kNone};  // 系統輸出角色(monitor/stream 軌不可刪)
     std::string name;
     std::uint32_t color{};  // 0xRRGGBB
     std::vector<RackSlot> chain;  // plugin/ring shared_ptr 與 master 共用
@@ -97,5 +111,18 @@ std::vector<std::uint32_t> graph_topo_order(const std::vector<TrackNode>& nodes)
 
 // 環偵測(control 面 track_set_dests 先驗再套;hypothetical 直接改一份驗)
 bool graph_has_cycle(const std::vector<TrackNode>& nodes);
+
+// 從所有軌的 source/output 收集 ASIO channel 聯集(start 與
+// rebuild_asio_channels 共用;pair 基底展開 ch/ch+1,排序去重;
+// out 聯集空 = fallback {0,1},createBuffers 至少要一組 out)。
+void asio_channel_union(const std::vector<TrackNode>& tracks,
+                        std::vector<std::uint32_t>& in_chans,
+                        std::vector<std::uint32_t>& out_chans);
+
+// 系統輸出補齊/去重(確定性;migration + 新 session 共用):
+// 每個 role 保留第一個持有者(其餘降級 kNone),沒有持有者時優先指派給
+// 「尚無 role 的 output 軌」(monitor 取第一條、stream 取下一條),不夠才新建
+// (monitor = asioOut ch0、stream = 無 sink)。回傳是否有變動。
+bool ensure_system_outputs(std::vector<TrackNode>& tracks, std::uint32_t& next_track_id);
 
 }  // namespace rmx

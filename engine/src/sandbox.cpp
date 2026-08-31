@@ -77,7 +77,8 @@ std::filesystem::path worker_path() {
     return {};
 }
 
-WorkerResult run_worker(const std::vector<std::string>& args, std::uint32_t timeout_ms) {
+WorkerResult run_worker(const std::vector<std::string>& args, std::uint32_t timeout_ms,
+                        std::atomic<bool>* cancel) {
     WorkerResult result;
     const std::filesystem::path exe = worker_path();
     if (exe.empty()) return result;  // spawned = false:呼叫端 fallback in-process
@@ -153,9 +154,21 @@ WorkerResult run_worker(const std::vector<std::string>& args, std::uint32_t time
         }
         reader_done.store(true, std::memory_order_release);
     });
-    const DWORD wait = WaitForSingleObject(pi.hProcess, timeout_ms);
-    if (wait == WAIT_TIMEOUT) {
+    // 分段等:timeout 或外部 cancel(掃描可中斷)都會提前砍
+    DWORD wait = WaitForSingleObject(pi.hProcess, 100);
+    DWORD waited = 100;
+    while (wait == WAIT_TIMEOUT && waited < timeout_ms) {
+        if (cancel != nullptr && cancel->load(std::memory_order_acquire)) break;
+        wait = WaitForSingleObject(pi.hProcess, 100);
+        waited += 100;
+    }
+    if (cancel != nullptr && cancel->load(std::memory_order_acquire) &&
+        wait == WAIT_TIMEOUT) {
+        result.cancelled = true;
+    } else if (wait == WAIT_TIMEOUT) {
         result.timed_out = true;
+    }
+    if (wait == WAIT_TIMEOUT) {
         if (in_job)
             TerminateJobObject(job, UINT32_MAX);
         else

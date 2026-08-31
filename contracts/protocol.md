@@ -83,8 +83,10 @@ render 裝置,`list_render_devices` 列 endpoints)。每軌一條 VST 鏈
 | `track_set_dests` | `{ "trackId": u32, "dests": [u32] }` | `{ "tracks": [Track] }` | 多選 = 加總;含自己 → `bad_command`;未知 id → `track_not_found`;造成環 → `cycle_detected` 且**不套用** |
 | `track_set_output` | `{ "trackId": u32, "output": TrackOutput? }` | `{ "tracks": [Track] }` | asioOut pair 被別軌占用 → `device_busy`;wasapi deviceId 不存在 → `device_busy`;非 output 軌送非 null → `bad_command` |
 | `track_move` | `{ "trackId": u32, "newIndex": u32 }` | `{ "tracks": [Track] }` | master 陣列絕對索引重排(erase+insert;newIndex 超尾 = 移到尾);UI 輸入/輸出帶拖放用 |
-| `scan_plugins` | `{ "roots": [str]? }` | `{ "plugins": [ScanModule] }` | 同步掃描(數秒);空 roots = 預設 `C:\Program Files\Common Files\VST3`、`C:\Program Files\VST3`。載入失敗的 module 略過不 fail。**掃描與 `add_plugin` 的 module 載入驗證在隔離 worker process**(`roudamix-worker.exe`)執行:壞 module 崩潰只死 worker,engine 不受污染;worker 掛掉時掃描回報已完成的增量結果 |
-| `add_plugin` | `{ "trackId": u32, "path": str, "classId": str? }` | `{ "instanceId": u32, "trackId": u32, "tracks": [Track] }` | classId 省 = module 內第一個 Audio Effect class;追加到該軌鏈尾(無上限);失敗 `plugin_load_failed` |
+| `start_scan` | `{ "roots": [str]? }` | `{ "jobId": u64, "reused": bool }` | **非同步**:立即回 jobId,掃描在 engine 背景 job 跑;同一時間一個 job(已在跑 = `reused: true` 共用現行 job)。空 roots = 預設 `C:\Program Files\Common Files\VST3`、`C:\Program Files\VST3`。結果經 `scan_progress`/`scan_done`/`scan_failed`/`scan_cancelled` events 回報(帶 jobId);完成後 registry 也在 `Snapshot.lastScan`。掃描在隔離 worker process 執行;worker 不在 = job failed(fail closed,不 in-process 試爆)。壞 module 進 `scan_done` 的 `failed`(quarantine,不進 `plugins`)。*(v2 早期同步的 `scan_plugins` 已移除 —— 它會佔住 engine 主 thread 且 30s reply timeout 必炸)* |
+| `cancel_scan` | `{}` | `{ "jobId": u64, "cancelling": bool }` | 取消進行中的掃描 job;沒有進行中 = `cancelling: false` |
+| `add_plugin` | `{ "trackId": u32, "path": str, "classId": str? }` | `{ "instanceId": u32, "trackId": u32, "tracks": [Track] }` | classId 省 = module 內第一個 Audio Effect class;追加到該軌鏈尾(無上限);失敗 `plugin_load_failed`。載入前在隔離 worker 驗證(載入 + initialize);worker 不在 = `plugin_load_failed`(fail closed) |
+| `retry_plugin` | `{ "instanceId": u32, "path": str? }` | `{ "instanceId": u32, "tracks": [Track] }` | placeholder 重試載入:與 `add_plugin` 同規 worker preflight;`path` 帶了 = 重新定位到新 module 路徑。原 instanceId/鏈位/params/bypass 保留;非 placeholder → `bad_command`;載入再失敗 = 維持 placeholder、`plugin_load_failed` |
 | `remove_plugin` | `{ "instanceId": u32 }` | `{ "tracks": [Track] }` | |
 | `move_plugin` | `{ "instanceId": u32, "newIndex": u32 }` | `{ "tracks": [Track] }` | 所屬軌鏈內重排 |
 | `set_bypass` | `{ "instanceId": u32, "bypassed": bool }` | `{ "tracks": [Track] }` | |
@@ -95,7 +97,8 @@ render 裝置,`list_render_devices` 列 endpoints)。每軌一條 VST 鏈
 | `save_preset` | `{ "instanceId": u32, "path": str }` | `{ "savedPath": str }` | 寫 `.vstpreset`(VST3 容器:`Comp`=component state + `Cont`=controller state + `RmxP`=host 權威表私有 chunk,其他 host 會略過;class ID 為 32 hex 大寫 ASCII);非 mutation(不動 epoch/不廣播) |
 | `load_preset` | `{ "instanceId": u32, "path": str }` | `{ "tracks": [Track] }` | 讀 `.vstpreset` 套用(component setState → controller setComponentState);成功 = mutation(廣播 status)。host 端 param 權威值重同步:檔案帶 `RmxP` chunk 時優先採用;無 `RmxP`(外部 host 存的)且 controller 同步成功時自 controller;皆無 = 保持現值。容器缺 `Comp` chunk 或 class ID 不符回 `preset_io` |
 | `save_session` | `{ "path": str?, "deviceKey": str?, "sampleRate": u32?, "bufferSize": u32? }` | `{ "savedPath": str }` | path null = `%APPDATA%\RoudaMix\default.rmsession`;deviceKey/sampleRate/bufferSize 帶了就蓋寫進檔;寫 §8 SessionFile;非 mutation(不動 epoch/不廣播) |
-| `load_session` | `{ "path": str }` | `{ "deviceKey": str?, "sampleRate": u32?, "bufferSize": u32? }` | 全軌重建(壞軌/消失 module 略過;dests 以舊 id→新 id map 重接);`roudamixSession != 2` 一律 `session_io` 拒載(v1 不支援);不自動 start;成功 = mutation(廣播 status) |
+| `load_session` | `{ "path": str }` | `{ "deviceKey": str?, "sampleRate": u32?, "bufferSize": u32?, "missing": [MissingPlugin] }` | best-effort 全軌重建(壞軌略過不整體失敗;dests 以舊 id→新 id map 重接);消失/壞掉的 plugin = 原鏈位保留 placeholder(name/path/classId/bypass/params 全存,不參與 DSP),詳情列在 `missing`;`roudamixSession != 2` 一律 `session_io` 拒載(v1 不支援,現況不動);不自動 start;成功 = mutation(廣播 status) |
+| `ensure_system_outputs` | `{}` | `{ "tracks": [Track] }` | 系統輸出補齊:monitor/stream 恰好各一條(缺 = 補,重複 = 留第一個其餘降級);新 session 或載入後缺 role 時 UI 呼;沒變動 = no-op(不動 epoch) |
 | `shutdown_engine` | `{}` | `{}` | 回 ack 後退出 |
 
 M5c 保留(M5a/M5b 送了回 `internal` not implemented):~~`list_render_devices`~~ —
@@ -108,7 +111,11 @@ Events:
 | kind | payload | 觸發 |
 |---|---|---|
 | `snapshot` | `Snapshot` | 連線建立時 |
-| `status` | `EngineStatus`(含 `tracks`) | tracks/running/xrun/latency/裝置變更;`set_param` 不觸發 |
+| `status` | `EngineStatus`(含 `tracks`) | tracks/running/xrun/latency/裝置變更;`set_param` 不觸發(但 `revision` 會前進);**stream 狀態改變的失敗(start 失敗、ASIO 重建回滾等)也推** —— client 收 reply error 後以此重同步,不得顯示 stale running |
+| `scan_progress` | `{ jobId: u64, done: u32, total: u32, root: str }` | `start_scan` 的 job 每掃完一個 root 前 |
+| `scan_done` | `{ jobId: u64, plugins: [ScanModule], failed: [{ path: str, error: str }] }` | 掃描 job 完成;`failed` = 壞 module quarantine(不進 registry);registry 同步寫進 `Snapshot.lastScan` |
+| `scan_failed` | `{ jobId: u64, error: str }` | 掃描 job 失敗(worker 不在/逾時) |
+| `scan_cancelled` | `{ jobId: u64 }` | `cancel_scan` 後 job 結束 |
 | `devices_changed` | `{}` | 硬體面板關閉後(driver modal 返回或 vendor 面板 exe 結束):driver 現行設定可能已變、現有 stream 可能已失效(driver 面板動緩衝會死流),client 應重新 `list_devices` 並一律 stop→start 重建 |
 
 ## 7. 錯誤碼
@@ -127,25 +134,36 @@ process loopback 需 Win10 2004+,舊系統 activation 失敗。)
 
 ```
 DeviceInfo   { deviceKey: str, name: str, maxIn: u16, maxOut: u16, sampleRates: [u32], currentSampleRate: u32, minBufferSize: u32, maxBufferSize: u32, preferredBufferSize: u32, bufferSizes: [u32], inputNames: [str], outputNames: [str] }
-EngineStatus { running: bool, deviceKey: str?, sampleRate: f32, bufferSize: u32?, inputLatency: u32?, outputLatency: u32?, xruns: u64, trackCount: u32, pluginFails: u32, tracks: [Track], error: str? }
-Track        { trackId: u32, kind: "audio"|"app"|"fx"|"output", name: str, color: u32(0xRRGGBB), source: TrackSource, dests: [u32], output: TrackOutput, gain: f32, mute: bool, plugins: [RackSlot], error: str? }
-               (error 非 null = 該軌 capture/render 失效等軌道級錯誤;恢復時清空)
+EngineStatus { running: bool, deviceKey: str?, sampleRate: f32, bufferSize: u32?, inputLatency: u32?, outputLatency: u32?, xruns: u64, trackCount: u32, pluginFails: u32, revision: u64, tracks: [Track], error: str? }
+               (revision = 權威狀態版號,所有成功 mutation +1 含 set_param;client dirty 判定用)
+Track        { trackId: u32, kind: "audio"|"app"|"fx"|"output", systemRole: "monitor"|"stream"|null, name: str, color: u32(0xRRGGBB), source: TrackSource, dests: [u32], output: TrackOutput, gain: f32, mute: bool, plugins: [RackSlot], error: str? }
+               (error 非 null = 該軌 capture/render 失效等軌道級錯誤;恢復時清空。
+                systemRole = 系統輸出角色:每 session 恰好一條 monitor + 一條 stream,
+                可改名/改 sink/routing 但不可刪除(engine track_remove 拒絕);
+                載入缺 role = engine 確定性補齊)
 TrackSource  = null | { type: "sine", freq: f32 } | { type: "asioIn", channel: u32 } | { type: "app", pid: u32, name: str? }
                (null = 無來源/FX 軌;asioIn channel = pair 基底,取 ch 與 ch+1;
                 app = process loopback 抓該程序樹的音訊,pid 0 + name = 載入時重解析,找不到 = 軌 error)
 TrackOutput  = null | { type: "asioOut", channel: u32 } | { type: "wasapi", deviceId: str }
                (null = 不落地;asioOut channel = pair 基底;wasapi = WASAPI render endpoint,
                 裝置失效 = 軌 error「render device lost」)
-RackSlot     { instanceId: u32, name: str, pluginPath: str, classId: str, bypassed: bool, params: [{ paramId: u32, normalized: f32 }] }
+RackSlot     { instanceId: u32, name: str, pluginPath: str, classId: str, bypassed: bool, params: [{ paramId: u32, normalized: f32 }], availability: "ok"|"missing"|"loadFailed", loadError: str? }
+               (availability != "ok" = placeholder:module 消失或載入失敗,原鏈位保留、
+                不參與 DSP,UI 黯淡顯示;loadError = 失敗原因)
 ParamInfo    { paramId: u32, name: str, normalized: f32, default: f32, bypass: bool }
 ScanModule   { path: str, classes: [PluginClass] }
 PluginClass  { uid: str, name: str, vendor: str, version: str, subcategories: str }
 Snapshot     { epoch: u64, engineVersion: str, status: EngineStatus, tracks: [Track], lastScan: [ScanModule]? }
 SessionFile  { roudamixSession: 2, deviceKey: str?, sampleRate: u32?, bufferSize: u32?, tracks: [SessionTrack] }
 SessionFile.deviceKey/sampleRate/bufferSize = 最近一次成功 start 的設定;save_session payload 帶覆寫值時優先。
-SessionTrack { trackId: u32, kind: str, name: str, color: u32, source: TrackSource, dests: [u32(舊 id)], output: TrackOutput, gain: f32, mute: bool, plugins: [SessionSlot] }
-               (載入時 trackId 全部重發;dests 以舊→新 map 重接;app 來源存程序名,載入對不到 = 該軌靜音不失敗)
-SessionSlot  { pluginPath: str, classId: str, name: str, bypassed: bool, params: [{ paramId: u32, normalized: f32 }] }
+SessionTrack { trackId: u32, kind: str, systemRole: "monitor"|"stream"|null, name: str, color: u32, source: TrackSource, dests: [u32(舊 id)], output: TrackOutput, gain: f32, mute: bool, plugins: [SessionSlot] }
+               (載入時 trackId 全部重發;dests 以舊→新 map 重接;app 來源存程序名,載入對不到 = 該軌靜音不失敗;
+                舊 v2 檔無 systemRole = 載入後 engine 確定性指派/補建,不可只靠名稱)
+SessionSlot  { pluginPath: str, classId: str, name: str, bypassed: bool, params: [{ paramId: u32, normalized: f32 }], availability: "ok"|"missing"|"loadFailed", loadError: str? }
+               (availability 缺 = "ok";!= "ok" 載入時原樣重建 placeholder、不重新試爆;
+                載入詳細清單回在 load_session result.missing)
+MissingPlugin{ trackId: u32(檔案內舊 id), trackName: str, index: u32(鏈位), name: str, pluginPath: str, classId: str, code: str, message: str }
+               (code: plugin_missing / plugin_load_failed / sandbox_unavailable)
 ```
 
 `bufferSizes` = driver granularity 展開的合法清單(engine 計算;空 = 用 min/max 過濾常見值)。

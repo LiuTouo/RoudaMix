@@ -53,16 +53,36 @@ private:
 };
 
 struct RackSlot {
+    // placeholder 語意:plugin == nullptr 且 availability != kOk。session 載入時
+    // module 消失/壞檔/worker 不在 → 保留原位置與 metadata(params/bypass),
+    // 不參與 DSP(等同 bypass);可 retry 載回同一 instanceId。
+    enum class Availability : std::uint8_t { kOk, kMissing, kLoadFailed };
     std::uint32_t instance_id{};
-    std::string name;  // UI 顯示(class name)
+    std::string name;  // UI 顯示(class name;placeholder 時 = session 存的名字)
     std::string module_path;
     std::string class_id;
     bool bypass{};
-    std::shared_ptr<Vst3Plugin> plugin;                    // 鏈 snapshot 間共用
+    std::shared_ptr<Vst3Plugin> plugin;                    // 鏈 snapshot 間共用;placeholder = null
     std::shared_ptr<ParamRing> ring{std::make_shared<ParamRing>()};
     // host 端參數權威值(control 讀寫;VST3 host 設值不反映到 controller)
     std::vector<std::pair<std::uint32_t, double>> param_values;
+    Availability availability{Availability::kOk};
+    std::string load_error;  // placeholder 原因(UI 顯示;ok 時空)
+
+    [[nodiscard]] bool is_placeholder() const noexcept {
+        return plugin == nullptr && availability != Availability::kOk;
+    }
 };
+
+// JSON 字串(protocol/session 共用;"ok"|"missing"|"loadFailed")
+inline const char* availability_str(RackSlot::Availability a) noexcept {
+    switch (a) {
+        case RackSlot::Availability::kMissing: return "missing";
+        case RackSlot::Availability::kLoadFailed: return "loadFailed";
+        case RackSlot::Availability::kOk: break;
+    }
+    return "ok";
+}
 
 // RT 讀的不可變鏈(slots 為 master 淺拷貝:plugin/ring shared,值欄位快照)
 struct RackChain {

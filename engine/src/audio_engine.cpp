@@ -285,27 +285,29 @@ bool AudioEngine::start(const std::string& device_key,
 
     // 從所有軌的 source/output 收集 ASIO channel 聯集(M5:軌道自選 pair)
     std::vector<std::uint32_t> in_chans, out_chans;
-    for (const auto& t : tracks_) {
-        if (t.source.type == TrackSource::kAsioIn) {
-            in_chans.push_back(t.source.asio_in_ch);
-            in_chans.push_back(t.source.asio_in_ch + 1);
-        }
-        if (t.output.type == TrackOutput::kAsioOut) {
-            out_chans.push_back(t.output.asio_out_ch);
-            out_chans.push_back(t.output.asio_out_ch + 1);
-        }
-    }
-    std::sort(in_chans.begin(), in_chans.end());
-    in_chans.erase(std::unique(in_chans.begin(), in_chans.end()), in_chans.end());
-    std::sort(out_chans.begin(), out_chans.end());
-    out_chans.erase(std::unique(out_chans.begin(), out_chans.end()), out_chans.end());
-    if (out_chans.empty()) out_chans = {0, 1};  // createBuffers 至少要一組 out
+    asio_channel_union(tracks_, in_chans, out_chans);
 
     if (!device_.prepare(rate, in_chans, out_chans, buffer, err)) {
         device_.close();
         return false;
     }
     device_.set_callback(this);
+
+    // 失敗回滾 guard:capture/render/plugin 已啟動後任何一步失敗,全部收乾淨
+    // (不留背景 pump、不留 initialized 殘態、不留半開的 device)
+    struct StartRollback {
+        AudioEngine* e;
+        bool armed{true};
+        ~StartRollback() {
+            if (!armed) return;
+            e->stop_captures();
+            e->stop_renders();
+            for (auto& t : e->tracks_)
+                for (auto& s : t.chain)
+                    if (s.plugin) s.plugin->terminate();
+            e->device_.close();
+        }
+    } rollback{this};
 
     // M5b/M5c:app capture + wasapi render 啟動(失敗 = 該軌 track_error,
     // 不擋 start;其他軌照跑)
@@ -324,14 +326,15 @@ bool AudioEngine::start(const std::string& device_key,
 
     // 全部軌的 plugin 先 initialize + 進 RT graph,再開 device —— callback 一啟動
     // 就拿到已就緒的 plugin(順序反了 RT 會拿到未 initialize 的鏈,process 全 fail)。
-    // terminate 先跑:前次 start 失敗殘留的 initialized 狀態會讓 initialize 拒絕
+    // terminate 先跑:前次 start 失敗殘留的 initialized 狀態會讓 initialize 拒絕。
+    // placeholder(plugin == null)跳過:不參與 DSP
     for (auto& t : tracks_) {
         for (auto& slot : t.chain) {
+            if (!slot.plugin) continue;
             slot.plugin->terminate();
             if (!slot.plugin->initialize(static_cast<double>(rate), device_.block_size())) {
-                device_.close();
                 err = "plugin '" + slot.name + "' init failed: " + slot.plugin->last_error();
-                return false;
+                return false;  // rollback guard 收 capture/render/plugin/device
             }
         }
     }
@@ -339,7 +342,6 @@ bool AudioEngine::start(const std::string& device_key,
 
     const std::uint64_t callbacks_before = device_.callbacks();
     if (!device_.start(err)) {
-        device_.close();
         err = std::string("ASIO start failed after rack ready: ") + err;
         return false;
     }
@@ -347,11 +349,11 @@ bool AudioEngine::start(const std::string& device_key,
     // 短等驗證沒 callback 就明確失敗,引導用硬體面板改率(600ms:Start 鍵可感知延遲)
     Sleep(600);
     if (device_.callbacks() == callbacks_before) {
-        device_.close();
         err = "driver did not deliver audio callbacks at " + std::to_string(rate) +
               " Hz; open hardware panel, set rate there, then Start again";
         return false;
     }
+    rollback.armed = false;
 
     rt_sample_rate_.store(rate, std::memory_order_relaxed);
     last_device_key_ = device_key;  // session 用:stop 後存檔仍記得裝置
@@ -412,7 +414,8 @@ void AudioEngine::stop() noexcept {
     // RT 停 callback 後退 graph、卸 plugin(下次 start 依新 rate 重建)
     retire_graph();
     for (auto& t : tracks_)
-        for (auto& slot : t.chain) slot.plugin->terminate();
+        for (auto& slot : t.chain)
+            if (slot.plugin) slot.plugin->terminate();
     stop_captures();
     stop_renders();
     clear_expired_retired(/*force=*/true);
@@ -481,21 +484,7 @@ bool AudioEngine::rebuild_asio_channels(std::string& err) {
     if (!device_.running()) return true;
     // 與 start() 同款:從所有軌收 ASIO channel 聯集
     std::vector<std::uint32_t> in_chans, out_chans;
-    for (const auto& t : tracks_) {
-        if (t.source.type == TrackSource::kAsioIn) {
-            in_chans.push_back(t.source.asio_in_ch);
-            in_chans.push_back(t.source.asio_in_ch + 1);
-        }
-        if (t.output.type == TrackOutput::kAsioOut) {
-            out_chans.push_back(t.output.asio_out_ch);
-            out_chans.push_back(t.output.asio_out_ch + 1);
-        }
-    }
-    std::sort(in_chans.begin(), in_chans.end());
-    in_chans.erase(std::unique(in_chans.begin(), in_chans.end()), in_chans.end());
-    std::sort(out_chans.begin(), out_chans.end());
-    out_chans.erase(std::unique(out_chans.begin(), out_chans.end()), out_chans.end());
-    if (out_chans.empty()) out_chans = {0, 1};
+    asio_channel_union(tracks_, in_chans, out_chans);
     // 現行 buffer map 已涵蓋 = 不動(省一次 stop/start;縮減聯集也不回收,無害)
     const auto& imap = device_.input_map();
     const auto& omap = device_.output_map();
@@ -506,16 +495,28 @@ bool AudioEngine::rebuild_asio_channels(std::string& err) {
         return true;
     };
     if (covered(imap, in_chans) && covered(omap, out_chans)) return true;
-    retire_graph();  // RT 停後退 graph;新 map 位置由呼叫端 swap_graph 重解析
+    // 交易式:記下現行可工作設定,新 map 啟動失敗 = 自動恢復舊設定(不做 stop 後
+    // 殘局;真恢復不了才停在 stopped,dispatch 會廣播權威 status 給 UI)
+    const std::string clsid = device_.clsid();
     const std::uint32_t rate = rt_sample_rate_.load(std::memory_order_relaxed);
-    if (!device_.prepare(rate, in_chans, out_chans, device_.block_size(), err)) {
+    const std::uint32_t block = device_.block_size();
+    const std::vector<std::uint32_t> prev_in = imap;
+    const std::vector<std::uint32_t> prev_out = omap;
+    retire_graph();  // RT 停後退 graph;新 map 位置由呼叫端 swap_graph 重解析
+    if (!device_.prepare(rate, in_chans, out_chans, block, err) ||
+        !device_.start(err)) {
+        // 回滾:舊 channel map 重開;成功 = 串流續跑(指令仍回報失敗,設定沒套上)
         device_.close();
-        err = "rebuild ASIO buffers failed: " + err;
-        return false;
-    }
-    if (!device_.start(err)) {
-        device_.close();
-        err = "restart ASIO failed: " + err;
+        std::string rb_err;
+        if (device_.probe(clsid, rb_err) &&
+            device_.prepare(rate, prev_in, prev_out, block, rb_err) &&
+            device_.start(rb_err)) {
+            err = "rebuild ASIO buffers failed (" + err + "); previous channels restored";
+        } else {
+            device_.close();
+            err = "rebuild ASIO buffers failed (" + err +
+                  ") and rollback also failed, engine stopped (" + rb_err + ")";
+        }
         return false;
     }
     return true;
@@ -579,6 +580,7 @@ bool AudioEngine::track_add(TrackKind kind, const std::string& name, std::uint32
     track_id = t.track_id;
     tracks_.push_back(std::move(t));
     swap_graph();
+    revision_.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
@@ -589,9 +591,16 @@ bool AudioEngine::track_remove(std::uint32_t track_id, std::string& err) {
         err = "unknown trackId " + std::to_string(track_id);
         return false;
     }
+    // 系統輸出(monitor/stream)不可刪:每個 session 必須恰好各一條(engine 端
+    // 權威驗證,不靠 UI);UI 也隱藏移除鈕
+    if (it->system_role != SystemRole::kNone) {
+        err = std::string("system ") + system_role_str(it->system_role) +
+              " output cannot be removed (rename or re-route it instead)";
+        return false;
+    }
     // 該軌的 plugin editor 先收(editor 與 dispatch 同在 main thread,無並發)
     for (auto& slot : it->chain) {
-        if (slot.plugin->editor_open()) slot.plugin->close_editor();
+        if (slot.plugin && slot.plugin->editor_open()) slot.plugin->close_editor();
     }
     stop_capture(*it);  // M5b:capture pump 先收(join)再毀節點
     stop_render(*it);   // M5c:render pump 同
@@ -601,6 +610,7 @@ bool AudioEngine::track_remove(std::uint32_t track_id, std::string& err) {
         t.dests.erase(std::remove(t.dests.begin(), t.dests.end(), track_id), t.dests.end());
     }
     swap_graph();
+    revision_.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
@@ -623,6 +633,7 @@ bool AudioEngine::track_set(std::uint32_t track_id, std::optional<std::string> n
     }
     if (mute) t->mute = *mute;
     swap_graph();
+    revision_.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
@@ -669,6 +680,7 @@ bool AudioEngine::track_set_source(std::uint32_t track_id, const TrackSource& so
             }
         }
         swap_graph();
+        revision_.fetch_add(1, std::memory_order_relaxed);
         return true;
     }
     if (t->kind == TrackKind::kApp && source.type != TrackSource::kNone) {
@@ -718,6 +730,7 @@ bool AudioEngine::track_set_source(std::uint32_t track_id, const TrackSource& so
         }
     }
     swap_graph();
+    revision_.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
@@ -809,6 +822,7 @@ bool AudioEngine::track_set_dests(std::uint32_t track_id, std::vector<std::uint3
         return false;
     }
     swap_graph();
+    revision_.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
@@ -853,6 +867,7 @@ bool AudioEngine::track_set_output(std::uint32_t track_id, const TrackOutput& ou
             }
         }
         swap_graph();
+        revision_.fetch_add(1, std::memory_order_relaxed);
         return true;
     }
     if (output.type == TrackOutput::kAsioOut) {
@@ -884,6 +899,7 @@ bool AudioEngine::track_set_output(std::uint32_t track_id, const TrackOutput& ou
         }
     }
     swap_graph();
+    revision_.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
@@ -903,6 +919,7 @@ bool AudioEngine::track_move(std::uint32_t track_id, std::size_t new_index, std:
     const auto pos = (std::min)(new_index, tracks_.size());  // erase 後插入位 [0, N-1];超尾 = 移到尾端
     tracks_.insert(tracks_.begin() + static_cast<std::ptrdiff_t>(pos), std::move(moved));
     swap_graph();
+    revision_.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
@@ -924,8 +941,8 @@ std::vector<AudioEngine::PluginTabInfo> AudioEngine::plugin_tabs() const {
     std::vector<PluginTabInfo> tabs;
     for (const auto& t : tracks_) {
         for (const auto& s : t.chain) {
-            tabs.push_back({s.instance_id, t.name + " · " + s.name, s.plugin->editor_capable(),
-                            s.bypass});
+            tabs.push_back({s.instance_id, t.name + " · " + s.name,
+                            s.plugin != nullptr && s.plugin->editor_capable(), s.bypass});
         }
     }
     return tabs;
@@ -960,6 +977,73 @@ bool AudioEngine::add_plugin(std::uint32_t track_id, const std::string& module_p
     instance_id = slot.instance_id;
     t->chain.push_back(std::move(slot));
     swap_graph();
+    revision_.fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
+
+bool AudioEngine::add_placeholder_plugin(std::uint32_t track_id, const std::string& module_path,
+                                         const std::string& class_id, const std::string& name,
+                                         bool bypassed, RackSlot::Availability why,
+                                         const std::string& load_error,
+                                         const std::vector<std::pair<std::uint32_t, double>>& params,
+                                         std::uint32_t& instance_id, std::string& err) {
+    TrackNode* t = find_track_mut(track_id);
+    if (t == nullptr) {
+        err = "unknown trackId " + std::to_string(track_id);
+        return false;
+    }
+    RackSlot slot;
+    slot.instance_id = next_instance_id_++;
+    slot.module_path = module_path;
+    slot.class_id = class_id;
+    slot.name = name.empty() ? std::filesystem::path(module_path).filename().string() : name;
+    slot.bypass = bypassed;  // placeholder 不參與 DSP;bypass 值照存(load 後還原)
+    slot.availability = why;
+    slot.load_error = load_error;
+    slot.param_values = params;  // session 帶回的權威值(載回時重放)
+    instance_id = slot.instance_id;
+    t->chain.push_back(std::move(slot));
+    swap_graph();
+    revision_.fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
+
+bool AudioEngine::load_placeholder(std::uint32_t instance_id, const std::string& module_path,
+                                   const std::string& class_id, std::string& err) {
+    RackSlot* s = find_slot_mut(instance_id);
+    if (s == nullptr) {
+        err = "unknown instanceId " + std::to_string(instance_id);
+        return false;
+    }
+    if (!s->is_placeholder()) {
+        err = "instance is not a placeholder";
+        return false;
+    }
+    // 原位置/instanceId/params/bypass 全保留:只把 plugin 補上、狀態轉 ok
+    auto plugin = std::make_shared<Vst3Plugin>(module_path, class_id);
+    if (!plugin->loaded()) {
+        err = plugin->last_error();
+        return false;
+    }
+    if (device_.running() &&
+        !plugin->initialize(static_cast<double>(rt_sample_rate_.load(std::memory_order_relaxed)),
+                            device_.block_size())) {
+        err = plugin->last_error();
+        return false;
+    }
+    s->plugin = std::move(plugin);
+    s->module_path = module_path;
+    s->class_id = class_id;
+    s->name = s->plugin->name();
+    s->availability = RackSlot::Availability::kOk;
+    s->load_error.clear();
+    // session 帶回來的 host 權威值推 RT + controller(同 load_preset 三路同步)
+    for (const auto& [id, v] : s->param_values) {
+        s->ring->push({id, v});
+        s->plugin->set_param_normalized(id, v);
+    }
+    swap_graph();
+    revision_.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
@@ -969,9 +1053,10 @@ bool AudioEngine::remove_plugin(std::uint32_t instance_id, std::string& err) {
             if (it->instance_id == instance_id) {
                 // editor 視窗先收(同步 DestroyWindow;editor 與 dispatch 同在 main
                 // thread,無並發——performEdit 回呼不會同時跑)
-                if (it->plugin->editor_open()) it->plugin->close_editor();
+                if (it->plugin && it->plugin->editor_open()) it->plugin->close_editor();
                 t.chain.erase(it);
                 swap_graph();
+                revision_.fetch_add(1, std::memory_order_relaxed);
                 return true;
             }
         }
@@ -999,6 +1084,7 @@ bool AudioEngine::move_plugin(std::uint32_t instance_id, std::size_t to_index,
         chain.erase(from);
         chain.insert(chain.begin() + static_cast<std::ptrdiff_t>(to_index), std::move(moved));
         swap_graph();
+        revision_.fetch_add(1, std::memory_order_relaxed);
         return true;
     }
     err = "unknown instanceId " + std::to_string(instance_id);
@@ -1013,6 +1099,7 @@ bool AudioEngine::set_bypass(std::uint32_t instance_id, bool bypass, std::string
     }
     s->bypass = bypass;
     swap_graph();
+    revision_.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
@@ -1040,6 +1127,7 @@ bool AudioEngine::set_param(std::uint32_t instance_id, std::uint32_t param_id, d
         return false;
     }
     s->ring->push({param_id, value});  // 滿 = drop;權威值已更新,UI 重送冪等
+    revision_.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
@@ -1048,6 +1136,10 @@ bool AudioEngine::save_preset(std::uint32_t instance_id, const std::filesystem::
     const RackSlot* s = find_slot(instance_id);
     if (s == nullptr) {
         err = "unknown instanceId " + std::to_string(instance_id);
+        return false;
+    }
+    if (s->plugin == nullptr) {
+        err = "plugin not loaded (placeholder)";
         return false;
     }
     // getState 與 RT process 不得併發(VST3 契約):掛 bypass 讓 RT 放掉 plugin,
@@ -1068,6 +1160,10 @@ bool AudioEngine::load_preset(std::uint32_t instance_id, const std::filesystem::
     RackSlot* s = find_slot_mut(instance_id);
     if (s == nullptr) {
         err = "unknown instanceId " + std::to_string(instance_id);
+        return false;
+    }
+    if (s->plugin == nullptr) {
+        err = "plugin not loaded (placeholder)";
         return false;
     }
     // setState 與 RT process 不得併發:同 save_preset,先掛 bypass
@@ -1094,6 +1190,7 @@ bool AudioEngine::load_preset(std::uint32_t instance_id, const std::filesystem::
         s->ring->push({id, v});                    // RT 下一個 block 套用
         s->plugin->set_param_normalized(id, v);    // controller → editor GUI
     }
+    revision_.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
@@ -1101,8 +1198,31 @@ void AudioEngine::sync_controller_params(std::uint32_t instance_id) {
     // session 載入:set_param 只餵 RT ring,controller(editor GUI)不知道 ——
     // 開 GUI 會看到舊值/預設值。這裡把 host 權威值推給 controller 同步顯示
     RackSlot* s = find_slot_mut(instance_id);
-    if (s == nullptr) return;
+    if (s == nullptr || s->plugin == nullptr) return;
     for (const auto& [id, v] : s->param_values) s->plugin->set_param_normalized(id, v);
+}
+
+bool AudioEngine::ensure_system_outputs() {
+    if (!rmx::ensure_system_outputs(tracks_, next_track_id_)) return false;
+    swap_graph();
+    revision_.fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
+
+void AudioEngine::set_track_system_role(std::uint32_t track_id, SystemRole role) {
+    TrackNode* t = find_track_mut(track_id);
+    if (t != nullptr) t->system_role = role;
+}
+
+void AudioEngine::clear_all_tracks() {
+    for (auto& t : tracks_) {
+        for (auto& slot : t.chain)
+            if (slot.plugin && slot.plugin->editor_open()) slot.plugin->close_editor();
+        stop_capture(t);
+        stop_render(t);
+    }
+    tracks_.clear();
+    swap_graph();
 }
 
 // controlPanel() 多數 driver 是 modal(關面板才返回)— 呼叫端(detach thread)

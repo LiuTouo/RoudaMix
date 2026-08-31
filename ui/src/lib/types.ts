@@ -41,6 +41,7 @@ export interface RenderDevice {
 export interface Track {
   trackId: number;
   kind: "audio" | "app" | "fx" | "output";
+  systemRole?: "monitor" | "stream" | null; // 系統輸出(不可刪;每 session 恰好各一)
   name: string;
   color: number; // 0xRRGGBB
   source: TrackSource | null;
@@ -62,6 +63,7 @@ export interface EngineStatus {
   xruns: number;
   trackCount: number;
   pluginFails: number;
+  revision?: number; // 權威 dirty 版號(所有成功 mutation +1,含 set_param)
   tracks: Track[];
   error: string | null;
 }
@@ -73,6 +75,30 @@ export interface RackSlot {
   classId: string;
   bypassed: boolean;
   params: ParamValue[];
+  availability?: "ok" | "missing" | "loadFailed"; // != ok = placeholder(不參與 DSP)
+  loadError?: string | null;
+}
+
+/** load_session reply 的 structured diagnostics(engine 端載不動的 plugin) */
+export interface MissingPlugin {
+  trackId: number; // 檔案內舊 id
+  trackName: string;
+  index: number;
+  name: string;
+  pluginPath: string;
+  classId: string;
+  code: string;
+  message: string;
+}
+
+export interface ScanModule {
+  path: string;
+  classes: PluginClass[];
+}
+
+export interface ScanFailure {
+  path: string;
+  error: string;
 }
 
 export interface ParamInfo {
@@ -89,11 +115,6 @@ export interface PluginClass {
   vendor: string;
   version: string;
   subcategories: string;
-}
-
-export interface ScanModule {
-  path: string;
-  classes: PluginClass[];
 }
 
 export interface Snapshot {

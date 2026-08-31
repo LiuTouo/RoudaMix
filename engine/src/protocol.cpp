@@ -13,10 +13,10 @@ const std::set<std::string>& command_kinds() {
         "start", "stop", "open_device_panel",
         "track_add", "track_remove", "track_set", "track_set_source",
         "track_set_dests", "track_set_output", "track_move",
-        "scan_plugins", "add_plugin", "remove_plugin", "move_plugin",
-        "set_bypass", "set_param", "get_params", "open_editor", "close_editor",
-        "save_preset", "load_preset",
-        "save_session", "load_session", "shutdown_engine",
+        "start_scan", "cancel_scan", "add_plugin", "remove_plugin", "move_plugin",
+        "set_bypass", "retry_plugin", "set_param", "get_params", "open_editor",
+        "close_editor", "save_preset", "load_preset",
+        "save_session", "load_session", "ensure_system_outputs", "shutdown_engine",
         "set_editor_owner",
     };
     return k;
@@ -24,8 +24,8 @@ const std::set<std::string>& command_kinds() {
 
 const std::set<std::string>& event_kinds() {
     static const std::set<std::string> k = {
-        "snapshot", "status", "scan_done", "rack_changed", "plugin_event",
-        "devices_changed",
+        "snapshot", "status", "scan_progress", "scan_done", "scan_failed",
+        "scan_cancelled", "rack_changed", "plugin_event", "devices_changed",
     };
     return k;
 }
@@ -152,19 +152,23 @@ void validate_command_payload(const std::string& kind, const nlohmann::json& p) 
         u32("trackId");
         if (!has("output")) reject("missing key: payload.output");
         validate_track_output(p["output"]);
-    } else if (kind == "scan_plugins") {
+    } else if (kind == "start_scan") {
         if (has("roots") && (!p["roots"].is_array() ||
                              !std::all_of(p["roots"].begin(), p["roots"].end(),
                                           [](const nlohmann::json& e) { return e.is_string(); })))
             reject("payload.roots must be string[] when present");
+    } else if (kind == "cancel_scan" || kind == "ensure_system_outputs") {
+        if (!p.empty()) reject("payload must be empty object");
     } else if (kind == "add_plugin") {
         u32("trackId");
         str("path");
         if (has("classId") && !p["classId"].is_string())
             reject("payload.classId must be string when present");
     } else if (kind == "remove_plugin" || kind == "get_params" || kind == "open_editor" ||
-               kind == "close_editor") {
+               kind == "close_editor" || kind == "retry_plugin") {
         u32("instanceId");
+        if (kind == "retry_plugin" && has("path") && !p["path"].is_string())
+            reject("payload.path must be string when present");
     } else if (kind == "move_plugin") {
         u32("instanceId");
         u32("newIndex");

@@ -113,7 +113,8 @@ add_test(NAME vst3_host COMMAND vst3_host_test)
 # session 檔案序列化/載入(無 plugin 環境;真 plugin roundtrip 走 m5a-engine-tracks.ps1)
 add_executable(session_test tests/session_test.cpp src/session.cpp src/audio_engine.cpp
     src/track_graph.cpp src/app_capture.cpp src/render_sink.cpp
-    src/asio_device.cpp src/pcm_convert.cpp src/telemetry.cpp src/vst3_host.cpp)
+    src/asio_device.cpp src/pcm_convert.cpp src/telemetry.cpp src/vst3_host.cpp
+    src/sandbox.cpp)
 target_include_directories(session_test PRIVATE src)
 target_include_directories(session_test SYSTEM PRIVATE third_party)
 target_link_libraries(session_test PRIVATE asio_sdk vst3_sdk user32 ole32 mmdevapi psapi)
@@ -121,3 +122,12 @@ if(MSVC)
     target_compile_options(session_test PRIVATE /W4 /utf-8)
 endif()
 add_test(NAME session COMMAND session_test)
+
+# track graph 純邏輯(system role 補齊/去重、ASIO channel 聯集;無音訊裝置)
+add_executable(track_graph_test tests/track_graph_test.cpp src/track_graph.cpp)
+target_include_directories(track_graph_test PRIVATE src)
+target_include_directories(track_graph_test SYSTEM PRIVATE third_party)
+if(MSVC)
+    target_compile_options(track_graph_test PRIVATE /W4 /utf-8)
+endif()
+add_test(NAME track_graph COMMAND track_graph_test)

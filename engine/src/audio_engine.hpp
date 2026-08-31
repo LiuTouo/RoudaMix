@@ -96,6 +96,19 @@ public:
     // ---- plugins(簽名與 M4 相同,只是搜尋/插入範圍變成各軌 chain)----
     bool add_plugin(std::uint32_t track_id, const std::string& module_path,
                     const std::string& class_id, std::uint32_t& instance_id, std::string& err);
+    // session 載入:module 載不動也要原位置保留 metadata。plugin == nullptr 的
+    // placeholder(不參與 DSP = 等同 bypass),availability/load_error 記原因;
+    // params 直接進 host 權威表(placeholder 沒有 plugin metadata 可查)
+    bool add_placeholder_plugin(std::uint32_t track_id, const std::string& module_path,
+                                const std::string& class_id, const std::string& name,
+                                bool bypassed, RackSlot::Availability why,
+                                const std::string& load_error,
+                                const std::vector<std::pair<std::uint32_t, double>>& params,
+                                std::uint32_t& instance_id, std::string& err);
+    // placeholder → 真 plugin(原 instanceId/位置/params/bypass 保留)。
+    // 前置:呼叫端先過 sandbox verify(session 與 dispatch 同規;worker 不在 fail closed)
+    bool load_placeholder(std::uint32_t instance_id, const std::string& module_path,
+                          const std::string& class_id, std::string& err);
     bool remove_plugin(std::uint32_t instance_id, std::string& err);
     bool move_plugin(std::uint32_t instance_id, std::size_t to_index, std::string& err);
     bool set_bypass(std::uint32_t instance_id, bool bypass, std::string& err);
@@ -110,6 +123,20 @@ public:
     // 把 host 權威值推給 controller(editor GUI 顯示同步);session 載入後呼,
     // set_param 只餵 RT ring、GUI 不知道。假設 g_engine_mutex 已持有
     void sync_controller_params(std::uint32_t instance_id);
+
+    // 系統輸出(monitor/stream)補齊/去重:session 載入後、新 session 建立時呼。
+    // 有變動才 swap_graph + bump revision。回傳是否動了 graph
+    bool ensure_system_outputs();
+    // session 載入路徑:檔案帶的 role 套到剛建好的軌(ensure_system_outputs 之後
+    // 會去重/補齊)。未知 id = 無操作
+    void set_track_system_role(std::uint32_t track_id, SystemRole role);
+    // session 載入:全軌清空(含系統輸出軌——track_remove 擋系統軌,這裡是載入
+    // 前的整段重建,必須能清)。editor/capture/render 一併收
+    void clear_all_tracks();
+
+    // ---- authoritative revision(session dirty 判定用;所有成功 mutation +1,
+    //      含不廣播的 set_param。epoch 只算「廣播型」mutation,不夠表達 params)----
+    std::uint64_t revision() const noexcept { return revision_.load(std::memory_order_relaxed); }
 
     const std::vector<TrackNode>& tracks() const noexcept { return tracks_; }
     // editor host tab 列(全部軌的 plugin,「軌名 · plugin 名」)
@@ -149,6 +176,7 @@ private:
     std::vector<TrackNode> tracks_;
     std::uint32_t next_track_id_{1};
     std::uint32_t next_instance_id_{1};
+    std::atomic<std::uint64_t> revision_{0};  // 權威狀態版號(含 set_param;dirty 判定)
     std::string last_device_key_;     // 空 = 從未成功 start
     std::uint32_t last_sample_rate_{};
     std::uint32_t last_buffer_size_{};

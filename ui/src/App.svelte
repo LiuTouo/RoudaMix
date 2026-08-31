@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { open, save } from "@tauri-apps/plugin-dialog";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
   import TrackStrip from "./lib/TrackStrip.svelte";
   import { mountDragGhost, removeDragGhost } from "./lib/ghost";
+  import { isDirty, resolveDirtyChoice, type DirtyChoice } from "./lib/dirty";
   import {
     connectStatus,
     onConnection,
@@ -20,6 +22,9 @@
     DeviceInfo,
     EngineStatus,
     MetersFrame,
+    MissingPlugin,
+    ScanFailure,
+    ScanModule,
     Track,
   } from "./lib/types";
 
@@ -39,7 +44,23 @@
   let appSettings = $state<AppSettings | null>(null);
   let folderFiles = $state<string[]>([]);
   let audioStale = $state(false); // 應該在跑但沒跑(啟動失敗)→ 頂欄極簡警示
-  let ensuredDefaults = false; // 首次連線建「監聽/串流」;之後使用者刪光也不重 建
+  let ensuredDefaults = false; // 首次連線確保有系統輸出;engine 端保保證唯一
+  // ---- B:authoritative dirty(engine revision vs 上次存/載基準)----
+  let revision = $state<number | null>(null); // engine 權威版號(status/snapshot/reply 帶回)
+  let cleanRevision = $state<number | null>(null); // 上次成功存/載當下的 revision
+  const dirty = $derived(revision !== null && cleanRevision !== null && revision !== cleanRevision);
+  // ---- E:背景掃描 job(共用 registry,所有軌共用一份清單)----
+  let scanModules = $state<ScanModule[]>([]);
+  let scanFailed = $state<ScanFailure[]>([]);
+  let scanJobId = $state<number | null>(null);
+  let scanRunning = $state(false);
+  let scanProgress = $state<{ done: number; total: number } | null>(null);
+  let scanNotice = $state("");
+  // ---- A:load_session 的 missing diagnostics 摘要(頂欄)----
+  let missing = $state<MissingPlugin[]>([]);
+  // ---- B:未儲存變更三分支 dialog ----
+  let dirtyDlg = $state<HTMLDialogElement | null>(null);
+  let dirtyResolve: ((c: DirtyChoice) => void) | null = null;
   $effect(() => {
     if (settingsOpen) settingsDlg?.showModal();
     // open 才 close:dialog.close() 對未 open 的 dialog throw InvalidStateError
@@ -61,21 +82,118 @@
     await onSnapshot((s) => {
       snap = s;
       status = s.status;
-      ensureDefaults().catch(() => {}); // 首次連上空場景也要建監聽/串流(snapshot 不走 status 事件)
+      if (typeof s.status.revision === "number") revision = s.status.revision;
+      // 全域 plugin registry 重連也對齊(不用重新掃);掃描進行中不覆寫
+      if (!scanRunning && Array.isArray(s.lastScan)) {
+        scanModules = s.lastScan as ScanModule[];
+      }
+      ensureDefaults().catch(() => {}); // 首次連上空場景也要補系統輸出(snapshot 不走 status 事件)
     });
     await onEngineEvent((kind, payload) => {
       if (kind === "status") {
         status = payload as EngineStatus;
+        const st = payload as EngineStatus;
+        if (typeof st.revision === "number") revision = st.revision;
+        // stream 狀態的權威對齊:engine 跑著時 UI 選擇跟著實際值(失敗回滾後也正確)
+        if (st.running && st.deviceKey) selected = st.deviceKey;
         ensureDefaults().catch(() => {});
       }
       // 硬體面板關閉:driver 設定可能變(率),且 SSL 這類 driver 在面板動 buffer 後
       // 現有 stream 會死流 —— 一律重掃 + 重建(短暫中斷換取與硬體同步)
       if (kind === "devices_changed") onPanelClosed().catch(() => {});
+      // ---- E:掃描 job events(jobId 不符 = 上一代的 late event,忽略)----
+      if (kind === "scan_progress") {
+        const p = payload as { jobId: number; done: number; total: number };
+        if (p.jobId === scanJobId) scanProgress = { done: p.done, total: p.total };
+      }
+      if (kind === "scan_done") {
+        const p = payload as { jobId: number; plugins: ScanModule[]; failed: ScanFailure[] };
+        if (p.jobId === scanJobId) {
+          scanModules = p.plugins ?? [];
+          scanFailed = p.failed ?? [];
+          scanRunning = false;
+          scanProgress = null;
+        }
+      }
+      if (kind === "scan_failed") {
+        const p = payload as { jobId: number; error: string };
+        if (p.jobId === scanJobId) {
+          scanNotice = p.error;
+          scanRunning = false;
+          scanProgress = null;
+        }
+      }
+      if (kind === "scan_cancelled") {
+        const p = payload as { jobId: number };
+        if (p.jobId === scanJobId) {
+          scanRunning = false;
+          scanProgress = null;
+        }
+      }
     });
     await onMeters((m) => (meters = m));
+    // ---- B:關窗前 dirty 詢問(儲存/捨棄/取消;取消 = 真的不關)----
+    await getCurrentWindow().onCloseRequested(async (e) => {
+      if (!dirty) return; // clean:直接關
+      e.preventDefault();
+      const choice = await askDirty();
+      const plan = resolveDirtyChoice(dirty, choice);
+      if (plan.shouldSave) {
+        const okSave = await saveSessionForClose();
+        if (!okSave) return; // 存失敗 = 不退出(不得覆蓋失敗就關)
+      }
+      if (plan.proceed || plan.shouldSave) void getCurrentWindow().destroy();
+    });
     settingsReady();
     refreshDevices().catch(() => {});
   });
+
+  /** 開三分支 modal;使用者選完 resolve */
+  function askDirty(): Promise<DirtyChoice> {
+    return new Promise((res) => {
+      dirtyResolve = res;
+      dirtyDlg?.showModal();
+    });
+  }
+  function answerDirty(c: DirtyChoice) {
+    dirtyDlg?.close();
+    dirtyResolve?.(c);
+    dirtyResolve = null;
+  }
+
+  /** 關窗/載入前的存檔:有 lastSessionPath 直接覆寫,否則開存檔對話框。回傳是否成功 */
+  async function saveSessionForClose(): Promise<boolean> {
+    const target = appSettings?.lastSessionPath;
+    let path = target ?? null;
+    if (!path) {
+      try {
+        path = await save({
+          title: "儲存 Session",
+          defaultPath: "session.rmsession",
+          filters: [{ name: "RoudaMix Session", extensions: ["rmsession"] }],
+        });
+      } catch {
+        return false;
+      }
+      if (!path) return false;
+    }
+    try {
+      const r = await engineCommand("save_session", {
+        path,
+        deviceKey: selected || null,
+        sampleRate: status?.running ? Math.round(status.sampleRate) : null,
+        bufferSize: status?.running ? status.bufferSize : bufSize,
+      });
+      if (typeof r.revision === "number") cleanRevision = r.revision;
+      rememberLastSession(path);
+      notice = "";
+      restoreError = "";
+      return true;
+    } catch (e) {
+      notice = String(e);
+      return false;
+    }
+  }
 
   // ---------- 應用層設定 + 啟動場景恢復 ----------
 
@@ -131,7 +249,7 @@
     return restoreP;
   }
 
-  // 首次 snapshot 空 = 新場景:自動建輸出軌「監聽/串流」(監聽 = ASIO 主輸出 pair 0)
+  // 首次 snapshot 空 = 新場景:補系統輸出(monitor/stream;engine 端保證唯一性)
   async function ensureDefaults() {
     if (!status) return;
     await settingsReady();
@@ -139,12 +257,9 @@
     if (ensuredDefaults || !status || status.tracks.length > 0) return;
     ensuredDefaults = true;
     try {
-      const r = await engineCommand("track_add", { kind: "output", name: "監聽" });
-      await engineCommand("track_set_output", {
-        trackId: r.trackId as number,
-        output: { type: "asioOut", channel: 0 },
-      });
-      await engineCommand("track_add", { kind: "output", name: "串流" });
+      const r = await engineCommand("ensure_system_outputs", {});
+      // 新空白場景的系統輸出 = 基準狀態,不算使用者未存變更
+      if (typeof r.revision === "number") cleanRevision = r.revision;
     } catch {
       // 連線競態:失敗就等下一個 status 事件再試
       ensuredDefaults = false;
@@ -165,7 +280,7 @@
   async function onPanelClosed() {
     panelOpen = false;
     await refreshDevices();
-    if (status?.running && !busy) restartWith();
+    if (status?.running) queueRestart();
   }
 
   async function refreshDevices() {
@@ -182,6 +297,12 @@
     }
   }
 
+  // ---- C:交易式裝置/Buffer 切換。onchange 立即切(無 Apply);busy 鎖住控制防
+  // 連點競態;切換序列化(promise chain);新設定起不來 = 自動恢復最後可工作的
+  // 裝置/Buffer;恢復也失敗 = engine 已 stopped,權威 status event 會把 UI 帶回現實 ----
+  let lastGood = $state<{ key: string; buf: number | null } | null>(null); // 最後成功 start 的設定
+  let switchChain: Promise<void> = Promise.resolve();
+
   async function start(deviceKey?: string) {
     const key = deviceKey ?? selected;
     if (!key || busy || status?.running) return;
@@ -193,6 +314,7 @@
         sampleRate: null, // 率 = driver 現行(硬體面板權威)
         bufferSize: bufSize, // buffer = host 權威;null = driver preferred
       });
+      lastGood = { key, buf: bufSize };
       audioStale = false;
     } catch (e) {
       audioStale = true;
@@ -201,23 +323,47 @@
     busy = false;
   }
 
-  // 跑著時改 buffer/裝置:ASIO 要重建 = stop → start(換裝置 = 即時切換;
-  // 新裝置開不起來 = audioStale + 設定頁錯誤,不 fallback)
-  async function restartWith(key = selected) {
-    if (busy) return;
+  function queueRestart(key = selected) {
+    // 連續選擇排隊依序跑;busy 鎖(select disabled)已擋大部分,這裡兜底序列化
+    switchChain = switchChain.then(() => doRestart(key));
+  }
+
+  async function doRestart(key: string) {
+    if (!key) return;
     busy = true;
     notice = "";
+    const wantBuf = bufSize;
     try {
       await engineCommand("stop");
       await engineCommand("start", {
         deviceKey: key,
         sampleRate: null,
-        bufferSize: bufSize,
+        bufferSize: wantBuf,
       });
+      lastGood = { key, buf: wantBuf };
       audioStale = false;
     } catch (e) {
-      audioStale = true;
+      // 新設定失敗:回滾到最後可工作設定(成功 = UI 回權威值 + 顯示原因)
       notice = String(e);
+      if (lastGood && (lastGood.key !== key || lastGood.buf !== wantBuf)) {
+        try {
+          await engineCommand("stop");
+          await engineCommand("start", {
+            deviceKey: lastGood.key,
+            sampleRate: null,
+            bufferSize: lastGood.buf,
+          });
+          selected = lastGood.key; // UI 回到實際權威值
+          bufSize = lastGood.buf;
+          notice = `切換失敗,已恢復原裝置/Buffer — ${String(e)}`;
+          audioStale = false;
+        } catch (e2) {
+          audioStale = true;
+          notice = `切換與回滾都失敗,音訊已停止 — ${String(e2)}`;
+        }
+      } else {
+        audioStale = true;
+      }
     }
     busy = false;
   }
@@ -236,10 +382,38 @@
     try {
       await engineCommand("stop");
       audioStale = false; // 主動停 = 預期不跑,警示該滅
+      lastGood = null; // 使用者主動停:沒有「最後可工作」可回滾
     } catch (e) {
       notice = String(e);
     }
     busy = false;
+  }
+
+  // ---- E:背景掃描 job(共用 registry;回覆立即回 jobId,進度走 events)----
+
+  async function startScan() {
+    if (scanRunning) return;
+    scanNotice = "";
+    try {
+      const r = await engineCommand("start_scan", {});
+      scanJobId = r.jobId as number;
+      if (!r.reused) {
+        scanModules = [];
+        scanFailed = [];
+      }
+      scanRunning = true;
+      scanProgress = null;
+    } catch (e) {
+      scanNotice = String(e);
+    }
+  }
+
+  async function cancelScan() {
+    try {
+      await engineCommand("cancel_scan", {});
+    } catch (e) {
+      scanNotice = String(e);
+    }
   }
 
   // ---------- 軌道新增 ----------
@@ -332,12 +506,13 @@
         filters: [{ name: "RoudaMix Session", extensions: ["rmsession"] }],
       });
       if (!path) return;
-      await engineCommand("save_session", {
+      const r = await engineCommand("save_session", {
         path,
         deviceKey: selected || null,
         sampleRate: status?.running ? Math.round(status.sampleRate) : null,
         bufferSize: status?.running ? status.bufferSize : bufSize,
       });
+      if (typeof r.revision === "number") cleanRevision = r.revision; // 存成功才清 dirty
       rememberLastSession(path);
       notice = "";
       restoreError = ""; // 手動救回 = 啟動失敗警示該滅
@@ -348,6 +523,8 @@
 
   // session 載入後套裝置 + 自動啟用(率跟 driver 現行值);跑著時 = 重建到 session 裝置
   function applyLoadedSession(r: Record<string, unknown>) {
+    if (typeof r.revision === "number") cleanRevision = r.revision; // 載成功才清 dirty
+    missing = (r.missing as MissingPlugin[]) ?? [];
     const dk = r.deviceKey as string | null;
     if (dk && devices.some((d) => d.deviceKey === dk)) {
       selected = dk;
@@ -356,12 +533,23 @@
       const dev = devices.find((d) => d.deviceKey === dk);
       if (sb && dev?.bufferSizes?.includes(sb)) bufSize = sb;
       else if (dev) applyDeviceDefaults(dev);
-      if (status?.running) restartWith(dk);
+      if (status?.running) queueRestart(dk);
       else start(dk);
     }
   }
 
   async function loadSession() {
+    // dirty 先問(儲存/捨棄/取消):取消 = 真的不載;存失敗 = 不覆蓋現況
+    if (dirty) {
+      const choice = await askDirty();
+      const plan = resolveDirtyChoice(dirty, choice);
+      if (plan.shouldSave) {
+        const okSave = await saveSessionForClose();
+        if (!okSave) return;
+      } else if (!plan.proceed) {
+        return; // cancel
+      }
+    }
     try {
       const path = await open({
         title: "載入 Session",
@@ -441,6 +629,19 @@
       >Session 恢復失敗,已開空白 — 詳情見設定</button
     >
   {/if}
+  {#if missing.length > 0}
+    <button
+      class="err aslink"
+      onclick={() => (missing = [])}
+      title={missing
+        .map((m) => `${m.trackName}[${m.index}] ${m.name || m.pluginPath}:${m.message}`)
+        .join("\n")}
+      >⚠ {missing.length} 個 plugin 無法載入(已保留 placeholder)— 點此收起</button
+    >
+  {/if}
+  {#if dirty}
+    <span class="dim" title="有未儲存的變更">● 未儲存</span>
+  {/if}
   <span style="flex:1"></span>
   {#if running}
     <span class="dot ok"></span>
@@ -487,6 +688,13 @@
             {devices}
             selectedDeviceKey={selected}
             strips={meters?.strips}
+            scanModules={scanModules}
+            scanFailed={scanFailed}
+            scanRunning={scanRunning}
+            scanProgress={scanProgress}
+            scanNotice={scanNotice}
+            onScan={startScan}
+            onCancelScan={cancelScan}
             dropBefore={dropAt?.group === "input" && dropAt.pos === i}
             dropAfter={dropAt?.group === "input" && dropAt.pos === i + 1}
             dragging={drag?.id === t.trackId}
@@ -518,6 +726,13 @@
             {devices}
             selectedDeviceKey={selected}
             strips={meters?.strips}
+            scanModules={scanModules}
+            scanFailed={scanFailed}
+            scanRunning={scanRunning}
+            scanProgress={scanProgress}
+            scanNotice={scanNotice}
+            onScan={startScan}
+            onCancelScan={cancelScan}
             dropBefore={dropAt?.group === "output" && dropAt.pos === i}
             dropAfter={dropAt?.group === "output" && dropAt.pos === i + 1}
             dragging={drag?.id === t.trackId}
@@ -551,12 +766,12 @@
       <select
         id="setdev"
         bind:value={selected}
-        disabled={devices.length === 0}
+        disabled={devices.length === 0 || busy}
         onchange={(e) => {
           const d = devices.find((x) => x.deviceKey === e.currentTarget.value);
           if (d) {
             applyDeviceDefaults(d);
-            restartWith(d.deviceKey); // 即時切換:stop → start 新裝置
+            queueRestart(d.deviceKey); // 即時切換:stop → start 新裝置(失敗自動回滾)
           }
         }}
       >
@@ -566,16 +781,19 @@
           <option value="">(無 ASIO 裝置)</option>
         {/each}
       </select>
+      {#if busy}
+        <span class="dim">切換中…</span>
+      {/if}
     </div>
     <div class="formrow">
       <label class="formlabel" for="setbuf">Buffer</label>
       <select
         id="setbuf"
         value={bufSize ?? ""}
-        disabled={!selDev || selDev.bufferSizes.length === 0}
+        disabled={!selDev || selDev.bufferSizes.length === 0 || busy}
         onchange={(e) => {
           bufSize = Number(e.currentTarget.value);
-          restartWith();
+          queueRestart();
         }}
       >
         {#each selDev?.bufferSizes ?? [] as b (b)}
@@ -680,6 +898,16 @@
   {/if}
 </dialog>
 
+<!-- B:未儲存變更三分支。取消 = 不關窗/不載入;儲存失敗 = 視同取消(不得覆蓋) -->
+<dialog bind:this={dirtyDlg} class="dirtydlg">
+  <p class="dirtyq">有未儲存的變更 — 要先儲存嗎?</p>
+  <div class="dirtyrow">
+    <button class="primary" onclick={() => answerDirty("save")}>儲存</button>
+    <button class="danger" onclick={() => answerDirty("discard")}>捨棄變更</button>
+    <button onclick={() => answerDirty("cancel")}>取消</button>
+  </div>
+</dialog>
+
 <style>
   .bar {
     display: flex;
@@ -723,6 +951,37 @@
   }
   .settingsdlg::backdrop {
     background: rgb(0 0 0 / 0.5);
+  }
+  /* B:未儲存變更詢問(置中 modal,同 settingsdlg 手法) */
+  .dirtydlg {
+    background: var(--bg-panel);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 18px;
+    width: min(360px, 90vw);
+  }
+  .dirtydlg[open] {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    margin: 0;
+  }
+  .dirtydlg::backdrop {
+    background: rgb(0 0 0 / 0.5);
+  }
+  .dirtyq {
+    margin: 0;
+    font-size: 14px;
+  }
+  .dirtyrow {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
   }
   .settingsdlg h2 {
     font-size: 13px;

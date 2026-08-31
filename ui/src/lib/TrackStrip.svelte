@@ -5,6 +5,7 @@
   import MeterCanvas from "./MeterCanvas.svelte";
   import { powerOff, powerOn } from "./icons";
   import { mountDragGhost, removeDragGhost } from "./ghost";
+  import { open as openFile } from "@tauri-apps/plugin-dialog";
   import { engineCommand } from "./ipc";
   import { cssColor, parseColor, stripOfTrack } from "./tracks";
   import type {
@@ -13,6 +14,7 @@
     MeterStrip,
     RackSlot,
     RenderDevice,
+    ScanFailure,
     ScanModule,
     Track,
   } from "./types";
@@ -23,6 +25,14 @@
     devices,
     selectedDeviceKey,
     strips,
+    // 掃描 job 由 App 統一跑(共用 registry,所有軌同一份清單;進度/取消也在 App)
+    scanModules = [],
+    scanFailed = [],
+    scanRunning = false,
+    scanProgress = null,
+    scanNotice = "",
+    onScan,
+    onCancelScan,
     dropBefore = false,
     dropAfter = false,
     dragging = false,
@@ -32,20 +42,28 @@
     devices: DeviceInfo[];
     selectedDeviceKey: string;
     strips: MeterStrip[] | undefined;
+    scanModules?: ScanModule[];
+    scanFailed?: ScanFailure[];
+    scanRunning?: boolean;
+    scanProgress?: { done: number; total: number } | null;
+    scanNotice?: string;
+    onScan: () => void;
+    onCancelScan: () => void;
     dropBefore?: boolean;
     dropAfter?: boolean;
     dragging?: boolean;
   } = $props();
 
   let err = $state("");
-  // 掃描(各軌自含:開了才掃,清單不共用);列表開在主視窗置中 dialog
-  let scanning = $state(false);
-  let modules = $state<ScanModule[]>([]);
   let scanDlg = $state<HTMLDialogElement | null>(null);
   let destDlg = $state<HTMLDialogElement | null>(null);
   // app 程序清單 / WASAPI render 裝置清單(focus 時拉,保持常新)
   let apps = $state<AudioApp[]>([]);
   let renderDevices = $state<RenderDevice[]>([]);
+  // placeholder(missing/broken)槽:黯淡顯示 + 重試/重新定位/移除
+  const isPh = (s: RackSlot) => s.availability !== undefined && s.availability !== "ok";
+  const phLabel = (s: RackSlot) =>
+    s.availability === "missing" ? "遺失" : "載入失敗";
 
   const dev = $derived(devices.find((d) => d.deviceKey === selectedDeviceKey) ?? null);
   const isOutput = $derived(track.kind === "output");
@@ -372,25 +390,80 @@
     }
   }
 
-  async function scan() {
-    scanning = true;
+  // ---- placeholder 回收:重試載入(原路徑)/重新定位(挑新檔,同 instanceId 原位)----
+  async function retryPlugin(slot: RackSlot) {
     err = "";
     try {
-      const r = await engineCommand("scan_plugins", {});
-      modules = (r.plugins as ScanModule[]) ?? [];
-      scanDlg?.showModal(); // 掃完彈出置中列表(0 個也開,顯示「找不到」)
+      await engineCommand("retry_plugin", { instanceId: slot.instanceId });
     } catch (e) {
       err = String(e);
     }
-    scanning = false;
+  }
+  async function relocatePlugin(slot: RackSlot) {
+    err = "";
+    try {
+      const p = await openFile({
+        title: "重新定位 plugin",
+        multiple: false,
+        directory: false,
+        filters: [{ name: "VST3", extensions: ["vst3"] }],
+      });
+      if (!p) return;
+      await engineCommand("retry_plugin", { instanceId: slot.instanceId, path: p });
+    } catch (e) {
+      err = String(e);
+    }
+  }
+
+  // VST box 高度:預設自適應內容,拖底部把手拉長;雙擊把手還原自適應。
+  // 拉過的高度存 localStorage(key 綁 trackId;session 還原同序 → id 穩定),重開保持
+  let vstBox = $state<HTMLDivElement | null>(null);
+  // trackId 在此元件生命週期不變(App 以 trackId 為 key each),取初始值即可
+  // svelte-ignore state_referenced_locally
+  const hKey = `rmix.vsth.${track.trackId}`;
+  function readH(): number | null {
+    try {
+      const v = Number(localStorage.getItem(hKey));
+      return Number.isFinite(v) && v >= 72 ? v : null;
+    } catch {
+      return null;
+    }
+  }
+  let boxH = $state<number | null>(readH());
+
+  function onGripDown(e: PointerEvent) {
+    const box = vstBox;
+    const col = box?.parentElement;
+    if (!box || !col) return;
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = box.offsetHeight;
+    const move = (ev: PointerEvent) => {
+      const max = col.clientHeight - 12; // 扣把手 + 間隙
+      boxH = Math.max(72, Math.min(startH + ev.clientY - startY, max));
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      try {
+        if (boxH !== null) localStorage.setItem(hKey, String(boxH));
+      } catch {} // 隱私模式等存不了就算了,下次自適應
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }
+  function onGripDbl() {
+    boxH = null;
+    try {
+      localStorage.removeItem(hKey);
+    } catch {}
   }
 
   async function addPlugin(path: string, classId: string) {
     err = "";
     try {
       await engineCommand("add_plugin", { trackId: track.trackId, path, classId });
-      modules = [];
-      scanDlg?.close();
+      scanDlg?.close(); // registry 共用,不清(別條軌直接用)
     } catch (e) {
       err = String(e);
     }
@@ -433,7 +506,16 @@
     {/if}
     <span class="badge">{track.kind}</span>
     <span style="flex:1"></span>
-    <button class="mini danger" onclick={removeTrack} title="刪除軌道">×</button>
+    {#if track.systemRole}
+      <!-- 系統輸出:每 session 恰好一條 monitor/stream,不可刪(engine 也擋) -->
+      <span
+        class="sysbadge"
+        title="系統輸出({track.systemRole === "monitor" ? "監聽" : "串流"}):可改名、改輸出裝置與路由,但不可刪除"
+        >系統</span
+      >
+    {:else}
+      <button class="mini danger" onclick={removeTrack} title="刪除軌道">×</button>
+    {/if}
   </div>
 
   <div class="row">
@@ -506,58 +588,130 @@
 
   <div class="lower">
   <div class="vstcol">
-  <details class="vst">
-    <summary>VST ({track.plugins.length})</summary>
-    {#each track.plugins as s, i (s.instanceId)}
-      <div
-        class="plug"
-        draggable="true"
-        class:dragging={plugDrag === s.instanceId}
-        class:dropbefore={plugDropAt === i}
-        class:dropafter={plugDropAt === i + 1 && plugDropAt === track.plugins.length}
-        ondragstart={(e) => onPlugDragStart(e, s)}
-        ondragover={(e) => onPlugDragOver(e, i)}
-        ondrop={onPlugDrop}
-        ondragend={onPlugDragEnd}
-        title="拖曳上下排序"
-      >
+  <div class="vst" bind:this={vstBox} style={boxH !== null ? `flex:0 0 auto; height:${boxH}px` : ""}>
+    <div class="vsthead">
+      <span>插入 VST ({track.plugins.length})</span>
+    </div>
+    <div class="vstlist">
+      {#each track.plugins as s, i (s.instanceId)}
+        <div
+          class="plug"
+          class:placeholder={isPh(s)}
+          draggable="true"
+          class:dragging={plugDrag === s.instanceId}
+          class:dropbefore={plugDropAt === i}
+          class:dropafter={plugDropAt === i + 1 && plugDropAt === track.plugins.length}
+          ondragstart={(e) => onPlugDragStart(e, s)}
+          ondragover={(e) => onPlugDragOver(e, i)}
+          ondrop={onPlugDrop}
+          ondragend={onPlugDragEnd}
+          title={isPh(s) ? undefined : "拖曳上下排序"}
+        >
+          {#if isPh(s)}
+            <!-- missing/broken:原鏈位保留,不參與 DSP;提供重試/重新定位/移除 -->
+            <span class="phmark" title={s.loadError ?? ""}>⚠</span>
+            <span
+              class="plugname phname"
+              title={`${s.pluginPath}\n${s.loadError ?? ""}`}
+            >
+              <span class="phwhy">{phLabel(s)}</span>
+              {s.name || basename(s.pluginPath)}
+              {#if s.loadError}<span class="pherr">{s.loadError}</span>{/if}
+            </span>
+            <button class="mini" onclick={() => retryPlugin(s)} title="重試載入(原路徑)"
+              >重試</button
+            >
+            <button class="mini" onclick={() => relocatePlugin(s)} title="重新定位 plugin 檔"
+              >定位</button
+            >
+            <button class="mini danger" onclick={() => removePlugin(s.instanceId)} title="移除"
+              >×</button
+            >
+          {:else}
+            <button
+              class="mini power"
+              class:off={s.bypassed}
+              onclick={() => bypass(s)}
+              title={s.bypassed ? "Bypassed(點此啟用)" : "啟用中(點此 Bypass)"}
+            >
+              <img class="picon" src={s.bypassed ? powerOff : powerOn} alt="" draggable="false" />
+            </button>
+            <span
+              class="plugname"
+              title="雙擊開啟 plugin 原生 GUI"
+              ondblclick={() => openEditor(s)}
+              >{s.name}</span
+            >
+            <button
+              class="mini danger"
+              onclick={() => removePlugin(s.instanceId)}
+              title="移除">×</button
+            >
+          {/if}
+        </div>
+      {:else}
+        <span class="dim">無插件</span>
+      {/each}
+    </div>
+    <div class="vstfoot">
+      {#if !scanRunning}
         <button
-          class="mini power"
-          class:off={s.bypassed}
-          onclick={() => bypass(s)}
-          title={s.bypassed ? "Bypassed(點此啟用)" : "啟用中(點此 Bypass)"}
+          class="mini add"
+          onclick={() => {
+            onScan();
+            scanDlg?.showModal();
+          }}
+          title="開 plugin picker(用共用清單;背景掃描可在清單裡重掃)"
+          >＋ 掃描加入</button
         >
-          <img class="picon" src={s.bypassed ? powerOff : powerOn} alt="" draggable="false" />
-        </button>
-        <span class="plugname" title="雙擊開啟 plugin 原生 GUI" ondblclick={() => openEditor(s)}
-          >{s.name}</span
+      {:else}
+        <button
+          class="mini add"
+          onclick={() => {
+            onScan();
+            scanDlg?.showModal();
+          }}
+          >掃描中…(開清單)</button
         >
-        <button class="mini danger" onclick={() => removePlugin(s.instanceId)} title="移除">×</button>
-      </div>
-    {:else}
-      <span class="dim">無插件</span>
-    {/each}
-    {#if !scanning}
-      <span class="scanrow">
-        <button class="mini add" onclick={scan}>＋ 掃描加入</button>
-      </span>
-    {:else}
-      <span class="dim">掃描中…</span>
-    {/if}
-  </details>
+      {/if}
+    </div>
+  </div>
+  <div
+    class="vstgrip"
+    onpointerdown={onGripDown}
+    ondblclick={onGripDbl}
+    title="拖曳調整高度 · 雙擊還原"
+  ></div>
   </div>
 
-  <dialog bind:this={scanDlg} class="scanlistdlg" onclose={() => (modules = [])}>
+  <dialog bind:this={scanDlg} class="scanlistdlg">
     <div class="cardhead">
       <span>VST 插件列表 — 加入「{track.name}」</span>
       <span style="flex:1"></span>
+      {#if !scanRunning}
+        <button class="mini" onclick={onScan} title="重新掃描預設 VST3 目錄(背景 job)"
+          >重新掃描</button
+        >
+      {/if}
       <button onclick={() => scanDlg?.close()} title="關閉(不加入)">×</button>
     </div>
-    {#if modules.length === 0}
-      <p class="dim">找不到 VST3</p>
+    {#if scanRunning}
+      <div class="scanlive">
+        <span class="dim"
+          >掃描中{scanProgress
+            ? ` ${scanProgress.done}/${scanProgress.total}`
+            : "…"}(背景執行,不擋操作)</span
+        >
+        <button class="mini" onclick={onCancelScan}>取消</button>
+      </div>
+    {:else if scanNotice}
+      <p class="err mono">{scanNotice}</p>
+    {/if}
+    {#if scanModules.length === 0 && !scanRunning}
+      <p class="dim">找不到 VST3 — 按「重新掃描」</p>
     {:else}
       <div class="scanlist">
-        {#each modules as m (m.path)}
+        {#each scanModules as m (m.path)}
           <div class="mod">
             <div class="modpath mono" title={m.path}>{basename(m.path)}</div>
             <div class="classes">
@@ -573,6 +727,14 @@
           </div>
         {/each}
       </div>
+      {#if scanFailed.length > 0}
+        <details class="quarantine">
+          <summary class="dim">無法載入({scanFailed.length})— 已隔離</summary>
+          {#each scanFailed as f (f.path)}
+            <div class="modpath mono" title={f.error}>{basename(f.path)}:{f.error}</div>
+          {/each}
+        </details>
+      {/if}
     {/if}
   </dialog>
 
@@ -723,17 +885,6 @@
     font-size: 12px;
     flex-shrink: 0;
   }
-  details {
-    font-size: 12px;
-  }
-  summary {
-    cursor: pointer;
-    color: var(--text-dim);
-    user-select: none;
-  }
-  summary:hover {
-    color: var(--text);
-  }
   .dest {
     display: flex;
     align-items: center;
@@ -745,17 +896,130 @@
     border-radius: 50%;
     flex-shrink: 0;
   }
+  /* VST 常駐 box:預設自適應內容(超出即內捲),拖底部把手可拉長 */
   .vst {
+    flex: 0 1 auto;
+    min-height: 72px;
+    max-height: 100%;
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    font-size: 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .vsthead {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    color: var(--text-dim);
+    background: var(--bg-raised);
+    border-bottom: 1px solid var(--border);
+    user-select: none;
+  }
+  .vstlist {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .vstfoot {
+    flex: none;
+    display: flex;
+    padding: 4px 6px;
+    border-top: 1px solid var(--border);
+  }
+  /* 底部高度把手 */
+  .vstgrip {
+    flex: none;
+    position: relative;
+    height: 7px;
+    border-radius: 4px;
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    cursor: ns-resize;
+    user-select: none;
+    touch-action: none;
+  }
+  .vstgrip::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 28px;
+    height: 2px;
+    transform: translate(-50%, -50%);
+    border-radius: 1px;
+    background: var(--border);
+  }
+  .vstgrip:hover {
+    border-color: var(--accent);
+  }
+  .vstgrip:hover::after {
+    background: var(--accent);
   }
   .plug {
     display: flex;
     align-items: center;
     gap: 4px;
-    padding-left: 10px;
+    padding: 1px 4px;
     border-radius: 4px;
+  }
+  /* placeholder(missing/broken):整列黯淡、警示色標記,功能按鈕照常 */
+  .plug.placeholder {
+    opacity: 0.55;
+    background: color-mix(in srgb, var(--warn) 8%, transparent);
+    border-left: 2px solid var(--warn);
+  }
+  .phmark {
+    color: var(--warn);
+    flex-shrink: 0;
+    font-size: 11px;
+  }
+  .phname {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+  .phwhy {
+    color: var(--warn);
+    font-size: 10px;
+    font-weight: 700;
+  }
+  .pherr {
+    color: var(--text-dim);
+    font-size: 10px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .sysbadge {
+    font-size: 10px;
+    color: var(--text-dim);
+    border: 1px dashed var(--border);
+    border-radius: 4px;
+    padding: 0 5px;
+    flex-shrink: 0;
+  }
+  .scanlive {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .quarantine {
+    font-size: 11px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .quarantine summary {
+    cursor: pointer;
   }
   .plug.dragging {
     opacity: 0.35;
@@ -828,11 +1092,7 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-  }
-  .vstcol .vst {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
+    gap: 2px;
   }
   /* 垂直 fader(窄)+ 垂直錶;M / 推桿 / % 同一欄直排 */
   .fader {
@@ -973,11 +1233,6 @@
     gap: 4px;
   }
   .add {
-    align-self: flex-start;
-  }
-  .scanrow {
-    display: flex;
-    gap: 4px;
     align-self: flex-start;
   }
   .dim {

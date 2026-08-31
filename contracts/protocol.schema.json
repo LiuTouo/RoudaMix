@@ -89,6 +89,7 @@
       "properties": {
         "trackId": { "$ref": "#/$defs/u32" },
         "kind": { "enum": ["audio", "app", "fx", "output"] },
+        "systemRole": { "enum": ["monitor", "stream", null] },
         "name": { "type": "string" },
         "color": { "$ref": "#/$defs/u32" },
         "source": { "$ref": "#/$defs/trackSource" },
@@ -114,6 +115,7 @@
         "xruns": { "$ref": "#/$defs/u64" },
         "trackCount": { "$ref": "#/$defs/u32" },
         "pluginFails": { "$ref": "#/$defs/u32" },
+        "revision": { "$ref": "#/$defs/u64" },
         "tracks": { "type": "array", "items": { "$ref": "#/$defs/track" } },
         "error": { "type": ["string", "null"] }
       }
@@ -138,7 +140,9 @@
         "instanceId": { "$ref": "#/$defs/u32" },
         "name": { "type": "string" },
         "pluginPath": { "type": "string" },
-        "bypassed": { "type": "boolean" }
+        "bypassed": { "type": "boolean" },
+        "availability": { "enum": ["ok", "missing", "loadFailed"] },
+        "loadError": { "type": ["string", "null"] }
       }
     },
 
@@ -154,6 +158,36 @@
       }
     },
 
+    "pluginClass": {
+      "type": "object",
+      "required": ["uid", "name", "vendor", "version", "subcategories"],
+      "properties": {
+        "uid": { "type": "string" },
+        "name": { "type": "string" },
+        "vendor": { "type": "string" },
+        "version": { "type": "string" },
+        "subcategories": { "type": "string" }
+      }
+    },
+
+    "scanModule": {
+      "type": "object",
+      "required": ["path", "classes"],
+      "properties": {
+        "path": { "type": "string" },
+        "classes": { "type": "array", "items": { "$ref": "#/$defs/pluginClass" } }
+      }
+    },
+
+    "scanFailure": {
+      "type": "object",
+      "required": ["path", "error"],
+      "properties": {
+        "path": { "type": "string" },
+        "error": { "type": "string" }
+      }
+    },
+
     "snapshot": {
       "type": "object",
       "required": ["epoch", "engineVersion", "status", "tracks", "lastScan"],
@@ -165,7 +199,7 @@
         "lastScan": {
           "oneOf": [
             { "type": "null" },
-            { "type": "array", "items": { "$ref": "#/$defs/pluginInfo" } }
+            { "type": "array", "items": { "$ref": "#/$defs/scanModule" } }
           ]
         }
       }
@@ -399,11 +433,48 @@
           "properties": {
             "protocolVersion": { "const": 2 },
             "id": { "$ref": "#/$defs/u64" },
-            "kind": { "const": "scan_plugins" },
+            "kind": { "const": "start_scan" },
             "payload": {
               "type": "object",
               "properties": { "roots": { "type": "array", "items": { "type": "string" } } }
             }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["protocolVersion", "id", "kind", "payload"],
+          "properties": {
+            "protocolVersion": { "const": 2 },
+            "id": { "$ref": "#/$defs/u64" },
+            "kind": { "const": "cancel_scan" },
+            "payload": { "type": "object" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["protocolVersion", "id", "kind", "payload"],
+          "properties": {
+            "protocolVersion": { "const": 2 },
+            "id": { "$ref": "#/$defs/u64" },
+            "kind": { "const": "retry_plugin" },
+            "payload": {
+              "type": "object",
+              "required": ["instanceId"],
+              "properties": {
+                "instanceId": { "$ref": "#/$defs/u32" },
+                "path": { "type": "string" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["protocolVersion", "id", "kind", "payload"],
+          "properties": {
+            "protocolVersion": { "const": 2 },
+            "id": { "$ref": "#/$defs/u64" },
+            "kind": { "const": "ensure_system_outputs" },
+            "payload": { "type": "object" }
           }
         },
         {
@@ -662,15 +733,59 @@
           "type": "object",
           "required": ["kind", "payload"],
           "properties": {
+            "kind": { "const": "scan_progress" },
+            "payload": {
+              "type": "object",
+              "required": ["jobId", "done", "total", "root"],
+              "properties": {
+                "jobId": { "$ref": "#/$defs/u64" },
+                "done": { "$ref": "#/$defs/u32" },
+                "total": { "$ref": "#/$defs/u32" },
+                "root": { "type": "string" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "payload"],
+          "properties": {
             "kind": { "const": "scan_done" },
             "payload": {
               "type": "object",
-              "required": ["scanId", "plugins", "failed"],
+              "required": ["jobId", "plugins", "failed"],
               "properties": {
-                "scanId": { "$ref": "#/$defs/u32" },
-                "plugins": { "type": "array", "items": { "$ref": "#/$defs/pluginInfo" } },
-                "failed": { "type": "array", "items": { "type": "string" } }
+                "jobId": { "$ref": "#/$defs/u64" },
+                "plugins": { "type": "array", "items": { "$ref": "#/$defs/scanModule" } },
+                "failed": { "type": "array", "items": { "$ref": "#/$defs/scanFailure" } }
               }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "payload"],
+          "properties": {
+            "kind": { "const": "scan_failed" },
+            "payload": {
+              "type": "object",
+              "required": ["jobId", "error"],
+              "properties": {
+                "jobId": { "$ref": "#/$defs/u64" },
+                "error": { "type": "string" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "payload"],
+          "properties": {
+            "kind": { "const": "scan_cancelled" },
+            "payload": {
+              "type": "object",
+              "required": ["jobId"],
+              "properties": { "jobId": { "$ref": "#/$defs/u64" } }
             }
           }
         },

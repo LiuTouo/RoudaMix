@@ -1,0 +1,1 @@
+{"kind": "scan_done", "payload": {"jobId": 1, "plugins": [{"path": "C:\\Program Files\\Common Files\\VST3\\LoudMax.vst3", "classes": [{"uid": "ABCD", "name": "LoudMax", "vendor": "Loudmax", "version": "1.0", "subcategories": "Fx|Limiter"}]}], "failed": [{"path": "C:\\VST\\Bad.vst3", "error": "load failed: boom"}]}}

@@ -50,4 +50,72 @@ bool graph_has_cycle(const std::vector<TrackNode>& nodes) {
     return nodes.empty() ? false : graph_topo_order(nodes).empty();
 }
 
+void asio_channel_union(const std::vector<TrackNode>& tracks,
+                        std::vector<std::uint32_t>& in_chans,
+                        std::vector<std::uint32_t>& out_chans) {
+    in_chans.clear();
+    out_chans.clear();
+    for (const auto& t : tracks) {
+        if (t.source.type == TrackSource::kAsioIn) {
+            in_chans.push_back(t.source.asio_in_ch);
+            in_chans.push_back(t.source.asio_in_ch + 1);
+        }
+        if (t.output.type == TrackOutput::kAsioOut) {
+            out_chans.push_back(t.output.asio_out_ch);
+            out_chans.push_back(t.output.asio_out_ch + 1);
+        }
+    }
+    std::sort(in_chans.begin(), in_chans.end());
+    in_chans.erase(std::unique(in_chans.begin(), in_chans.end()), in_chans.end());
+    std::sort(out_chans.begin(), out_chans.end());
+    out_chans.erase(std::unique(out_chans.begin(), out_chans.end()), out_chans.end());
+    if (out_chans.empty()) out_chans = {0, 1};
+}
+
+bool ensure_system_outputs(std::vector<TrackNode>& tracks, std::uint32_t& next_track_id) {
+    bool changed = false;
+    // 每 role:持有者 >1 = 第一個以外降級;0 = 指派無 role 的 output 軌,再不行新建
+    for (const auto role : {SystemRole::kMonitor, SystemRole::kStream}) {
+        std::size_t holder = tracks.size();
+        std::size_t seen = 0;
+        for (std::size_t i = 0; i < tracks.size(); ++i) {
+            if (tracks[i].system_role != role) continue;
+            if (seen == 0) {
+                holder = i;
+            } else {
+                tracks[i].system_role = SystemRole::kNone;  // 重複 role:留第一個
+                changed = true;
+            }
+            ++seen;
+        }
+        if (seen > 0) continue;
+        for (std::size_t i = 0; i < tracks.size(); ++i) {
+            if (tracks[i].kind != TrackKind::kOutput || tracks[i].system_role != SystemRole::kNone)
+                continue;
+            tracks[i].system_role = role;
+            holder = i;
+            changed = true;
+            break;
+        }
+        if (holder < tracks.size()) continue;
+        // 沒得指派:新建(monitor 帶預設 ASIO 主輸出 pair 0;stream 無 sink)
+        TrackNode t;
+        t.kind = TrackKind::kOutput;
+        t.system_role = role;
+        t.track_id = next_track_id++;
+        t.name = role == SystemRole::kMonitor ? "監聽" : "串流";
+        static constexpr std::uint32_t kPalette[] = {0x4da3ff, 0x3ddc84, 0xffb454, 0xff5c5c,
+                                                     0xb48cff, 0x4dd0e1, 0xf06292, 0xaed581};
+        t.color = kPalette[(t.track_id - 1) % 8];
+        t.buf = std::make_shared<TrackRt>();
+        if (role == SystemRole::kMonitor) {
+            t.output.type = TrackOutput::kAsioOut;
+            t.output.asio_out_ch = 0;
+        }
+        tracks.push_back(std::move(t));
+        changed = true;
+    }
+    return changed;
+}
+
 }  // namespace rmx

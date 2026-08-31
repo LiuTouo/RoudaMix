@@ -111,9 +111,11 @@ pub const COMMAND_KINDS: &[&str] = &[
     "start", "stop", "open_device_panel",
     "track_add", "track_remove", "track_set", "track_set_source", "track_set_dests",
     "track_set_output", "track_move",
-    "scan_plugins", "add_plugin", "remove_plugin", "move_plugin", "set_bypass", "set_param",
-    "get_params", "open_editor", "close_editor", "save_preset", "load_preset",
-    "save_session", "load_session", "shutdown_engine", "set_editor_owner",
+    "start_scan", "cancel_scan", "add_plugin", "remove_plugin", "move_plugin", "set_bypass",
+    "retry_plugin", "set_param", "get_params", "open_editor", "close_editor", "save_preset",
+    "load_preset",
+    "save_session", "load_session", "ensure_system_outputs", "shutdown_engine",
+    "set_editor_owner",
 ];
 
 fn validate_command_payload(c: &CommandEnvelope) -> Result<(), ProtocolError> {
@@ -220,17 +222,24 @@ fn validate_command_payload(c: &CommandEnvelope) -> Result<(), ProtocolError> {
                 _ => Err(err("payload.output must be null or object")),
             }
         }
-        "scan_plugins" => match p.get("roots") {
+        "start_scan" => match p.get("roots") {
             None => Ok(()),
             Some(V::Array(a)) if a.iter().all(|v| v.is_string()) => Ok(()),
             _ => Err(err("payload.roots must be string[] when present")),
         },
+        "cancel_scan" | "ensure_system_outputs" => {
+            if p.is_empty() { Ok(()) } else { Err(err("payload must be empty object")) }
+        }
         "add_plugin" => {
             u32_field(p, "trackId")?;
             s("path")
         }
-        "remove_plugin" | "get_params" | "open_editor" | "close_editor" => {
-            u32_field(p, "instanceId")
+        "remove_plugin" | "get_params" | "open_editor" | "close_editor" | "retry_plugin" => {
+            u32_field(p, "instanceId")?;
+            match p.get("path") {
+                None | Some(V::String(_)) => Ok(()),
+                _ => Err(err("payload.path must be string when present")),
+            }
         }
         "move_plugin" => {
             u32_field(p, "instanceId")?;
@@ -307,7 +316,10 @@ fn known_event_kind(k: &str) -> bool {
     [
         "snapshot",
         "status",
+        "scan_progress",
         "scan_done",
+        "scan_failed",
+        "scan_cancelled",
         "rack_changed",
         "plugin_event",
         "devices_changed",

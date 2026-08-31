@@ -6,6 +6,7 @@
 #include <filesystem>
 
 #include "audio_engine.hpp"
+#include "sandbox.hpp"
 #include "session.hpp"
 
 #define CHECK(x)                                                              \
@@ -74,7 +75,8 @@ int main() {
         CHECK(e.track_set(a, std::nullopt, std::nullopt, 1.0F, false, err3));
         nlohmann::json applied;
         CHECK(rmx::session::load(e, file, applied, err));
-        CHECK(e.tracks().size() == 3);
+        // 3 條(存檔內容)+ 自動補回的 stream 系統輸出 = 4
+        CHECK(e.tracks().size() == 4);
         // 新 id != 舊 id,但 dests 鏈已重接;找 kind 對應驗
         const rmx::TrackNode* audio = nullptr;
         const rmx::TrackNode* fxt = nullptr;
@@ -126,23 +128,151 @@ int main() {
         nlohmann::json applied;
         std::string err;
         CHECK(!rmx::session::load(e, bad, applied, err));
-        // 拒載 = 狀態不動(第 2 案的 3 條軌還在)
-        CHECK(e.tracks().size() == 3);
+        // 拒載 = 狀態不動(第 2 案的 3+1 條軌還在)
+        CHECK(e.tracks().size() == 4);
     }
-    // 6. 壞 slot(不存在 module)略過、軌與路由不整體失敗
+    // 6. 壞 slot(不存在 module)= 原位置 placeholder:metadata/params 全存、
+    //    diagnostics 帶結構化資訊、軌與路由不整體失敗
     {
+        // fail-closed 的原因碼依測試環境:worker exe 在(與測試同目錄,實際試爆後
+        // module 載不動)= plugin_load_failed;worker 不在 = sandbox_unavailable
+        const bool has_worker = !rmx::sandbox::worker_path().empty();
+        const char* expect_code = has_worker ? "plugin_load_failed" : "sandbox_unavailable";
         const auto f2 = tmp / "miss.rmsession";
         write_text(f2,
                    R"({"roudamixSession":2,"tracks":[{"trackId":7,"kind":"audio","name":"Mic",)"
                    R"("color":255,"source":{"type":"sine","freq":440},"dests":[],"output":null,)"
-                   R"("gain":1,"mute":false,"plugins":[{"pluginPath":"C:\\nope\\x.vst3"}]}]})");
+                   R"("gain":1,"mute":false,"plugins":[{"pluginPath":"C:\\nope\\x.vst3",)"
+                   R"("classId":"ABCD","name":"XComp","bypassed":true,)"
+                   R"("params":[{"paramId":1,"normalized":0.75}]}]}]})");
         nlohmann::json applied;
         std::string err;
         CHECK(rmx::session::load(e, f2, applied, err));
-        CHECK(e.tracks().size() == 1);
-        CHECK(e.tracks()[0].chain.empty());  // plugin 沒載入,軌還在
+        // 1(Mic)+ 自動補回 monitor/stream 系統輸出 = 3
+        CHECK(e.tracks().size() == 3);
+        CHECK(e.tracks()[0].chain.size() == 1);  // placeholder 佔住原鏈位
+        const auto& slot = e.tracks()[0].chain[0];
+        CHECK(slot.is_placeholder());
+        CHECK(slot.plugin == nullptr);
+        CHECK(slot.name == "XComp");
+        CHECK(slot.module_path == "C:\\nope\\x.vst3");
+        CHECK(slot.class_id == "ABCD");
+        CHECK(slot.bypass);
+        CHECK(slot.param_values.size() == 1 && slot.param_values[0].first == 1 &&
+              slot.param_values[0].second == 0.75);
+        CHECK(slot.load_error.empty() == false);
+        // structured diagnostics:trackId(舊 id)/index/name/path/code
+        CHECK(applied["missing"].is_array() && applied["missing"].size() == 1);
+        const auto& m = applied["missing"][0];
+        CHECK(m["trackId"] == 7);
+        CHECK(m["index"] == 0);
+        CHECK(m["name"] == "XComp");
+        CHECK(m["pluginPath"] == "C:\\nope\\x.vst3");
+        CHECK(m["classId"] == "ABCD");
+        CHECK(m["message"].is_string());
+        CHECK(m["code"] == expect_code);
         CHECK(e.tracks()[0].name == "Mic");
         CHECK(e.tracks()[0].source.type == rmx::TrackSource::kSine);
+        // 系統輸出補回:placeholder 場景也必須有恰好一組
+        int monitors = 0, streams = 0;
+        for (const auto& t : e.tracks()) {
+            if (t.system_role == rmx::SystemRole::kMonitor) ++monitors;
+            if (t.system_role == rmx::SystemRole::kStream) ++streams;
+        }
+        CHECK(monitors == 1 && streams == 1);
+    }
+
+    // 6b. placeholder roundtrip:含 placeholder 的 session 存檔 → load,metadata
+    //     與 params/availability/loadError 原樣保留(重新儲存不得丟 placeholder)
+    {
+        std::string err;
+        CHECK(rmx::session::save(e, file, err));  // 上一步載入的 1 軌 + placeholder
+        const auto j = nlohmann::json::parse(read_text(file), nullptr, false);
+        CHECK(!j.is_discarded());
+        CHECK(j["tracks"][0]["plugins"][0]["availability"] == "loadFailed");
+        nlohmann::json applied;
+        CHECK(rmx::session::load(e, file, applied, err));
+        CHECK(e.tracks().size() == 3);  // Mic + monitor + stream(role 已寫進檔)
+        CHECK(e.tracks()[0].chain.size() == 1);
+        const auto& slot = e.tracks()[0].chain[0];
+        CHECK(slot.is_placeholder());
+        CHECK(slot.availability == rmx::RackSlot::Availability::kLoadFailed);
+        CHECK(slot.param_values.size() == 1 && slot.param_values[0].second == 0.75);
+        CHECK(slot.bypass);
+        CHECK(applied["missing"].size() == 1);
+        CHECK(applied["missing"][0]["code"] == "plugin_load_failed");
+    }
+
+    // 7. systemRole:檔案帶 role = 原樣;缺 role(舊 v2)= 確定性指派/補建;
+    //    重複 role = 留第一個;存檔寫出 role
+    {
+        // 7a. 舊 v2(無 systemRole)、兩條 output 軌 → 第一條 monitor、第二條 stream
+        const auto f3 = tmp / "legacy.rmsession";
+        write_text(f3,
+                   R"({"roudamixSession":2,"tracks":[)"
+                   R"({"trackId":1,"kind":"output","name":"Out1","color":1,"source":null,)"
+                   R"("dests":[],"output":null,"gain":1,"mute":false,"plugins":[]},)"
+                   R"({"trackId":2,"kind":"output","name":"Out2","color":2,"source":null,)"
+                   R"("dests":[],"output":null,"gain":1,"mute":false,"plugins":[]},)"
+                   R"({"trackId":3,"kind":"audio","name":"Mic","color":3,"source":null,)"
+                   R"("dests":[],"output":null,"gain":1,"mute":false,"plugins":[]}]})");
+        nlohmann::json applied;
+        std::string err;
+        CHECK(rmx::session::load(e, f3, applied, err));
+        CHECK(e.tracks().size() == 3);  // 不多建:兩條 output 軌剛好指派完
+        CHECK(e.tracks()[0].name == "Out1" &&
+              e.tracks()[0].system_role == rmx::SystemRole::kMonitor);
+        CHECK(e.tracks()[1].name == "Out2" &&
+              e.tracks()[1].system_role == rmx::SystemRole::kStream);
+        CHECK(e.tracks()[2].system_role == rmx::SystemRole::kNone);
+
+        // 7b. 重複 role:留第一個,第二個降級;缺 stream = 指派無 role 的 output 軌
+        const auto f4 = tmp / "dup.rmsession";
+        write_text(f4,
+                   R"({"roudamixSession":2,"tracks":[)"
+                   R"({"trackId":1,"kind":"output","name":"A","color":1,"source":null,)"
+                   R"("dests":[],"output":null,"gain":1,"mute":false,"plugins":[],)"
+                   R"("systemRole":"monitor"},)"
+                   R"({"trackId":2,"kind":"output","name":"B","color":2,"source":null,)"
+                   R"("dests":[],"output":null,"gain":1,"mute":false,"plugins":[],)"
+                   R"("systemRole":"monitor"},)"
+                   R"({"trackId":3,"kind":"audio","name":"C","color":3,"source":null,)"
+                   R"("dests":[],"output":null,"gain":1,"mute":false,"plugins":[]}]})");
+        CHECK(rmx::session::load(e, f4, applied, err));
+        // B 降級後被確定性指派成 stream(優先用現有軌,不新建)
+        CHECK(e.tracks().size() == 3);
+        int monitors = 0, streams = 0;
+        for (const auto& t : e.tracks()) {
+            if (t.system_role == rmx::SystemRole::kMonitor) ++monitors;
+            if (t.system_role == rmx::SystemRole::kStream) ++streams;
+        }
+        CHECK(monitors == 1 && streams == 1);
+        CHECK(e.tracks()[0].name == "A" &&
+              e.tracks()[0].system_role == rmx::SystemRole::kMonitor);
+        CHECK(e.tracks()[1].name == "B" &&
+              e.tracks()[1].system_role == rmx::SystemRole::kStream);  // 降級後轉任 stream
+
+        // 7c. 存檔寫出 role
+        CHECK(rmx::session::save(e, file, err));
+        const auto j = nlohmann::json::parse(read_text(file), nullptr, false);
+        CHECK(!j.is_discarded());
+        int with_role = 0;
+        for (const auto& t : j["tracks"]) if (!t["systemRole"].is_null()) ++with_role;
+        CHECK(with_role == 2);
+    }
+
+    // 8. 系統輸出不可刪(engine 端權威;UI 只是第一道防線)
+    {
+        std::string err;
+        const rmx::TrackNode* sys = nullptr;
+        for (const auto& t : e.tracks())
+            if (t.system_role == rmx::SystemRole::kMonitor) sys = &t;
+        CHECK(sys != nullptr);
+        CHECK(!e.track_remove(sys->track_id, err));
+        // 一般軌照刪
+        std::uint32_t plain = 0;
+        CHECK(e.track_add(rmx::TrackKind::kAudio, "Plain", 0, plain, err));
+        CHECK(e.track_remove(plain, err));
     }
 
     std::filesystem::remove_all(tmp);

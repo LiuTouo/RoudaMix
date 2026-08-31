@@ -4,10 +4,23 @@
 #include <cstdlib>
 #include <map>
 
+#include "sandbox.hpp"
+
 namespace rmx::session {
 
 namespace {
 constexpr int kSessionVersion = 2;
+
+// availability ↔ JSON:字串實作共用 rack.hpp availability_str;舊檔無此欄 = ok
+using rmx::availability_str;
+
+RackSlot::Availability availability_from(const nlohmann::json& j) {
+    if (!j.is_string()) return RackSlot::Availability::kOk;
+    const auto s = j.get<std::string>();
+    if (s == "missing") return RackSlot::Availability::kMissing;
+    if (s == "loadFailed") return RackSlot::Availability::kLoadFailed;
+    return RackSlot::Availability::kOk;
+}
 
 // ---- TrackSource/TrackOutput ↔ JSON(格式同 protocol §8)----
 
@@ -101,11 +114,17 @@ nlohmann::json serialize(const AudioEngine& engine) {
                 {"name", s.name},
                 {"bypassed", s.bypass},
                 {"params", params},
+                // placeholder 資訊:存了才不會「重新儲存把遺失 plugin 丟掉」
+                {"availability", availability_str(s.availability)},
+                {"loadError", s.load_error.empty() ? nlohmann::json(nullptr)
+                                                   : nlohmann::json(s.load_error)},
             });
         }
+        const char* role = system_role_str(t.system_role);
         tracks.push_back({
             {"trackId", t.track_id},
             {"kind", track_kind_str(t.kind)},
+            {"systemRole", role != nullptr ? nlohmann::json(role) : nlohmann::json(nullptr)},
             {"name", t.name},
             {"color", t.color},
             {"source", source_to_json(t.source)},
@@ -177,14 +196,13 @@ bool load(AudioEngine& engine, const std::filesystem::path& file, nlohmann::json
         return false;
     }
 
-    // 舊全軌清空(trackId/instanceId 不保留 — load 後全部重發)
-    while (!engine.tracks().empty()) {
-        std::string drop_err;
-        if (!engine.track_remove(engine.tracks().back().track_id, drop_err)) break;
-    }
+    // 舊全軌清空(trackId/instanceId 不保留 — load 後全部重發;含系統輸出軌,
+    // 載入後 ensure_system_outputs 會依檔案重建/補齊)
+    engine.clear_all_tracks();
 
     // 逐軌重建:track_add(新 id 依序重發)→ 屬性 → plugins → dests(map 重接)
     std::map<std::uint32_t, std::uint32_t> id_map;  // 舊 id → 新 id
+    nlohmann::json missing = nlohmann::json::array();  // structured diagnostics
     if (j.contains("tracks") && j["tracks"].is_array()) {
         for (const auto& st : j["tracks"]) {
             if (!st.is_object() || !st.contains("kind") || !st["kind"].is_string())
@@ -205,6 +223,14 @@ bool load(AudioEngine& engine, const std::filesystem::path& file, nlohmann::json
             if (!engine.track_add(kind, name, color, new_id, add_err)) continue;
             if (st.contains("trackId") && st["trackId"].is_number_unsigned())
                 id_map[st["trackId"].get<std::uint32_t>()] = new_id;
+            // systemRole:值不合法 = kNone(ensure_system_outputs 之後會補齊)
+            if (st.contains("systemRole") && st["systemRole"].is_string()) {
+                const auto rs = st["systemRole"].get<std::string>();
+                rmx::SystemRole role = rmx::SystemRole::kNone;
+                if (rs == "monitor") role = rmx::SystemRole::kMonitor;
+                else if (rs == "stream") role = rmx::SystemRole::kStream;
+                engine.set_track_system_role(new_id, role);
+            }
 
             std::string op_err, op_code;
             if (st.contains("source"))
@@ -218,34 +244,123 @@ bool load(AudioEngine& engine, const std::filesystem::path& file, nlohmann::json
                 (void)engine.track_set(new_id, std::nullopt, std::nullopt,
                                        st["gain"].get<float>(), st["mute"].get<bool>(), op_err);
 
-            // plugins:module 消失/載入失敗 = 略過該 plugin(軌還在)
+            // plugins:best-effort——module 消失/壞檔/worker 不在 = 原位置保留
+            // placeholder(metadata/params/bypass 全存),不參與 DSP;載入走與手動
+            // add_plugin 相同的 worker sandbox preflight,worker 不在 = fail closed
             if (st.contains("plugins") && st["plugins"].is_array()) {
+                std::size_t chain_index = 0;
                 for (const auto& sp : st["plugins"]) {
                     if (!sp.is_object() || !sp.contains("pluginPath") ||
                         !sp["pluginPath"].is_string())
                         continue;
-                    std::string class_id;
+                    const std::string path = sp["pluginPath"].get<std::string>();
+                    std::string class_id, plug_name;
                     if (sp.contains("classId") && sp["classId"].is_string())
                         class_id = sp["classId"].get<std::string>();
-                    std::uint32_t instance_id = 0;
-                    std::string add_pl_err;
-                    if (!engine.add_plugin(new_id, sp["pluginPath"].get<std::string>(), class_id,
-                                           instance_id, add_pl_err))
-                        continue;
-                    std::string pl_err;
-                    if (sp.contains("bypassed") && sp["bypassed"].is_boolean())
-                        engine.set_bypass(instance_id, sp["bypassed"].get<bool>(), pl_err);
+                    if (sp.contains("name") && sp["name"].is_string())
+                        plug_name = sp["name"].get<std::string>();
+                    const bool bypassed =
+                        sp.contains("bypassed") && sp["bypassed"].is_boolean()
+                            ? sp["bypassed"].get<bool>()
+                            : false;
+                    // params 先收好:載入成功要重放;失敗也要跟 placeholder 一起留
+                    std::vector<std::pair<std::uint32_t, double>> params;
                     if (sp.contains("params") && sp["params"].is_array()) {
                         for (const auto& p : sp["params"]) {
                             if (p.is_object() && p.contains("paramId") &&
                                 p.contains("normalized") && p["paramId"].is_number_unsigned() &&
                                 p["normalized"].is_number())
-                                engine.set_param(instance_id, p["paramId"].get<std::uint32_t>(),
-                                                 p["normalized"].get<double>(), pl_err);
+                                params.emplace_back(p["paramId"].get<std::uint32_t>(),
+                                                    p["normalized"].get<double>());
+                        }
+                    }
+                    const auto stored = availability_from(sp.contains("availability")
+                                                              ? sp["availability"]
+                                                              : nlohmann::json(nullptr));
+                    const std::string stored_err =
+                        sp.contains("loadError") && sp["loadError"].is_string()
+                            ? sp["loadError"].get<std::string>()
+                            : std::string();
+
+                    // missing 診斷記錄器(trackId 用檔案內舊 id,對使用者有意義)
+                    const auto old_tid =
+                        st.contains("trackId") && st["trackId"].is_number_unsigned()
+                            ? st["trackId"].get<std::uint32_t>()
+                            : 0u;
+                    auto note_missing = [&](const char* code, const std::string& message) {
+                        missing.push_back({
+                            {"trackId", old_tid},
+                            {"trackName", name},
+                            {"index", chain_index},
+                            {"name", plug_name},
+                            {"pluginPath", path},
+                            {"classId", class_id},
+                            {"code", code},
+                            {"message", message},
+                        });
+                    };
+
+                    if (stored != RackSlot::Availability::kOk) {
+                        // 已知 placeholder:原樣重建,不重新試爆(檔案記過原因);
+                        // 遺失清單也要列(對使用者來說它仍是壞的)
+                        note_missing(stored == RackSlot::Availability::kMissing
+                                         ? "plugin_missing"
+                                         : "plugin_load_failed",
+                                     stored_err.empty() ? "unavailable (from session file)"
+                                                        : stored_err);
+                        std::uint32_t instance_id = 0;
+                        std::string ph_err;
+                        (void)engine.add_placeholder_plugin(new_id, path, class_id, plug_name,
+                                                            bypassed, stored, stored_err, params,
+                                                            instance_id, ph_err);
+                        ++chain_index;
+                        continue;
+                    }
+
+                    std::uint32_t instance_id = 0;
+                    bool loaded = false;
+                    if (rmx::sandbox::worker_path().empty()) {
+                        note_missing("sandbox_unavailable",
+                                     "sandbox worker (roudamix-worker.exe) unavailable; "
+                                     "plugin kept as placeholder (fail closed)");
+                    } else {
+                        const auto st_now = engine.status();
+                        const double rate =
+                            st_now.running ? static_cast<double>(st_now.sample_rate) : 48000.0;
+                        const std::uint32_t block =
+                            st_now.running && st_now.buffer_size > 0 ? st_now.buffer_size : 512u;
+                        std::string verr;
+                        if (!rmx::sandbox::verify_module(path, class_id, rate, block, verr)) {
+                            note_missing("plugin_load_failed", verr);
+                        } else if (!engine.add_plugin(new_id, path, class_id, instance_id,
+                                                      verr)) {
+                            note_missing("plugin_load_failed", verr);
+                        } else {
+                            loaded = true;
+                        }
+                    }
+                    if (loaded) {
+                        std::string pl_err;
+                        if (bypassed) (void)engine.set_bypass(instance_id, true, pl_err);
+                        for (const auto& [pid, v] : params) {
+                            std::string perr;
+                            (void)engine.set_param(instance_id, pid, v, perr);
                         }
                         // set_param 只餵 RT;controller 也推,開 plugin GUI 才會顯示場景值
                         engine.sync_controller_params(instance_id);
+                    } else {
+                        // fail closed:placeholder 佔住原鏈位,metadata/params/bypass 全存
+                        std::uint32_t ph_id = 0;
+                        std::string ph_err;
+                        (void)engine.add_placeholder_plugin(
+                            new_id, path, class_id, plug_name, bypassed,
+                            RackSlot::Availability::kLoadFailed,
+                            missing.back().is_object() && missing.back().contains("message")
+                                ? missing.back()["message"].get<std::string>()
+                                : std::string("load failed"),
+                            params, ph_id, ph_err);
                     }
+                    ++chain_index;
                 }
             }
         }
@@ -268,6 +383,10 @@ bool load(AudioEngine& engine, const std::filesystem::path& file, nlohmann::json
             std::string d_err, d_code;
             (void)engine.track_set_dests(mine->second, std::move(dests), d_err, d_code);
         }
+
+        // 系統輸出(monitor/stream)唯一性 + 存在性:檔案缺 role(舊 v2)= 確定性
+        // 指派/補建;重複 role = 留第一個。engine 端保證,不靠 UI
+        (void)engine.ensure_system_outputs();
     }
 
     applied = nlohmann::json{
@@ -280,6 +399,7 @@ bool load(AudioEngine& engine, const std::filesystem::path& file, nlohmann::json
         {"bufferSize", j.contains("bufferSize") && j["bufferSize"].is_number_unsigned()
                            ? j["bufferSize"]
                            : nlohmann::json(nullptr)},
+        {"missing", std::move(missing)},
     };
     return true;
 }

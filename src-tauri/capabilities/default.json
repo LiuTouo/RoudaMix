@@ -3,5 +3,10 @@
   "identifier": "default",
   "description": "RoudaMix 主視窗能力",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:default"]
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    "core:window:allow-close",
+    "core:window:allow-destroy"
+  ]
 }
