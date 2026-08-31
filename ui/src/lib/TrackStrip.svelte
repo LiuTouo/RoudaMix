@@ -793,66 +793,72 @@
         >
           {#if isPh(s)}
             <!-- missing/broken:原鏈位保留,不參與 DSP;提供重試/重新定位/移除 -->
-            <span class="phmark" data-tooltip={`Plugin 載入失敗：${s.loadError ?? "原因未提供"}`}>⚠</span>
-            <span
-              class="plugname phname"
-              data-tooltip={`Plugin 檔案：\n${s.pluginPath}\n\n載入錯誤：${s.loadError ?? "原因未提供"}`}
-            >
-              <span class="phwhy">{phLabel(s)}</span>
-              {s.name || basename(s.pluginPath)}
-              {#if s.loadError}<span class="pherr">{s.loadError}</span>{/if}
-            </span>
-            <button
-              class="mini"
-              onclick={() => retryPlugin(s)}
-              data-tooltip="使用原始檔案路徑重新載入此 plugin。"
-              >重試</button
-            >
-            <button
-              class="mini"
-              onclick={() => relocatePlugin(s)}
-              data-tooltip="指定替代的 plugin 檔案，並嘗試恢復此插槽。"
-              >定位</button
-            >
-            <button
-              class="mini danger del"
-              onclick={() => removePlugin(s.instanceId)}
-              aria-label="移除 plugin {s.name}(會先確認)"
-              data-tooltip="從效果鏈移除此 plugin；執行前會要求確認。">×</button
-            >
+            <div class="plugtitle">
+              <span class="phmark" data-tooltip={`Plugin 載入失敗：${s.loadError ?? "原因未提供"}`}>⚠</span>
+              <span
+                class="plugname phname"
+                data-tooltip={`Plugin 檔案：\n${s.pluginPath}\n\n載入錯誤：${s.loadError ?? "原因未提供"}`}
+              >
+                <span class="phwhy">{phLabel(s)}</span>
+                {s.name || basename(s.pluginPath)}
+                {#if s.loadError}<span class="pherr">{s.loadError}</span>{/if}
+              </span>
+            </div>
+            <div class="plugactions placeholder-actions">
+              <button
+                class="mini"
+                onclick={() => retryPlugin(s)}
+                data-tooltip="使用原始檔案路徑重新載入此 plugin。"
+                >重試</button
+              >
+              <button
+                class="mini"
+                onclick={() => relocatePlugin(s)}
+                data-tooltip="指定替代的 plugin 檔案，並嘗試恢復此插槽。"
+                >定位</button
+              >
+              <button
+                class="mini plugicon danger del"
+                onclick={() => removePlugin(s.instanceId)}
+                aria-label="移除 plugin {s.name}(會先確認)"
+                data-tooltip="從效果鏈移除此 plugin；執行前會要求確認。">×</button
+              >
+            </div>
           {:else}
-            <button
-              class="mini power"
-              class:off={s.bypassed}
-              aria-pressed={!s.bypassed}
-              aria-label={s.bypassed ? `${s.name} bypass 中(點此啟用)` : `${s.name} 啟用中(點此 bypass)`}
-              onclick={() => bypass(s)}
-              data-tooltip={s.bypassed
-                ? "此 plugin 目前為 bypass；按下可恢復處理。"
-                : "此 plugin 目前正在處理音訊；按下可切換為 bypass。"}
-            >
-              <img class="picon" src={s.bypassed ? powerOff : powerOn} alt="" draggable="false" />
-            </button>
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <span
               class="plugname"
               data-tooltip="{s.name} — 雙擊開啟 plugin 操作介面。"
               ondblclick={() => openEditor(s)}>{s.name}</span
             >
-            <!-- P2-M:開啟 GUI 有明確按鈕(不靠雙擊名稱);常態不佔名稱寬度,
-                 hover/聚焦該列才出現(鍵盤 focus-within 同樣可達) -->
-            <button
-              class="mini gui"
-              onclick={() => openEditor(s)}
-              aria-label="開啟 {s.name} 的操作介面"
-              data-tooltip="開啟此 plugin 提供的原生操作介面（GUI）。">GUI</button
-            >
-            <button
-              class="mini danger del"
-              onclick={() => removePlugin(s.instanceId)}
-              aria-label="移除 plugin {s.name}(會先確認)"
-              data-tooltip="從效果鏈移除此 plugin；執行前會要求確認。">×</button
-            >
+            <div class="plugactions">
+              <button
+                class="mini plugicon power"
+                class:off={s.bypassed}
+                aria-pressed={!s.bypassed}
+                aria-label={s.bypassed ? `${s.name} bypass 中(點此啟用)` : `${s.name} 啟用中(點此 bypass)`}
+                onclick={() => bypass(s)}
+                data-tooltip={s.bypassed
+                  ? "此 plugin 目前為 bypass；按下可恢復處理。"
+                  : "此 plugin 目前正在處理音訊；按下可切換為 bypass。"}
+              >
+                <img class="picon" src={s.bypassed ? powerOff : powerOn} alt="" draggable="false" />
+              </button>
+              <!-- P2-M:開啟 GUI 有明確按鈕(不靠雙擊名稱);常態不佔名稱寬度,
+                   hover/聚焦該列才出現(鍵盤 focus-within 同樣可達) -->
+              <button
+                class="mini plugicon gui"
+                onclick={() => openEditor(s)}
+                aria-label="開啟 {s.name} 的操作介面"
+                data-tooltip="開啟此 plugin 提供的原生操作介面（GUI）。">GUI</button
+              >
+              <button
+                class="mini plugicon danger del"
+                onclick={() => removePlugin(s.instanceId)}
+                aria-label="移除 plugin {s.name}(會先確認)"
+                data-tooltip="從效果鏈移除此 plugin；執行前會要求確認。">×</button
+              >
+            </div>
           {/if}
         </div>
       {:else}
@@ -1232,10 +1238,29 @@
   }
   .plug {
     display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 1px;
+    padding: 3px 4px;
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+  .plugtitle {
+    display: flex;
+    align-items: flex-start;
+    min-width: 0;
+  }
+  .plugactions {
+    display: flex;
     align-items: center;
     gap: 4px;
-    padding: 1px 4px;
-    border-radius: 4px;
+    height: 22px;
+    line-height: 1;
+  }
+  .placeholder-actions {
+    height: auto;
+    min-height: 22px;
   }
   /* placeholder(missing/broken):整列黯淡、警示色標記,功能按鈕照常 */
   .plug.placeholder {
@@ -1299,7 +1324,24 @@
   .power {
     display: inline-flex;
     align-items: center;
-    padding: 2px 4px;
+    justify-content: center;
+  }
+  .plug .mini.plugicon {
+    width: 22px;
+    min-width: 22px;
+    height: 22px;
+    min-height: 22px;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+  }
+  .plug .mini.plugicon:hover {
+    opacity: 0.75;
+  }
+  .plug .mini.plugicon:focus-visible {
+    outline: 1px solid var(--accent);
+    outline-offset: -1px;
   }
   /* P2-M:GUI 鈕 hover/focus 該列才顯示 —— 常態不擠名稱寬度(雙擊名稱同效) */
   .plug .mini.gui {
@@ -1307,7 +1349,9 @@
   }
   .plug:hover .mini.gui,
   .plug:focus-within .mini.gui {
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
   .picon {
     width: 12px;
@@ -1316,13 +1360,14 @@
   }
   .plugname {
     color: var(--text);
-    padding: 2px 4px;
+    width: 100%;
+    padding: 0 2px;
     cursor: default;
     font-size: 12px;
+    line-height: 18px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    flex: 1;
     min-width: 0;
   }
   .plugname:hover {
