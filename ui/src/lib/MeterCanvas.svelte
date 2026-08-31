@@ -8,6 +8,13 @@
 
   let canvas: HTMLCanvasElement | undefined = $state();
 
+  const FLOOR_DB = -60;
+  const WARNING_DB = -6;
+  const NORMAL_COLOR = "#39c978";
+  const WARNING_COLOR = "#f0a33a";
+  const CLIP_COLOR = "#ef5350";
+  const TICK_COLOR = "#8a93a3";
+
   // prop → 非響應式槽(主 rAF effect 不依賴 strip,45Hz 更新不重啟 rAF 迴圈)
   let latest: MeterStrip | undefined;
   $effect(() => {
@@ -15,7 +22,14 @@
   });
 
   // 顯示端狀態(rAF 內更新,不進 $state — 60fps 不值得觸發響應式)
-  const disp = { peakL: 0, peakR: 0, rmsL: 0, rmsR: 0 };
+  const disp = {
+    peakL: FLOOR_DB,
+    peakR: FLOOR_DB,
+    rmsL: FLOOR_DB,
+    rmsR: FLOOR_DB,
+  };
+  // 0 dBFS 過載鎖定；只由使用者右鍵清除，持續過載時會立即重新亮起。
+  const clipHold = { left: false, right: false };
 
   $effect(() => {
     if (!canvas) return;
@@ -31,8 +45,12 @@
 
       // 新值進來瞬間跳上,之後 12 dB/s 衰減
       const follow = (cur: number, target: number) => Math.max(target, cur - 12 * dt);
-      disp.peakL = follow(disp.peakL, db(latest?.peakL ?? 0));
-      disp.peakR = follow(disp.peakR, db(latest?.peakR ?? 0));
+      const peakL = latest?.peakL ?? 0;
+      const peakR = latest?.peakR ?? 0;
+      if (peakL >= 1) clipHold.left = true;
+      if (peakR >= 1) clipHold.right = true;
+      disp.peakL = follow(disp.peakL, db(peakL));
+      disp.peakR = follow(disp.peakR, db(peakR));
       disp.rmsL = Math.min(disp.peakL, db(latest?.rmsL ?? 0));
       disp.rmsR = Math.min(disp.peakR, db(latest?.rmsR ?? 0));
 
@@ -42,9 +60,8 @@
     return () => cancelAnimationFrame(raf);
   });
 
-  const FLOOR_DB = -60;
   function db(amp: number): number {
-    // 上限夾 0dB:超過 1.0 的 peak 釘在頂,不會畫過紅色 0dB 標
+    // 顯示上限夾 0 dBFS；是否過載由夾限前的 amplitude 另行鎖定。
     return amp > 0 ? Math.min(0, Math.max(FLOOR_DB, 20 * Math.log10(amp))) : FLOOR_DB;
   }
   // dB → y(0dB 頂、FLOOR_DB 底)
@@ -53,6 +70,39 @@
   }
 
   const TICKS = [0, -6, -12, -24, -36, -48, -60];
+
+  function clearClipHold(event: MouseEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    clipHold.left = false;
+    clipHold.right = false;
+  }
+
+  function fillLevel(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    barW: number,
+    level: number,
+    top: number,
+    plotH: number,
+  ) {
+    const levelY = y(level, top, plotH);
+    const warningY = y(WARNING_DB, top, plotH);
+    const bottom = top + plotH;
+
+    // 正常區：-60 至 -6 dBFS。
+    const normalTop = Math.max(levelY, warningY);
+    if (normalTop < bottom) {
+      ctx.fillStyle = NORMAL_COLOR;
+      ctx.fillRect(x, normalTop, barW, bottom - normalTop);
+    }
+
+    // 接近峰值區：-6 至 0 dBFS；真正過載另以頂端紅線表示。
+    if (levelY < warningY) {
+      ctx.fillStyle = WARNING_COLOR;
+      ctx.fillRect(x, levelY, barW, warningY - levelY);
+    }
+  }
 
   function render(ctx: CanvasRenderingContext2D) {
     const dpr = window.devicePixelRatio || 1;
@@ -85,21 +135,25 @@
     for (const v of TICKS) ctx.fillRect(0, Math.round(y(v, top, plotH)), plotW, 1);
 
     const bars = [
-      { x: 0, rms: disp.rmsL, peak: disp.peakL },
-      { x: barW + gap, rms: disp.rmsR, peak: disp.peakR },
+      { x: 0, rms: disp.rmsL, peak: disp.peakL, clipped: clipHold.left },
+      { x: barW + gap, rms: disp.rmsR, peak: disp.peakR, clipped: clipHold.right },
     ];
     for (const b of bars) {
-      // rms(亮)
-      const ry = y(b.rms, top, plotH);
-      ctx.fillStyle = "#4da3ff";
-      ctx.fillRect(b.x, ry, barW, top + plotH - ry);
-      // peak(半透明疊)
-      const py = y(b.peak, top, plotH);
-      ctx.fillStyle = "rgba(255, 255, 255, 0.22)";
-      ctx.fillRect(b.x, py, barW, top + plotH - py);
-      // 過載區標記 0 dB(頂端)
-      ctx.fillStyle = "#e2533b";
-      ctx.fillRect(b.x, top, barW, 2);
+      // RMS 主錶依區間著色。
+      fillLevel(ctx, b.x, barW, b.rms, top, plotH);
+
+      // 瞬時 peak 保留衰減，以亮線顯示目前最高位置。
+      if (b.peak > FLOOR_DB) {
+        const py = y(b.peak, top, plotH);
+        ctx.fillStyle = b.peak >= WARNING_DB ? WARNING_COLOR : NORMAL_COLOR;
+        ctx.fillRect(b.x, Math.round(py), barW, 2);
+      }
+
+      // 只有實際達到 0 dBFS 才鎖定紅線；右鍵可清除。
+      if (b.clipped) {
+        ctx.fillStyle = CLIP_COLOR;
+        ctx.fillRect(b.x, top, barW, 3);
+      }
     }
 
     // dB 刻度:短 tick + 數字(中線對位,線不橫穿數字)
@@ -107,12 +161,17 @@
     ctx.textBaseline = "middle";
     for (const v of TICKS) {
       const ty = Math.round(y(v, top, plotH));
-      const col = v === 0 ? "#e2533b" : "#8a93a3";
-      ctx.fillStyle = col;
+      ctx.fillStyle = TICK_COLOR;
       ctx.fillRect(plotW, ty, 4, 1);
       ctx.fillText(String(v), plotW + 6, ty);
     }
   }
 </script>
 
-<canvas bind:this={canvas} style="width:{width}px; height:100%; display:block"></canvas>
+<canvas
+  bind:this={canvas}
+  style="width:{width}px; height:100%; display:block"
+  oncontextmenu={clearClipHold}
+  aria-label="立體聲音頻錶；綠色為正常、橘色接近峰值、紅線為已過載。右鍵清除過載狀態。"
+  data-tooltip="音頻錶：綠色為正常、橘色接近峰值、紅線表示曾經過載；按右鍵可清除 peak 狀態。"
+></canvas>

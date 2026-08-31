@@ -1,7 +1,7 @@
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **RoudaMix** (1711 symbols, 3545 relationships, 146 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **RoudaMix** (1752 symbols, 3637 relationships, 150 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 
@@ -42,3 +42,11 @@ This project is indexed by GitNexus as **RoudaMix** (1711 symbols, 3545 relation
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
 
 <!-- gitnexus:end -->
+
+# UI 提示規範
+
+- 所有滑鼠懸停或鍵盤焦點提示一律使用 `data-tooltip`，由 `ui/src/lib/tooltip.ts` 的全域提示層呈現。
+- 禁止使用 HTML `title` 屬性作為提示，避免出現 WebView／瀏覽器原生樣式。
+- 提示外觀統一由 `ui/src/app.css` 的 `.app-tooltip` 維護；不得在個別元件另建臨時提示樣式或提示元件。
+- 純圖示控制項仍須另外提供正確的 `aria-label`；`data-tooltip` 不取代無障礙名稱。
+- 新增或修改提示後，必須執行 UI 測試，確認 `tooltip-policy.test.ts` 沒有偵測到原生 `title` 提示。

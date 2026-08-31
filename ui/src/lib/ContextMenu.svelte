@@ -73,6 +73,11 @@
   .ctxdlg[open] {
     display: block;
   }
+  /* 所有項目皆 disabled 時 showModal 會把焦點留在 dialog；避免全域焦點框
+     蓋過圓角選單外觀。可操作的 .ctxitem 仍保留標準藍色焦點框。 */
+  .ctxdlg:focus-visible {
+    outline: none;
+  }
   .ctxdlg::backdrop {
     background: transparent; /* 不遮:點外關閉由 mousedown 處理 */
   }
