@@ -313,9 +313,14 @@ struct EditorHost::Impl {
     }
 
     void set_title(std::uint32_t id) {
-        const auto* slot = find_slot(id);
-        const std::wstring title =
-            slot != nullptr ? L"RoudaMix — " + to_wide(slot->name) : L"RoudaMix";
+        std::wstring title = L"RoudaMix";
+        if (engine != nullptr) {
+            for (const auto& t : engine->plugin_tabs()) {
+                if (t.instance_id != id) continue;
+                title += L" - " + to_wide(t.track_name);
+                break;
+            }
+        }
         SetWindowTextW(wnd, title.c_str());
     }
 
@@ -499,6 +504,7 @@ void EditorHost::notify_tracks_changed() {
         }
     }
     impl_->render_tabs();
+    if (impl_->active_id != 0) impl_->set_title(impl_->active_id);
 }
 
 void EditorHost::shutdown() noexcept {

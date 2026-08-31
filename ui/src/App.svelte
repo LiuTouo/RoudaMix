@@ -114,6 +114,7 @@
   // ---- B:authoritative dirty(engine revision vs 上次存/載基準)----
   let revision = $state<number | null>(null); // engine 權威版號(status/snapshot/reply 帶回)
   let cleanRevision = $state<number | null>(null); // 上次成功存/載當下的 revision
+  let currentSessionPath: string | null = null; // 本次實際載入/儲存的檔案；不可用「最近 Session」替代
   const dirty = $derived(revision !== null && cleanRevision !== null && revision !== cleanRevision);
   // ---- E:背景掃描 job(共用 registry,所有軌共用一份清單)----
   let scanModules = $state<ScanModule[]>([]);
@@ -159,6 +160,24 @@
     window.addEventListener("contextmenu", onCtx);
     unsubs.push(() => window.removeEventListener("contextmenu", onCtx));
 
+    // 主介面全域儲存快捷鍵；攔下 WebView 的預設「儲存網頁」行為。
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (
+        e.defaultPrevented ||
+        e.repeat ||
+        !e.ctrlKey ||
+        e.altKey ||
+        e.metaKey ||
+        e.shiftKey ||
+        e.key.toLowerCase() !== "s"
+      )
+        return;
+      e.preventDefault();
+      void saveSessionForClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    unsubs.push(() => window.removeEventListener("keydown", onKeyDown));
+
     void (async () => {
 
       sub(
@@ -167,6 +186,7 @@
         if (epochChanged(conn.epoch, c.epoch)) {
           ensuredDefaults = false;
           restoreP = null;
+          currentSessionPath = null; // 新 engine 尚未成功恢復任何檔案，不得覆寫上一代 Session
           scanJobId = null;
           scanRunning = false;
         }
@@ -288,10 +308,9 @@
     dirtyResolve = null;
   }
 
-  /** 關窗/載入前的存檔:有 lastSessionPath 直接覆寫,否則開存檔對話框。回傳是否成功 */
+  /** 儲存目前 Session：已有目前檔案就覆寫，否則開存檔對話框。回傳是否成功 */
   async function saveSessionForClose(): Promise<boolean> {
-    const target = appSettings?.lastSessionPath;
-    let path = target ?? null;
+    let path = currentSessionPath;
     if (!path) {
       try {
         path = await save({
@@ -312,6 +331,7 @@
         bufferSize: status?.running ? status.bufferSize : bufSize,
       });
       if (typeof r.revision === "number") cleanRevision = r.revision;
+      currentSessionPath = path;
       rememberLastSession(path);
       notice = "";
       restoreError = "";
@@ -377,6 +397,7 @@
       try {
         const r = await engineCommand("load_session", { path: p });
         applyLoadedSession(r);
+        currentSessionPath = p;
       } catch (e) {
         // 檔案不存在/損壞 = 開空白 + 頂列提示,不擋啟動
         restoreError = String(e);
@@ -734,6 +755,7 @@
         bufferSize: status?.running ? status.bufferSize : bufSize,
       });
       if (typeof r.revision === "number") cleanRevision = r.revision; // 存成功才清 dirty
+      currentSessionPath = path;
       rememberLastSession(path);
       notice = "";
       restoreError = ""; // 手動救回 = 啟動失敗警示該滅
@@ -760,6 +782,7 @@
     try {
       const r = await engineCommand("load_session", { path: p });
       applyLoadedSession(r);
+      currentSessionPath = p;
       notice = "";
       restoreError = "";
     } catch (e) {
@@ -807,6 +830,7 @@
       if (!path) return;
       const r = await engineCommand("load_session", { path });
       applyLoadedSession(r);
+      currentSessionPath = path;
       rememberLastSession(path);
       notice = "";
       restoreError = "";

@@ -140,10 +140,11 @@ public:
     std::uint64_t revision() const noexcept { return revision_.load(std::memory_order_relaxed); }
 
     const std::vector<TrackNode>& tracks() const noexcept { return tracks_; }
-    // editor host tab 列(全部軌的 plugin,「軌名 · plugin 名」)
+    // editor host 顯示資料：tab 用 plugin 名，視窗標題用音軌名
     struct PluginTabInfo {
         std::uint32_t instance_id{};
         std::string label;
+        std::string track_name;
         bool editor_capable{};
         bool bypass{};
     };
