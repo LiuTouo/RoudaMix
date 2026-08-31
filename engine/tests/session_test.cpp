@@ -275,6 +275,91 @@ int main() {
         CHECK(e.track_remove(plain, err));
     }
 
+    // 9. P1-F 原子寫入:temp → bak → replace;成功無 .tmp 殘留、保留一份 .bak;
+    //    失敗(目錄不存在)原檔不動;.bak 可手動恢復(load 得回舊內容)
+    {
+        const auto f9 = tmp / "atomic.rmsession";
+        const auto f9bak = tmp / "atomic.rmsession.bak";
+        const auto f9tmp = tmp / "atomic.rmsession.tmp";
+        std::filesystem::remove(f9);
+        std::filesystem::remove(f9bak);
+        std::filesystem::remove(f9tmp);
+        std::string err;
+        CHECK(rmx::session::save(e, f9, err));
+        CHECK(std::filesystem::exists(f9));
+        CHECK(!std::filesystem::exists(f9tmp));  // temp 已隨 rename 消失
+        CHECK(!std::filesystem::exists(f9bak));  // 首次:無舊檔可備份
+        const auto v1 = read_text(f9);
+
+        // 改場景再存:.bak = 上一版(完整可恢復)
+        std::uint32_t extra = 0;
+        CHECK(e.track_add(rmx::TrackKind::kAudio, "Extra", 0, extra, err));
+        CHECK(rmx::session::save(e, f9, err));
+        CHECK(std::filesystem::exists(f9bak));
+        CHECK(read_text(f9bak) == v1);  // .bak = 舊版內容
+        CHECK(read_text(f9) != v1);     // 正式檔 = 新版
+
+        // save 失敗(路徑指向不存在的目錄):原檔不動、err 帶原因
+        const auto nowhere = tmp / "no_such_dir" / "x.rmsession";
+        CHECK(!rmx::session::save(e, nowhere, err));
+        CHECK(!err.empty());
+        CHECK(read_text(f9) != v1);
+
+        // recovery:.bak 搬回正式檔位置 → load 得回舊場景(Extra 不在)
+        std::filesystem::remove(f9);
+        std::filesystem::rename(f9bak, f9);
+        nlohmann::json applied;
+        CHECK(rmx::session::load(e, f9, applied, err));
+        bool has_extra = false;
+        for (const auto& t : e.tracks()) has_extra = has_extra || t.name == "Extra";
+        CHECK(!has_extra);
+
+        // 9b. 100 軌壓力(P1-H):add/dests/move/gain 正確性 + meter 預算降級
+        //     (不需真 plugin/硬體:placeholder 由 load 路徑覆蓋,此處驗結構)
+        std::vector<std::uint32_t> ids;
+        for (int i = 0; i < 100; ++i) {
+            std::uint32_t id = 0;
+            CHECK(e.track_add(rmx::TrackKind::kApp, "App" + std::to_string(i), 0, id, err));
+            ids.push_back(id);
+        }
+        CHECK(e.tracks().size() >= 100);
+        // 鏈狀 dests:id[i] → id[i+1](100 節點鏈,無環)
+        {
+            std::string derr, dcode;
+            for (std::size_t i = 0; i + 1 < ids.size(); ++i)
+                CHECK(e.track_set_dests(ids[i], {ids[i + 1]}, derr, dcode));
+            // 環偵測:頭接到尾必須擋
+            CHECK(!e.track_set_dests(ids.back(), {ids.front()}, derr, dcode));
+        }
+        // strip 預算:100 app 軌 + 系統輸出 → 只有前 63 條(master 序)有錶
+        {
+            const auto plan = rmx::plan_telemetry_strips(e.tracks(), rmx::kTelemetryStrips);
+            CHECK(plan.size() == e.tracks().size());
+            int metered = 0;
+            for (const auto& p : plan) metered += p.track_strip != rmx::kNoStrip;
+            CHECK(metered == 63);  // strip 0 = engine 輸出,預算剩 63 給 track
+        }
+        // move:把最後一條移到最前 → master 序反轉驗證
+        {
+            const auto last_id = ids.back();
+            const auto was_first = e.tracks().front().track_id;
+            CHECK(e.track_move(last_id, 0, err));
+            CHECK(e.tracks().front().track_id == last_id);
+            CHECK(e.tracks()[1].track_id == was_first);
+        }
+        // 存檔/載入 100 軌 roundtrip(原子寫入路徑 + 大檔)
+        {
+            const auto f100 = tmp / "big100.rmsession";
+            CHECK(rmx::session::save(e, f100, err));
+            nlohmann::json applied100;
+            CHECK(rmx::session::load(e, f100, applied100, err));
+            CHECK(e.tracks().size() >= 100);
+            int app_count = 0;
+            for (const auto& t : e.tracks()) app_count += t.name.rfind("App", 0) == 0;
+            CHECK(app_count == 100);
+        }
+    }
+
     std::filesystem::remove_all(tmp);
     std::printf("session_test PASSED\n");
     return 0;

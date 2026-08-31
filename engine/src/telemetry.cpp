@@ -1,5 +1,7 @@
 #include "telemetry.hpp"
 
+#include <intrin.h>  // __rdtsc(publish thread 量 load 用;RT 端在 audio_engine)
+
 #include <cmath>
 #include <cstring>
 
@@ -142,7 +144,24 @@ void MeterAccumulator::publish(TelemetryBlockShm& block, std::uint64_t xruns_tot
     next.buffer_size = buffer_size_.load(std::memory_order_relaxed);
     next.input_latency = in_lat_.load(std::memory_order_relaxed);
     next.output_latency = out_lat_.load(std::memory_order_relaxed);
-    next.callback_load = 0.0F;  // M1 之後量測
+    // callback load(P1-J):RT 端 __rdtsc 差累積(RT 開銷 = 一次 relaxed add),
+    // 這裡以兩次 publish 之間的 TSC 差為分母 = audio thread 平均 CPU 佔比。
+    // invariant TSC(現代 Windows x86 保證);比值不需絕對頻率校準。
+    {
+        const std::uint64_t tsc_now = __rdtsc();
+        const std::uint64_t busy_now = busy_cycles_.load(std::memory_order_relaxed);
+        float load = 0.0F;
+        if (last_tsc_ != 0 && tsc_now > last_tsc_) {
+            load = static_cast<float>(
+                static_cast<double>(busy_now - last_busy_snapshot_) /
+                static_cast<double>(tsc_now - last_tsc_));
+            if (load < 0.0F) load = 0.0F;
+            if (load > 2.0F) load = 2.0F;  // 量測雜訊夾限
+        }
+        next.callback_load = load;
+        last_tsc_ = tsc_now;
+        last_busy_snapshot_ = busy_now;
+    }
     next.strip_count = static_cast<std::uint32_t>(id_count < kTelemetryStrips
                                                       ? id_count
                                                       : kTelemetryStrips);

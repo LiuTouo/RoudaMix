@@ -20,3 +20,9 @@ pub async fn engine_command(
 ) -> Result<Value, String> {
     b.send(&kind, payload).await
 }
+
+/// P1-L:UI 手動 retry(spawn_failed 時)。冪等:engine 已在跑 = singleton 擋下。
+#[tauri::command]
+pub fn respawn_engine(app: tauri::AppHandle, b: State<Bridge>) {
+    b.respawn(app);
+}

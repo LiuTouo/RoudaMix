@@ -152,6 +152,7 @@ fn to_json(b: &BlockShm) -> Value {
     json!({
         "sequence": b.sequence,
         "xruns": b.xruns,
+        "callbackLoad": b.callback_load,
         "sampleRate": b.sample_rate,
         "bufferSize": b.buffer_size,
         "inputLatency": b.input_latency,

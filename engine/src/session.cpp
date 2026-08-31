@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <io.h>  // _commit(原子寫入:temp 落盤後才 replace)
 #include <map>
 
 #include "sandbox.hpp"
@@ -149,6 +150,13 @@ nlohmann::json serialize(const AudioEngine& engine) {
     };
 }
 
+// 原子寫入契約(P1-F):
+// 1. 同目錄 <file>.tmp 完整寫入 + _commit(flush 到磁碟)→ fclose;任一步失敗 =
+//    刪 temp、原檔不動(err 帶原因)。
+// 2. 舊正式檔存在 = 先搬成 <file>.bak(覆蓋上輪 bak);temp → 正式檔 rename。
+//    rename 失敗 = 把 .bak 搬回正式檔復原,仍失敗 = err(原檔可能遺失,.bak 還在)。
+// 3. 成功:.tmp 已隨 rename 消失;保留一份 .bak(上一版,手動恢復用)。
+// 效果:任何時刻中斷,正式檔要嘛完整舊版、要嘛完整新版,不會有截斷的半檔。
 bool save(const AudioEngine& engine, const std::filesystem::path& file, std::string& err,
           const nlohmann::json& overrides) {
     nlohmann::json j = serialize(engine);
@@ -160,16 +168,52 @@ bool save(const AudioEngine& engine, const std::filesystem::path& file, std::str
         if (overrides.contains("bufferSize") && overrides["bufferSize"].is_number_unsigned())
             j["bufferSize"] = overrides["bufferSize"];
     }
-    std::FILE* f = nullptr;
-    if (_wfopen_s(&f, file.c_str(), L"wb") != 0 || f == nullptr) {
-        err = "cannot open session file for writing: " + file.string();
-        return false;
-    }
     const std::string text = j.dump(2);
-    const bool wrote = std::fwrite(text.data(), 1, text.size(), f) == text.size();
-    std::fclose(f);
-    if (!wrote) {
-        err = "session file write failed: " + file.string();
+
+    std::filesystem::path tmp = file;
+    tmp += L".tmp";
+    std::filesystem::path bak = file;
+    bak += L".bak";
+
+    // 1. temp 完整寫入 + 落盤
+    {
+        std::FILE* f = nullptr;
+        if (_wfopen_s(&f, tmp.c_str(), L"wb") != 0 || f == nullptr) {
+            err = "cannot open session temp file for writing: " + tmp.string();
+            return false;
+        }
+        const bool wrote = std::fwrite(text.data(), 1, text.size(), f) == text.size();
+        const bool flushed = wrote && std::fflush(f) == 0 && _commit(_fileno(f)) == 0;
+        std::fclose(f);
+        if (!flushed) {
+            std::error_code ec;
+            std::filesystem::remove(tmp, ec);  // 寫/落盤失敗:temp 清掉,原檔不動
+            err = "session temp file write/flush failed: " + tmp.string();
+            return false;
+        }
+    }
+
+    // 2. 舊檔 → .bak(沒有舊檔 = 首次存,免)
+    std::error_code ec;
+    const bool had_old = std::filesystem::exists(file, ec);
+    if (had_old && !ec) {
+        std::filesystem::remove(bak, ec);  // 上輪 .bak 讓位(只保一版)
+        ec.clear();
+        std::filesystem::rename(file, bak, ec);
+        if (ec) {
+            std::filesystem::remove(tmp, ec);
+            err = "cannot move previous session to backup: " + bak.string() + ": " +
+                  ec.message();
+            return false;
+        }
+    }
+
+    // 3. temp → 正式檔;失敗 = .bak 搬回復原
+    std::filesystem::rename(tmp, file, ec);
+    if (ec) {
+        std::error_code rb;
+        if (had_old) std::filesystem::rename(bak, file, rb);
+        err = "cannot replace session file: " + file.string() + ": " + ec.message();
         return false;
     }
     return true;

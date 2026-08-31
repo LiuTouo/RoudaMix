@@ -14,7 +14,7 @@
 
 namespace rmx {
 
-// ---- 程序列舉(Toolhelp;session 來源存 exe 名,載入時由此重解析 pid)----
+// ---- 程序列舉(PSAPI;list_audio_apps 用完整路徑做程序辨識)----
 
 bool process_exists(std::uint32_t pid) noexcept {
     if (pid == 0) return false;
@@ -24,7 +24,7 @@ bool process_exists(std::uint32_t pid) noexcept {
     return true;
 }
 
-std::vector<std::pair<std::uint32_t, std::string>> list_process_basenames() {
+std::vector<std::pair<std::uint32_t, std::string>> list_process_full_paths() {
     std::vector<std::pair<std::uint32_t, std::string>> out;
     std::vector<DWORD> pids(1024);
     DWORD bytes = 0;
@@ -41,30 +41,20 @@ std::vector<std::pair<std::uint32_t, std::string>> list_process_basenames() {
         HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pids[i]);
         if (h == nullptr) continue;
         DWORD size = MAX_PATH;
-        std::wstring name;
-        if (QueryFullProcessImageNameW(h, 0, path, &size) && size > 0) {
-            name = path;
-            const auto slash = name.find_last_of(L"\\/");
-            if (slash != std::wstring::npos) name = name.substr(slash + 1);
-        }
+        std::wstring full;
+        if (QueryFullProcessImageNameW(h, 0, path, &size) && size > 0) full = path;
         CloseHandle(h);
-        if (!name.empty()) {
-            const int need = WideCharToMultiByte(CP_UTF8, 0, name.c_str(), -1, nullptr, 0,
+        if (!full.empty()) {
+            const int need = WideCharToMultiByte(CP_UTF8, 0, full.c_str(), -1, nullptr, 0,
                                                  nullptr, nullptr);
             std::string utf8(static_cast<std::size_t>(need > 0 ? need - 1 : 0), '\0');
             if (need > 0)
-                WideCharToMultiByte(CP_UTF8, 0, name.c_str(), -1, utf8.data(),
+                WideCharToMultiByte(CP_UTF8, 0, full.c_str(), -1, utf8.data(),
                                     static_cast<int>(utf8.size() + 1), nullptr, nullptr);
             out.emplace_back(pids[i], std::move(utf8));
         }
     }
     return out;
-}
-
-std::uint32_t find_pid_by_name(const std::string& exe_basename) {
-    for (const auto& [pid, name] : list_process_basenames())
-        if (name == exe_basename) return pid;
-    return 0;
 }
 
 namespace {

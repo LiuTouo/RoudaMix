@@ -19,7 +19,7 @@
 | 8 | 4 | u32 | `sequence` | seqlock:寫前 odd(寫入中)、寫完 even;讀者比對前後 |
 | 12 | 4 | u32 | `stripCount` | ≤ 64,有效 strip 數 |
 | 16 | 8 | u64 | `xruns` | 累計 XRun |
-| 24 | 4 | f32 | `callbackLoad` | callback CPU 使用率估計 [0,1] |
+| 24 | 4 | f32 | `callbackLoad` | audio callback CPU 佔比(兩次 publish 間 RT 忙碌 TSC / 總 TSC;P1-J 起實作,RT 端僅兩次 `__rdtsc` + relaxed add;夾 [0,2]) |
 | 28 | 4 | f32 | `sampleRate` | Hz;未啟動 = 0 |
 | 32 | 4 | u32 | `bufferSize` | frames;未啟動 = 0 |
 | 36 | 4 | u32 | `inputLatency` | samples |

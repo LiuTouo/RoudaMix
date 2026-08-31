@@ -23,6 +23,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::connect_status,
             commands::engine_command,
+            commands::respawn_engine,
             settings::get_settings,
             settings::set_settings,
             settings::list_sessions

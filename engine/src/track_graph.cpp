@@ -72,6 +72,25 @@ void asio_channel_union(const std::vector<TrackNode>& tracks,
     if (out_chans.empty()) out_chans = {0, 1};
 }
 
+std::vector<TrackStrips> plan_telemetry_strips(const std::vector<TrackNode>& nodes,
+                                               std::size_t budget) {
+    std::vector<TrackStrips> plan(nodes.size());
+    // 純函式:swap_graph(填 snapshot)與 status_json(填 metered)共用同一分配,
+    // 兩端看到的是同一份真相。第一輪 track 先領,第二輪剩餘給 plugin。
+    std::size_t next = 1;  // strip 0 = engine 輸出
+    for (std::size_t i = 0; i < nodes.size(); ++i) {
+        if (next < budget) plan[i].track_strip = static_cast<std::uint32_t>(next++);
+    }
+    for (std::size_t i = 0; i < nodes.size(); ++i) {
+        plan[i].chain_strips.assign(nodes[i].chain.size(), kNoStrip);
+        for (auto& s : plan[i].chain_strips) {
+            if (next >= budget) return plan;
+            s = static_cast<std::uint32_t>(next++);
+        }
+    }
+    return plan;
+}
+
 bool ensure_system_outputs(std::vector<TrackNode>& tracks, std::uint32_t& next_track_id) {
     bool changed = false;
     // 每 role:持有者 >1 = 第一個以外降級;0 = 指派無 role 的 output 軌,再不行新建

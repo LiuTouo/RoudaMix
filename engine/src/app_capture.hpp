@@ -22,8 +22,7 @@ namespace rmx {
 
 // 程序列舉(app 來源驗證/pid 名稱重解析;Toolhelp 免 COM)
 [[nodiscard]] bool process_exists(std::uint32_t pid) noexcept;
-[[nodiscard]] std::vector<std::pair<std::uint32_t, std::string>> list_process_basenames();
-[[nodiscard]] std::uint32_t find_pid_by_name(const std::string& exe_basename);
+[[nodiscard]] std::vector<std::pair<std::uint32_t, std::string>> list_process_full_paths();
 
 class AppCapture final {
 public:

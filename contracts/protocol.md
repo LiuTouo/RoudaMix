@@ -96,7 +96,7 @@ render 裝置,`list_render_devices` 列 endpoints)。每軌一條 VST 鏈
 | `close_editor` | `{ "instanceId": u32 }` | `{}` | 關 editor 視窗(plugin 視窗自帶 X 關掉也同效) |
 | `save_preset` | `{ "instanceId": u32, "path": str }` | `{ "savedPath": str }` | 寫 `.vstpreset`(VST3 容器:`Comp`=component state + `Cont`=controller state + `RmxP`=host 權威表私有 chunk,其他 host 會略過;class ID 為 32 hex 大寫 ASCII);非 mutation(不動 epoch/不廣播) |
 | `load_preset` | `{ "instanceId": u32, "path": str }` | `{ "tracks": [Track] }` | 讀 `.vstpreset` 套用(component setState → controller setComponentState);成功 = mutation(廣播 status)。host 端 param 權威值重同步:檔案帶 `RmxP` chunk 時優先採用;無 `RmxP`(外部 host 存的)且 controller 同步成功時自 controller;皆無 = 保持現值。容器缺 `Comp` chunk 或 class ID 不符回 `preset_io` |
-| `save_session` | `{ "path": str?, "deviceKey": str?, "sampleRate": u32?, "bufferSize": u32? }` | `{ "savedPath": str }` | path null = `%APPDATA%\RoudaMix\default.rmsession`;deviceKey/sampleRate/bufferSize 帶了就蓋寫進檔;寫 §8 SessionFile;非 mutation(不動 epoch/不廣播) |
+| `save_session` | `{ "path": str?, "deviceKey": str?, "sampleRate": u32?, "bufferSize": u32? }` | `{ "savedPath": str, "revision": u64 }` | path null = `%APPDATA%\RoudaMix\default.rmsession`;deviceKey/sampleRate/bufferSize 帶了就蓋寫進檔;寫 §8 SessionFile;非 mutation(不動 epoch/不廣播)。**P1-F 原子寫入**:同目錄 `.tmp` 完整寫入+落盤 → 舊檔搬 `.bak` → rename 替換;任何一步失敗 = 原檔不動、err 帶原因(成功保留一份 `.bak` = 上一版,手動恢復用)。revision 隨回(UI 以此定 clean 基準;失敗 = dirty 不清) |
 | `load_session` | `{ "path": str }` | `{ "deviceKey": str?, "sampleRate": u32?, "bufferSize": u32?, "missing": [MissingPlugin] }` | best-effort 全軌重建(壞軌略過不整體失敗;dests 以舊 id→新 id map 重接);消失/壞掉的 plugin = 原鏈位保留 placeholder(name/path/classId/bypass/params 全存,不參與 DSP),詳情列在 `missing`;`roudamixSession != 2` 一律 `session_io` 拒載(v1 不支援,現況不動);不自動 start;成功 = mutation(廣播 status) |
 | `ensure_system_outputs` | `{}` | `{ "tracks": [Track] }` | 系統輸出補齊:monitor/stream 恰好各一條(缺 = 補,重複 = 留第一個其餘降級);新 session 或載入後缺 role 時 UI 呼;沒變動 = no-op(不動 epoch) |
 | `shutdown_engine` | `{}` | `{}` | 回 ack 後退出 |
@@ -105,6 +105,11 @@ M5c 保留(M5a/M5b 送了回 `internal` not implemented):~~`list_render_devices`
 已於 M5c 實作:`list_render_devices` `{}` →
 `{ "devices": [{ "id": str, "name": str, "default": bool, "sampleRate": u32 }] }`
 (WASAPI render endpoints;串流軌裝置選擇用)。
+
+`list_audio_apps` `{}` → `{ "apps": [{ "pid": u32, "name": str, "path": str? }] }`
+(預設 render 裝置的 active audio sessions = 正在出聲的程式;`name` = exe basename、
+`path` = exe 完整路徑(P1-C:同名程序辨識;拿不到 = null)。
+app 軌 needsRebind(pid 0)時 UI 的程序選擇器以此清單讓使用者選)。
 
 Events:
 
@@ -136,14 +141,20 @@ process loopback 需 Win10 2004+,舊系統 activation 失敗。)
 DeviceInfo   { deviceKey: str, name: str, maxIn: u16, maxOut: u16, sampleRates: [u32], currentSampleRate: u32, minBufferSize: u32, maxBufferSize: u32, preferredBufferSize: u32, bufferSizes: [u32], inputNames: [str], outputNames: [str] }
 EngineStatus { running: bool, deviceKey: str?, sampleRate: f32, bufferSize: u32?, inputLatency: u32?, outputLatency: u32?, xruns: u64, trackCount: u32, pluginFails: u32, revision: u64, tracks: [Track], error: str? }
                (revision = 權威狀態版號,所有成功 mutation +1 含 set_param;client dirty 判定用)
-Track        { trackId: u32, kind: "audio"|"app"|"fx"|"output", systemRole: "monitor"|"stream"|null, name: str, color: u32(0xRRGGBB), source: TrackSource, dests: [u32], output: TrackOutput, gain: f32, mute: bool, plugins: [RackSlot], error: str? }
+Track        { trackId: u32, kind: "audio"|"app"|"fx"|"output", systemRole: "monitor"|"stream"|null, name: str, color: u32(0xRRGGBB), source: TrackSource, dests: [u32], output: TrackOutput, gain: f32, mute: bool, plugins: [RackSlot], metered: bool, error: str? }
                (error 非 null = 該軌 capture/render 失效等軌道級錯誤;恢復時清空。
                 systemRole = 系統輸出角色:每 session 恰好一條 monitor + 一條 stream,
                 可改名/改 sink/routing 但不可刪除(engine track_remove 拒絕);
-                載入缺 role = engine 確定性補齊)
+                載入缺 role = engine 確定性補齊。
+                metered = telemetry strip 預算內有錶(false = 錶不可用,UI 顯示
+                「無錶」狀態而非靜音;預算 64,track 先領、剩餘才輪 plugin —— 見
+                track_graph.cpp plan_telemetry_strips,音訊不受影響))
 TrackSource  = null | { type: "sine", freq: f32 } | { type: "asioIn", channel: u32 } | { type: "app", pid: u32, name: str? }
                (null = 無來源/FX 軌;asioIn channel = pair 基底,取 ch 與 ch+1;
-                app = process loopback 抓該程序樹的音訊,pid 0 + name = 載入時重解析,找不到 = 軌 error)
+                app = process loopback 抓該程序樹的音訊。**pid 0 = needsRebind**:
+                session 載入只還原 name,engine 不依 exe 名猜 PID(同名多程序會綁
+                錯)—— UI 以程序選擇器讓使用者選(list_audio_apps),選定後
+                track_set_source 帶 pid 綁定;未綁定/程序已結束 = 軌 error)
 TrackOutput  = null | { type: "asioOut", channel: u32 } | { type: "wasapi", deviceId: str }
                (null = 不落地;asioOut channel = pair 基底;wasapi = WASAPI render endpoint,
                 裝置失效 = 軌 error「render device lost」)

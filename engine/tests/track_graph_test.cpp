@@ -106,6 +106,62 @@ int main() {
         CHECK(tracks[1].system_role == rmx::SystemRole::kStream);
     }
 
+    // 5. plan_telemetry_strips(P1-H):兩輪、可預測 — track 全數先領、剩餘才輪
+    //    plugin;超出預算 = kNoStrip。前 N-1 條軌(master 序)必定有錶。
+    {
+        // 5a. 小場景:3 軌各 1 plugin,預算 8 → strip0 保留、每軌 track + plugin
+        std::vector<rmx::TrackNode> tracks;
+        for (int i = 0; i < 3; ++i) {
+            rmx::TrackNode t = make_track(rmx::TrackKind::kAudio);
+            t.chain.resize(1);
+            tracks.push_back(std::move(t));
+        }
+        const auto plan = rmx::plan_telemetry_strips(tracks, 8);
+        CHECK(plan.size() == 3);
+        // 第一輪:track strips 連號 1..3(plugin 未動)
+        CHECK(plan[0].track_strip == 1 && plan[1].track_strip == 2 && plan[2].track_strip == 3);
+        // 第二輪:plugin strips 接在後面
+        CHECK(plan[0].chain_strips[0] == 4);
+        CHECK(plan[1].chain_strips[0] == 5);
+        CHECK(plan[2].chain_strips[0] == 6);
+
+        // 5b. 軌多於預算:100 軌、預算 64 → 前 63 軌有錶(strip 1..63)、後面無;
+        //     plugin 全部無錶(track 優先於 plugin,不因陣列順序交錯誤導)
+        std::vector<rmx::TrackNode> many;
+        for (int i = 0; i < 100; ++i) {
+            rmx::TrackNode t = make_track(rmx::TrackKind::kAudio);
+            t.chain.resize(3);
+            many.push_back(std::move(t));
+        }
+        const auto plan2 = rmx::plan_telemetry_strips(many, 64);
+        CHECK(plan2.size() == 100);
+        CHECK(plan2[0].track_strip == 1);
+        CHECK(plan2[62].track_strip == 63);
+        CHECK(plan2[63].track_strip == rmx::kNoStrip);
+        CHECK(plan2[99].track_strip == rmx::kNoStrip);
+        for (const auto& p : plan2) {
+            for (const auto s : p.chain_strips) CHECK(s == rmx::kNoStrip);
+        }
+
+        // 5c. 預算內含 plugin:2 軌(2+1 plugin),預算 64 → 全拿到
+        std::vector<rmx::TrackNode> few;
+        for (int i = 0; i < 2; ++i) {
+            rmx::TrackNode t = make_track(rmx::TrackKind::kAudio);
+            t.chain.resize(2);
+            few.push_back(std::move(t));
+        }
+        const auto plan3 = rmx::plan_telemetry_strips(few, 64);
+        CHECK(plan3[0].track_strip == 1 && plan3[1].track_strip == 2);
+        CHECK(plan3[0].chain_strips.size() == 2 && plan3[0].chain_strips[0] == 3 &&
+              plan3[0].chain_strips[1] == 4);
+        CHECK(plan3[1].chain_strips.size() == 2 && plan3[1].chain_strips[0] == 5 &&
+              plan3[1].chain_strips[1] == 6);
+
+        // 5d. 空場景:預算不動,strip 0 保留給 engine 輸出
+        const auto plan4 = rmx::plan_telemetry_strips({}, 64);
+        CHECK(plan4.empty());
+    }
+
     std::printf("track_graph_test PASSED\n");
     return 0;
 }

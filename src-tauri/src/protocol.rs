@@ -337,6 +337,7 @@ pub fn make_command(id: u64, kind: &str, payload: Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use std::fs;
     use std::path::Path;
 
@@ -370,5 +371,38 @@ mod tests {
         let v = check_dir(Path::new(root).join("valid").as_path(), true);
         let i = check_dir(Path::new(root).join("invalid").as_path(), false);
         assert_eq!((v, i), (0, 0), "fixture conformance failures");
+    }
+
+    /// P1-G:reply 帶 epoch/revision 對齊資訊,envelope 解析後可取得。
+    #[test]
+    fn reply_envelope_carries_epoch() {
+        let j = json!({"id": 9, "ok": true, "epoch": 5, "result": {"revision": 12}});
+        let Frame::Reply(r) = parse_frame(j).unwrap() else {
+            panic!("not a reply");
+        };
+        assert_eq!(r.epoch, 5);
+        assert_eq!(r.result.unwrap()["revision"], json!(12));
+    }
+
+    /// P1-G:scan job 的 events(進度/結案/取消)是已知 kind,重連後晚到也解析得動
+    /// (jobId 過濾在 UI 端做,見 App 的 scanJobId 比對)。
+    #[test]
+    fn scan_event_kinds_parse() {
+        for kind in ["scan_progress", "scan_done", "scan_failed", "scan_cancelled"] {
+            let j = json!({"kind": kind, "payload": {"jobId": 3}});
+            let Frame::Event(e) = parse_frame(j).unwrap() else {
+                panic!("not an event: {kind}");
+            };
+            assert_eq!(e.kind, kind);
+        }
+    }
+
+    /// P1-G:壞 reply(ok 又帶 error)= 壞 frame,拒絕 —— 不可能半套狀態進來。
+    #[test]
+    fn inconsistent_reply_rejected() {
+        let j = json!({"id": 1, "ok": true, "epoch": 0, "result": {"a": 1}, "error": {"code": "internal", "message": "x"}});
+        assert!(parse_frame(j).is_err());
+        let j2 = json!({"id": 1, "ok": false, "epoch": 0, "error": {"code": "no_such_code", "message": "x"}});
+        assert!(parse_frame(j2).is_err());
     }
 }

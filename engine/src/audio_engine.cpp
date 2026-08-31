@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <intrin.h>  // __rdtsc(RT load 量測;兩次 = ~數十 cycle,無鎖/配置/系統呼叫)
 
 #include "app_capture.hpp"
 #include "render_sink.hpp"
@@ -128,6 +129,8 @@ std::vector<AudioEngine::AudioAppInfo> AudioEngine::list_audio_apps() {
         return apps;
     }
     const std::uint32_t self_pid = GetCurrentProcessId();
+    // exe 路徑表(一次列舉,basename 給 name、完整路徑給 path = 同名程序辨識)
+    const auto proc_paths = list_process_full_paths();
     for (int i = 0; i < count; ++i) {
         IAudioSessionControl* control = nullptr;
         if (FAILED(sessions->GetSession(i, &control)) || control == nullptr) continue;
@@ -144,12 +147,12 @@ std::vector<AudioEngine::AudioAppInfo> AudioEngine::list_audio_apps() {
                 if (!known) {
                     AudioAppInfo info;
                     info.pid = pid;
-                    // session display name 常空:直接用 exe basename
-                    for (const auto& [p, n] : list_process_basenames()) {
-                        if (p == pid) {
-                            info.name = n;
-                            break;
-                        }
+                    for (const auto& [p, full] : proc_paths) {
+                        if (p != pid) continue;
+                        info.path = full;
+                        const auto slash = full.find_last_of("\\/");
+                        info.name = slash != std::string::npos ? full.substr(slash + 1) : full;
+                        break;
                     }
                     if (info.name.empty()) info.name = "pid " + std::to_string(pid);
                     apps.push_back(std::move(info));
@@ -447,10 +450,11 @@ void AudioEngine::swap_graph() noexcept {
             if (map[i] == ch) return static_cast<std::int32_t>(i);
         return -1;
     };
-    // telemetry strip 預算:0 = engine 輸出,之後 master 序逐軌(軌錶優先,
-    // plugin 錶超 64 根就省略 — 錶少幾根好過動 SHM 大小)
-    std::size_t next_strip = 1;
-    for (auto& t : fresh->nodes) {
+    // telemetry strip 預算:兩輪、可預測(track 全拿完才輪 plugin;純函式與
+    // status_json 的 metered 共用 — 見 track_graph.cpp plan_telemetry_strips)
+    const auto strips = plan_telemetry_strips(fresh->nodes, kTelemetryStrips);
+    for (std::size_t ti = 0; ti < fresh->nodes.size(); ++ti) {
+        auto& t = fresh->nodes[ti];
         t.src_l = t.src_r = t.out_l = t.out_r = -1;
         if (t.source.type == TrackSource::kAsioIn) {
             t.src_l = resolve(imap, t.source.asio_in_ch);
@@ -460,15 +464,8 @@ void AudioEngine::swap_graph() noexcept {
             t.out_l = resolve(omap, t.output.asio_out_ch);
             t.out_r = resolve(omap, t.output.asio_out_ch + 1);
         }
-        t.track_strip = kNoStrip;
-        t.chain_strips.assign(t.chain.size(), kNoStrip);
-        if (next_strip < kTelemetryStrips) {
-            t.track_strip = static_cast<std::uint32_t>(next_strip++);
-            for (auto& s : t.chain_strips) {
-                if (next_strip >= kTelemetryStrips) break;
-                s = static_cast<std::uint32_t>(next_strip++);
-            }
-        }
+        t.track_strip = strips[ti].track_strip;
+        t.chain_strips = strips[ti].chain_strips;
     }
     TrackGraph* old = rt_graph_.exchange(fresh, std::memory_order_acq_rel);
     if (old != nullptr) retired_.push_back({old, GetTickCount64()});
@@ -734,11 +731,18 @@ bool AudioEngine::track_set_source(std::uint32_t track_id, const TrackSource& so
     return true;
 }
 
-// M5b:capture 生命週期(控制面;pid=0 時依 app_name 重解析 — session 載入路徑)
+// M5b:capture 生命週期(控制面)。P1-C:pid==0(session 載入只帶名)= needsRebind
+// —— engine 不依 exe 名猜 PID(同名多程序會綁錯);UI 用程序選擇器讓使用者選。
 bool AudioEngine::ensure_capture(TrackNode& t, std::uint32_t dst_rate, std::string& err) {
     std::uint32_t pid = t.source.pid;
-    if (pid == 0 && !t.source.app_name.empty()) pid = find_pid_by_name(t.source.app_name);
-    if (pid == 0 || !process_exists(pid)) {
+    if (pid == 0) {
+        t.track_error = "app source not bound: pick a process for this track" +
+                        (t.source.app_name.empty() ? ""
+                                                   : " (saved source: " + t.source.app_name + ")");
+        err = t.track_error;
+        return false;
+    }
+    if (!process_exists(pid)) {
         t.track_error = "app not running" +
                         (t.source.app_name.empty() ? "" : ": " + t.source.app_name);
         err = t.track_error;
@@ -1258,6 +1262,7 @@ EngineStatusInfo AudioEngine::status() const {
 
 // ---- RT:audio callback(禁配置/鎖/系統呼叫)----
 void AudioEngine::process(const AudioBlock& block) noexcept {
+    const std::uint64_t tsc0 = __rdtsc();  // callback load 量測(見 telemetry publish)
     const std::uint32_t frames =
         block.frames > kMaxBlockFrames ? kMaxBlockFrames : block.frames;
     TrackGraph* g = rt_graph_.load(std::memory_order_acquire);
@@ -1404,6 +1409,7 @@ void AudioEngine::process(const AudioBlock& block) noexcept {
         meter_band(meters_, 0, engine_l, engine_r, frames);
         meters_.append_spectrum(engine_l, engine_r, frames);  // 最終輸出進頻譜 ring
     }
+    meters_.add_busy_cycles(__rdtsc() - tsc0);
 }
 
 }  // namespace rmx

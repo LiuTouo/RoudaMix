@@ -3,8 +3,12 @@
   import { open, save } from "@tauri-apps/plugin-dialog";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import TrackStrip from "./lib/TrackStrip.svelte";
+  import ContextMenu from "./lib/ContextMenu.svelte";
   import { mountDragGhost, removeDragGhost } from "./lib/ghost";
   import { isDirty, resolveDirtyChoice, type DirtyChoice } from "./lib/dirty";
+  import { connView, epochChanged } from "./lib/connPhase";
+  import { friendlyError, OverloadDetector } from "./lib/errors";
+  import { visibleRange, spacerWidths, dropPosFromX, laneDropToMasterIndex } from "./lib/laneView";
   import {
     connectStatus,
     onConnection,
@@ -15,6 +19,7 @@
     getSettings,
     setSettings,
     listSessions,
+    respawnEngine,
     type AppSettings,
   } from "./lib/ipc";
   import type {
@@ -29,6 +34,7 @@
   } from "./lib/types";
 
   let conn = $state<ConnectionStatus>({ connected: false, epoch: 0, engineVersion: "" });
+  let connProbeErr = $state<string | null>(null); // 主動 get_snapshot 的錯誤(version mismatch 等)
   let snap = $state<unknown>(null);
   let status = $state<EngineStatus | null>(null);
   let meters = $state<MetersFrame | null>(null);
@@ -45,6 +51,66 @@
   let folderFiles = $state<string[]>([]);
   let audioStale = $state(false); // 應該在跑但沒跑(啟動失敗)→ 頂欄極簡警示
   let ensuredDefaults = false; // 首次連線確保有系統輸出;engine 端保保證唯一
+  // ---- O:頂層通知中心(錯誤/狀態帶動作;per-track 錯誤留在 TrackStrip)----
+  interface Notice {
+    id: number;
+    kind: "error" | "info";
+    msg: string;
+    raw?: string; // 技術細節(可複製)
+  }
+  let notices = $state<Notice[]>([]);
+  let nextNoticeId = 1;
+  function addNotice(kind: Notice["kind"], msg: string, raw?: string): void {
+    notices = [...notices.slice(-4), { id: nextNoticeId++, kind, msg, raw }];
+  }
+  function dismissNotice(id: number): void {
+    notices = notices.filter((n) => n.id !== id);
+  }
+  /** P1-O:可複製診斷(WebView2 secure context 下 clipboard 可用;失敗 = 提示) */
+  async function copyText(t: string): Promise<boolean> {
+    try {
+      if (!navigator.clipboard) return false;
+      await navigator.clipboard.writeText(t);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  function copyNotice(n: Notice): void {
+    void copyText(`${n.msg}\n${n.raw ?? ""}`).then((ok) =>
+      addNotice("info", ok ? "已複製到剪貼簿" : "複製失敗(剪貼簿不可用)"),
+    );
+  }
+  // ---- J:callback load 持續過載警示(單次尖峰不洗版)----
+  const overload = new OverloadDetector(1.0, 6, 12); // ~0.13s 連續超載起算、~0.27s 正常解除
+  let overloadOn = $state(false);
+  function feedLoad(): void {
+    const v = meters?.callbackLoad ?? 0;
+    if (overload.sample(v)) {
+      overloadOn = overload.isOverloaded;
+      if (overloadOn)
+        addNotice(
+          "error",
+          "音訊負載持續過載 —— 請增大 Buffer 或減少 plugin",
+          `callbackLoad = ${Math.round(v * 100)}%`,
+        );
+    }
+  }
+  // ---- M:右鍵選單(全域一份;TrackStrip 發起)----
+  let menu = $state<{
+    x: number;
+    y: number;
+    label: string;
+    items: Array<{ label: string; disabled?: boolean; run: () => void }>;
+  } | null>(null);
+  function openMenu(
+    x: number,
+    y: number,
+    label: string,
+    items: Array<{ label: string; disabled?: boolean; run: () => void }>,
+  ): void {
+    menu = { x, y, label, items };
+  }
   // ---- B:authoritative dirty(engine revision vs 上次存/載基準)----
   let revision = $state<number | null>(null); // engine 權威版號(status/snapshot/reply 帶回)
   let cleanRevision = $state<number | null>(null); // 上次成功存/載當下的 revision
@@ -71,81 +137,142 @@
   const inputTracks = $derived(tracks.filter((t) => t.kind !== "output"));
   const outputTracks = $derived(tracks.filter((t) => t.kind === "output"));
 
-  onMount(async () => {
-    // 原生網頁右鍵選單不要(之後換符合主題的自訂選單)
-    window.addEventListener("contextmenu", (e) => e.preventDefault());
+  // ---- A:啟動/重連順序 = 先註冊全部 listener → 讀 connection → 主動權威同步。
+  // 反過來(先 connectStatus 再註冊)會漏接連線/snapshot 事件:bridge 在 spawn 後
+  // 立即推 snapshot,註冊前的推送就是丟失。teardown 解除全部(HMR/重掛不重複事件)。
+  const unsubs: Array<() => void> = [];
+  let disposed = false;
+  /** 註冊 listener;teardown 已跑 = 立即退訂(不殘留) */
+  function sub(u: () => void): void {
+    if (disposed) u();
+    else unsubs.push(u);
+  }
+  onMount(() => {
+    // P2-M/P1-O 折衷:原生網頁右鍵選單全面不出現(去網頁感 —— 軌/插件右鍵走
+    // 自訂主題選單);但「需要複製的文字區」與輸入框放行原生選單(右鍵 Copy /
+    // 貼上),user-select 已開放、Ctrl+C 亦通 —— 複製能力不受影響
+    const onCtx = (e: MouseEvent) => {
+      const t = e.target as HTMLElement;
+      if (t.closest?.(".err, .notice-msg, .apppath, .dirpath, input, textarea")) return;
+      e.preventDefault();
+    };
+    window.addEventListener("contextmenu", onCtx);
+    unsubs.push(() => window.removeEventListener("contextmenu", onCtx));
+
+    void (async () => {
+
+      sub(
+      await onConnection((c) => {
+        // P1-A:reconnect epoch 對齊 —— engine 換代重連,本地一次性旗標作廢重跑
+        if (epochChanged(conn.epoch, c.epoch)) {
+          ensuredDefaults = false;
+          restoreP = null;
+          scanJobId = null;
+          scanRunning = false;
+        }
+        conn = c;
+        if (c.connected && devices.length === 0) void refreshDevices();
+      }),
+    );
+      sub(
+      await onSnapshot((s) => {
+        snap = s;
+        status = s.status;
+        if (typeof s.status.revision === "number") revision = s.status.revision;
+        // 全域 plugin registry 重連也對齊(不用重新掃);掃描進行中不覆寫
+        if (!scanRunning && Array.isArray(s.lastScan)) {
+          scanModules = s.lastScan as ScanModule[];
+        }
+        void ensureDefaults(); // 首次連上空場景也要補系統輸出(snapshot 不走 status 事件)
+      }),
+    );
+      sub(
+      await onEngineEvent((kind, payload) => {
+        if (kind === "status") {
+          status = payload as EngineStatus;
+          const st = payload as EngineStatus;
+          if (typeof st.revision === "number") revision = st.revision;
+          // stream 狀態的權威對齊:engine 跑著時 UI 選擇跟著實際值(失敗回滾後也正確)
+          if (st.running && st.deviceKey) selected = st.deviceKey;
+          void ensureDefaults();
+        }
+        // 硬體面板關閉:driver 設定可能變(率),且 SSL 這類 driver 在面板動 buffer 後
+        // 現有 stream 會死流 —— 一律重掃 + 重建(短暫中斷換取與硬體同步)
+        if (kind === "devices_changed") void onPanelClosed();
+        // ---- E:掃描 job events(jobId 不符 = 上一代的 late event,忽略)----
+        if (kind === "scan_progress") {
+          const p = payload as { jobId: number; done: number; total: number };
+          if (p.jobId === scanJobId) scanProgress = { done: p.done, total: p.total };
+        }
+        if (kind === "scan_done") {
+          const p = payload as { jobId: number; plugins: ScanModule[]; failed: ScanFailure[] };
+          if (p.jobId === scanJobId) {
+            scanModules = p.plugins ?? [];
+            scanFailed = p.failed ?? [];
+            scanRunning = false;
+            scanProgress = null;
+          }
+        }
+        if (kind === "scan_failed") {
+          const p = payload as { jobId: number; error: string };
+          if (p.jobId === scanJobId) {
+            scanNotice = p.error;
+            scanRunning = false;
+            scanProgress = null;
+          }
+        }
+        if (kind === "scan_cancelled") {
+          const p = payload as { jobId: number };
+          if (p.jobId === scanJobId) {
+            scanRunning = false;
+            scanProgress = null;
+          }
+        }
+      }),
+    );
+      sub(
+      await onMeters((m) => {
+        meters = m;
+        feedLoad(); // J:負載警示 debounce(持續過載才通知)
+      }),
+    );
+    // ---- B:關窗前 dirty 詢問(儲存/捨棄/取消;取消 = 真的不關)----
+      sub(
+      await getCurrentWindow().onCloseRequested(async (e) => {
+        if (!dirty) return; // clean:直接關
+        e.preventDefault();
+        const choice = await askDirty();
+        const plan = resolveDirtyChoice(dirty, choice);
+        if (plan.shouldSave) {
+          const okSave = await saveSessionForClose();
+          if (!okSave) return; // 存失敗 = 不退出(不得覆蓋失敗就關)
+        }
+        if (plan.proceed || plan.shouldSave) void getCurrentWindow().destroy();
+      }),
+    );
+
+    // listeners 全掛好 → 讀現況(漏接的 snapshot 事件靠下一步主動拉補)
     conn = await connectStatus().catch(() => conn);
-    await onConnection((c) => {
-      conn = c;
-      if (c.connected && devices.length === 0) refreshDevices().catch(() => {});
-    });
-    await onSnapshot((s) => {
-      snap = s;
+    // 主動權威同步:連線已久/事件早發過的場合,snapshot 事件不會再來
+    try {
+      const r = await engineCommand("get_snapshot", {});
+      const s = r.snapshot as { status: EngineStatus; lastScan: ScanModule[] | null };
       status = s.status;
       if (typeof s.status.revision === "number") revision = s.status.revision;
-      // 全域 plugin registry 重連也對齊(不用重新掃);掃描進行中不覆寫
-      if (!scanRunning && Array.isArray(s.lastScan)) {
-        scanModules = s.lastScan as ScanModule[];
-      }
-      ensureDefaults().catch(() => {}); // 首次連上空場景也要補系統輸出(snapshot 不走 status 事件)
-    });
-    await onEngineEvent((kind, payload) => {
-      if (kind === "status") {
-        status = payload as EngineStatus;
-        const st = payload as EngineStatus;
-        if (typeof st.revision === "number") revision = st.revision;
-        // stream 狀態的權威對齊:engine 跑著時 UI 選擇跟著實際值(失敗回滾後也正確)
-        if (st.running && st.deviceKey) selected = st.deviceKey;
-        ensureDefaults().catch(() => {});
-      }
-      // 硬體面板關閉:driver 設定可能變(率),且 SSL 這類 driver 在面板動 buffer 後
-      // 現有 stream 會死流 —— 一律重掃 + 重建(短暫中斷換取與硬體同步)
-      if (kind === "devices_changed") onPanelClosed().catch(() => {});
-      // ---- E:掃描 job events(jobId 不符 = 上一代的 late event,忽略)----
-      if (kind === "scan_progress") {
-        const p = payload as { jobId: number; done: number; total: number };
-        if (p.jobId === scanJobId) scanProgress = { done: p.done, total: p.total };
-      }
-      if (kind === "scan_done") {
-        const p = payload as { jobId: number; plugins: ScanModule[]; failed: ScanFailure[] };
-        if (p.jobId === scanJobId) {
-          scanModules = p.plugins ?? [];
-          scanFailed = p.failed ?? [];
-          scanRunning = false;
-          scanProgress = null;
-        }
-      }
-      if (kind === "scan_failed") {
-        const p = payload as { jobId: number; error: string };
-        if (p.jobId === scanJobId) {
-          scanNotice = p.error;
-          scanRunning = false;
-          scanProgress = null;
-        }
-      }
-      if (kind === "scan_cancelled") {
-        const p = payload as { jobId: number };
-        if (p.jobId === scanJobId) {
-          scanRunning = false;
-          scanProgress = null;
-        }
-      }
-    });
-    await onMeters((m) => (meters = m));
-    // ---- B:關窗前 dirty 詢問(儲存/捨棄/取消;取消 = 真的不關)----
-    await getCurrentWindow().onCloseRequested(async (e) => {
-      if (!dirty) return; // clean:直接關
-      e.preventDefault();
-      const choice = await askDirty();
-      const plan = resolveDirtyChoice(dirty, choice);
-      if (plan.shouldSave) {
-        const okSave = await saveSessionForClose();
-        if (!okSave) return; // 存失敗 = 不退出(不得覆蓋失敗就關)
-      }
-      if (plan.proceed || plan.shouldSave) void getCurrentWindow().destroy();
-    });
-    settingsReady();
-    refreshDevices().catch(() => {});
+      if (!scanRunning && Array.isArray(s.lastScan)) scanModules = s.lastScan;
+      connProbeErr = null;
+    } catch (e) {
+      connProbeErr = String(e); // version mismatch 等分類顯示(connView)
+    }
+      settingsReady();
+      void refreshDevices();
+    })();
+
+    // teardown:解除所有 Tauri listener(HMR/重掛不重複事件)
+    return () => {
+      disposed = true;
+      for (const u of unsubs) u();
+    };
   });
 
   /** 開三分支 modal;使用者選完 resolve */
@@ -190,7 +317,9 @@
       restoreError = "";
       return true;
     } catch (e) {
+      // P1-F:存檔失敗 dirty 不清(cleanRevision 沒動)、原檔仍在(原子寫入)
       notice = String(e);
+      addNotice("error", "Session 儲存失敗 —— 未儲存的變更仍在", String(e));
       return false;
     }
   }
@@ -201,8 +330,11 @@
   function settingsReady() {
     // 快取單次讀取;ensureDefaults 前必 await,避免 settings 未到就先建空白場景
     settingsP ??= getSettings()
-      .then((s) => {
-        appSettings = s;
+      .then((r) => {
+        appSettings = r.settings;
+        // P1-E:normalize 警告(known field 壞值已回預設)—— 頂欄通知呈現
+        if (r.warnings.length > 0)
+          addNotice("error", "設定檔有問題,部分值已回復預設", r.warnings.join("\n"));
       })
       .catch(() => {}); // 讀不到 = 用預設(blank)
     return settingsP;
@@ -211,9 +343,13 @@
   async function persistSettings() {
     if (!appSettings) return;
     try {
-      await setSettings(appSettings);
-    } catch {
-      // 存失敗不擋 UI;下次啟動退回舊值
+      const r = await setSettings(appSettings);
+      appSettings = r.settings; // 回覆 = normalize 後的權威值
+      if (r.warnings.length > 0)
+        addNotice("error", "設定有部分值不合法,已回復預設", r.warnings.join("\n"));
+    } catch (e) {
+      // 存失敗不擋 UI;下次啟動退回舊值(原子寫入:舊檔完整保留)
+      addNotice("error", "設定儲存失敗(下次啟動沿用舊值)", String(e));
     }
   }
 
@@ -288,8 +424,9 @@
       const r = await engineCommand("list_devices");
       devices = (r.devices as DeviceInfo[]) ?? [];
       if (!selected && devices.length) {
-        applyDeviceDefaults(devices[0]);
-        start(); // 自動啟用:開 app 即跑
+        // P1-D:啟動偏好 —— 上次「成功啟動」的裝置優先(還在清單才用),
+        // 否則依列舉序逐個嘗試到成功(不是 devices[0] 失敗即停)
+        await autoStart();
       }
       if (notice === "not connected") notice = ""; // 啟動競態殘留,成功即清
     } catch (e) {
@@ -297,17 +434,61 @@
     }
   }
 
+  /** P1-D:依偏好序嘗試啟動。成功才把該裝置/Buffer 存成 lastWorking(失敗選擇
+   *  不成偏好);全部失敗 = audioStale + 診斷(實際試了哪些、各失敗原因)。 */
+  async function autoStart(): Promise<void> {
+    await settingsReady();
+    const prefer = appSettings?.lastWorkingDevice ?? null;
+    const preferBuf = appSettings?.lastWorkingBuffer ?? null;
+    const order: DeviceInfo[] = [];
+    const prefDev = devices.find((d) => d.deviceKey === prefer);
+    if (prefDev) order.push(prefDev);
+    for (const d of devices) if (d.deviceKey !== prefer) order.push(d);
+    if (order.length === 0) return;
+    // 偏好裝置存在 = 連 Buffer 也用上次的(driver preferred fallback)
+    if (prefDev) {
+      bufSize =
+        preferBuf != null && prefDev.bufferSizes.includes(preferBuf)
+          ? preferBuf
+          : prefDev.bufferSizes.includes(prefDev.preferredBufferSize)
+            ? prefDev.preferredBufferSize
+            : (prefDev.bufferSizes[0] ?? null);
+    }
+    const failures: string[] = [];
+    for (const d of order) {
+      if (!prefDev || d !== prefDev) applyDeviceDefaults(d);
+      const ok = await start(d.deviceKey, true);
+      if (ok) {
+        if (d !== prefDev)
+          addNotice(
+            "info",
+            `已改用「${d.name}」啟動(偏好裝置不可用)`,
+            `偏好:${prefer ?? "無"};失敗:${failures.join(" | ")}`,
+          );
+        return;
+      }
+      failures.push(`${d.name}:${lastStartErr}`);
+    }
+    audioStale = true;
+    addNotice("error", "沒有任何 ASIO 裝置能成功啟動", failures.join("\n"));
+    notice = failures.join(" | ");
+  }
+
+  let lastStartErr = "";
+
   // ---- C:交易式裝置/Buffer 切換。onchange 立即切(無 Apply);busy 鎖住控制防
   // 連點競態;切換序列化(promise chain);新設定起不來 = 自動恢復最後可工作的
   // 裝置/Buffer;恢復也失敗 = engine 已 stopped,權威 status event 會把 UI 帶回現實 ----
   let lastGood = $state<{ key: string; buf: number | null } | null>(null); // 最後成功 start 的設定
   let switchChain: Promise<void> = Promise.resolve();
 
-  async function start(deviceKey?: string) {
+  /** 回傳是否成功(autoStart 的候選序判斷用)。quiet = 不洗 notice(autoStart
+   *  匯整各裝置失敗原因後一次呈現)。 */
+  async function start(deviceKey?: string, quiet = false): Promise<boolean> {
     const key = deviceKey ?? selected;
-    if (!key || busy || status?.running) return;
+    if (!key || busy || status?.running) return false;
     busy = true;
-    notice = "";
+    if (!quiet) notice = "";
     try {
       await engineCommand("start", {
         deviceKey: key,
@@ -316,11 +497,26 @@
       });
       lastGood = { key, buf: bufSize };
       audioStale = false;
+      persistLastWorking(key, bufSize); // P1-D:成功才寫偏好
+      return true;
     } catch (e) {
+      lastStartErr = friendlyError(String(e)).friendly;
       audioStale = true;
-      notice = String(e);
+      if (!quiet) notice = String(e);
+      return false;
+    } finally {
+      busy = false;
     }
-    busy = false;
+  }
+
+  /** P1-D:lastWorkingDevice/lastWorkingBuffer —— 僅成功 start 後呼叫 */
+  function persistLastWorking(key: string, buf: number | null): void {
+    if (appSettings?.lastWorkingDevice === key && appSettings?.lastWorkingBuffer === buf) return;
+    if (appSettings) {
+      appSettings.lastWorkingDevice = key;
+      appSettings.lastWorkingBuffer = buf;
+    }
+    setSettings({ lastWorkingDevice: key, lastWorkingBuffer: buf }).catch(() => {});
   }
 
   function queueRestart(key = selected) {
@@ -342,6 +538,7 @@
       });
       lastGood = { key, buf: wantBuf };
       audioStale = false;
+      persistLastWorking(key, wantBuf); // P1-D:成功才寫偏好
     } catch (e) {
       // 新設定失敗:回滾到最後可工作設定(成功 = UI 回權威值 + 顯示原因)
       notice = String(e);
@@ -357,9 +554,11 @@
           bufSize = lastGood.buf;
           notice = `切換失敗,已恢復原裝置/Buffer — ${String(e)}`;
           audioStale = false;
+          persistLastWorking(lastGood.key, lastGood.buf);
         } catch (e2) {
           audioStale = true;
           notice = `切換與回滾都失敗,音訊已停止 — ${String(e2)}`;
+          addNotice("error", "裝置切換與回滾都失敗,音訊已停止", String(e2));
         }
       } else {
         audioStale = true;
@@ -427,6 +626,7 @@
   }
 
   // ---------- 拖曳排序(HTML5 DnD;事件委派在 lane,跨群組不 preventDefault = 不可放) ----------
+  // P1-I:strip 位置純幾何計算(laneView.ts)—— 虛擬化後不在 DOM 的 strip 也算得對
 
   type LaneGroup = "input" | "output";
   let drag = $state<{ id: number; group: LaneGroup } | null>(null);
@@ -435,11 +635,28 @@
   // 只能靠 pointerdown(capture)先記起來
   let pressEl: HTMLElement | null = null;
 
-  function lanePos(lane: HTMLElement, x: number): number {
-    // 第一個中心點在指標右側的 strip = 插入位;都沒有 = 尾端
-    const kids = [...lane.querySelectorAll<HTMLElement>(".strip")];
-    const hit = kids.findIndex((k) => k.getBoundingClientRect().left + k.offsetWidth / 2 > x);
-    return hit === -1 ? kids.length : hit;
+  // P1-I:lane 捲動位置(虛擬化窗口)—— svelte:window 不動;各 lane onscroll 更新
+  let laneScroll = $state({ input: 0, output: 0 });
+  let laneWidth = $state({ input: 0, output: 0 });
+  let inputLaneEl = $state<HTMLDivElement | null>(null);
+  let outputLaneEl = $state<HTMLDivElement | null>(null);
+  const inputWin = $derived(visibleRange(laneScroll.input, laneWidth.input, inputTracks.length));
+  const outputWin = $derived(visibleRange(laneScroll.output, laneWidth.output, outputTracks.length));
+  const inputSp = $derived(spacerWidths(inputWin.start, inputWin.end, inputTracks.length));
+  const outputSp = $derived(spacerWidths(outputWin.start, outputWin.end, outputTracks.length));
+
+  function bindLane(group: LaneGroup): HTMLDivElement | null {
+    return group === "input" ? inputLaneEl : outputLaneEl;
+  }
+  function onLaneScroll(group: LaneGroup, e: Event): void {
+    const el = e.currentTarget as HTMLElement;
+    laneScroll[group] = el.scrollLeft;
+    laneWidth[group] = el.clientWidth;
+  }
+
+  function lanePos(lane: HTMLElement, x: number, count: number): number {
+    // 虛擬化安全:幾何計算,不查 DOM
+    return dropPosFromX(x, lane.getBoundingClientRect().left, lane.scrollLeft, count);
   }
   function laneArr(group: LaneGroup): Track[] {
     return group === "input" ? inputTracks : outputTracks;
@@ -466,7 +683,10 @@
       if (!drag || drag.group !== group || !e.dataTransfer) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = "move";
-      dropAt = { group, pos: lanePos(e.currentTarget as HTMLElement, e.clientX) };
+      dropAt = {
+        group,
+        pos: lanePos(e.currentTarget as HTMLElement, e.clientX, laneArr(group).length),
+      };
     };
   }
   function onDrop(group: LaneGroup) {
@@ -476,14 +696,15 @@
       const arr = laneArr(group);
       const dragIdx = arr.findIndex((t) => t.trackId === drag!.id);
       if (dragIdx >= 0) {
-        const pos = lanePos(e.currentTarget as HTMLElement, e.clientX);
-        // lane 位置 → master 絕對索引(track_move = erase+insert;先移除造成左移要補回)
-        let target =
-          pos >= arr.length
-            ? tracks.findIndex((t) => t.trackId === arr[arr.length - 1].trackId) + 1
-            : tracks.findIndex((t) => t.trackId === arr[pos].trackId);
-        if (pos > dragIdx) target -= 1;
-        target = Math.max(0, Math.min(target, tracks.length - 1));
+        const pos = lanePos(e.currentTarget as HTMLElement, e.clientX, arr.length);
+        // lane 位置 → master 絕對索引(erase+insert 左移補回;純函式可測)
+        const target = laneDropToMasterIndex(
+          pos,
+          dragIdx,
+          (laneIdx) => tracks.findIndex((t) => t.trackId === arr[laneIdx].trackId),
+          arr.length,
+          tracks.length,
+        );
         engineCommand("track_move", { trackId: drag.id, newIndex: target }).catch(() => {});
       }
       drag = null;
@@ -518,6 +739,32 @@
       restoreError = ""; // 手動救回 = 啟動失敗警示該滅
     } catch (e) {
       notice = String(e);
+      addNotice("error", "Session 儲存失敗", String(e));
+    }
+  }
+
+  /** P1-L:起始區「最近 Session」入口 —— 直接載上次路徑(與 loadSession 同款 dirty 流程) */
+  async function reopenLastSession(): Promise<void> {
+    const p = appSettings?.lastSessionPath;
+    if (!p) return;
+    if (dirty) {
+      const choice = await askDirty();
+      const plan = resolveDirtyChoice(dirty, choice);
+      if (plan.shouldSave) {
+        const okSave = await saveSessionForClose();
+        if (!okSave) return;
+      } else if (!plan.proceed) {
+        return;
+      }
+    }
+    try {
+      const r = await engineCommand("load_session", { path: p });
+      applyLoadedSession(r);
+      notice = "";
+      restoreError = "";
+    } catch (e) {
+      notice = String(e);
+      addNotice("error", "Session 載入失敗", String(e));
     }
   }
 
@@ -565,6 +812,7 @@
       restoreError = "";
     } catch (e) {
       notice = String(e);
+      addNotice("error", "Session 載入失敗", String(e));
     }
   }
 
@@ -608,6 +856,8 @@
   }
 
   const running = $derived(status?.running ?? false);
+  /** P1-L:連線顯示模型(細分 phase + tone;connPhase.ts 純函式) */
+  const cv = $derived(connView(conn, connProbeErr));
   const selDev = $derived(devices.find((d) => d.deviceKey === selected) ?? null);
   // ASIO getLatencies 單位 = samples;換算 ms 顯示(去尾零;driver 沒報 = —)
   function samplesToMs(n: number | null, rate: number): string {
@@ -616,8 +866,23 @@
 </script>
 
 <header class="bar">
-  <span class="dot" class:ok={conn.connected}></span>
-  <span>{conn.connected ? "已連線" : "連線中…"}</span>
+  <!-- P1-L:連線細分狀態(spawning/connected/spawn_failed/version mismatch…)+ retry -->
+  <span class="dot" class:ok={cv.tone === "ok"} class:err={cv.tone === "err"}></span>
+  <span title={cv.detail || cv.label}>{cv.label}</span>
+  {#if cv.phase === "spawn_failed" || cv.phase === "version_mismatch" || cv.phase === "disconnected"}
+    <button class="settings" onclick={() => void respawnEngine()}>重試連線</button>
+  {/if}
+  {#if cv.phase !== "connected"}
+    <button
+      class="settings"
+      title="複製連線診斷(狀態、版本、原因)"
+      onclick={() =>
+        void copyText(
+          `phase=${cv.phase} connected=${conn.connected} epoch=${conn.epoch} engine=${conn.engineVersion} detail=${cv.detail}`,
+        ).then((ok) => addNotice("info", ok ? "已複製連線診斷" : "複製失敗(剪貼簿不可用)"))}
+      >複製診斷</button
+    >
+  {/if}
   <button class="settings" onclick={() => (settingsOpen = true)}>設定</button>
   {#if audioStale}
     <button class="err aslink" onclick={() => (settingsOpen = true)} title={notice}
@@ -642,9 +907,26 @@
   {#if dirty}
     <span class="dim" title="有未儲存的變更">● 未儲存</span>
   {/if}
+  <!-- P1-O:通知中心(最近數條;技術細節可複製) -->
+  {#each notices as n (n.id)}
+    <span class="notice" class:iserr={n.kind === "error"}>
+      <span class="notice-msg" title={n.raw ?? n.msg}>{n.msg}</span>
+      {#if n.raw}
+        <button class="settings" onclick={() => copyNotice(n)} title={`複製詳細資料:${n.raw}`}>複製</button>
+      {/if}
+      <button class="settings" onclick={() => dismissNotice(n.id)} title="關閉此通知">×</button>
+    </span>
+  {/each}
   <span style="flex:1"></span>
   {#if running}
     <span class="dot ok"></span>
+    <!-- P1-J:callback 負載 %(RT TSC 量測;持續 >100% = 過載警示走通知中心) -->
+    <span
+      class="mono"
+      class:err={overloadOn}
+      title="audio callback CPU 佔比(持續超過 100% = 過載,xrun 風險)"
+      >load {Math.round((meters?.callbackLoad ?? 0) * 100)}%</span
+    >
     <span class="mono"
       >{status!.sampleRate} Hz · buf {status!.bufferSize} · lat input/output
       {samplesToMs(status!.inputLatency, status!.sampleRate)}ms/{samplesToMs(
@@ -675,19 +957,26 @@
       </div>
       <div
         class="lanes"
+        bind:this={inputLaneEl}
+        role="list"
+        aria-label="輸入軌帶"
         onpointerdowncapture={(e) => (pressEl = e.target as HTMLElement)}
+        onscroll={(e) => onLaneScroll("input", e)}
         ondragstart={onDragStart("input")}
         ondragover={onDragOver("input")}
         ondrop={onDrop("input")}
         ondragend={onDragEnd}
       >
-        {#each inputTracks as t, i (t.trackId)}
+        {#if inputSp.left > 0}<div class="spacer" style="flex:0 0 {inputSp.left}px" aria-hidden="true"></div>{/if}
+        {#each inputTracks.slice(inputWin.start, inputWin.end) as t, vi (t.trackId)}
+          {@const i = inputWin.start + vi}
           <TrackStrip
             track={t}
             {tracks}
             {devices}
             selectedDeviceKey={selected}
             strips={meters?.strips}
+            metered={t.metered !== false}
             scanModules={scanModules}
             scanFailed={scanFailed}
             scanRunning={scanRunning}
@@ -695,13 +984,33 @@
             scanNotice={scanNotice}
             onScan={startScan}
             onCancelScan={cancelScan}
+            {openMenu}
             dropBefore={dropAt?.group === "input" && dropAt.pos === i}
             dropAfter={dropAt?.group === "input" && dropAt.pos === i + 1}
             dragging={drag?.id === t.trackId}
           />
         {:else}
-          <p class="dim hint">用上方按鈕新增 Audio / App / FX 軌</p>
+          <!-- P1-L:空輸入帶的起始區(中性入口:最近 session、裝置狀態、加入軌) -->
+          <div class="startcard">
+            <p class="dim">還沒有輸入軌 —— 加入 Audio(App 軌抓程式聲音)、或從上次的 Session 恢復。</p>
+            <div class="startrow">
+              <button class="mini" onclick={() => addTrack("audio")}>＋ Audio 軌(麥克風/樂器)</button>
+              <button class="mini" onclick={() => addTrack("app")}>＋ App 軌(抓程式聲音)</button>
+              <button class="mini" onclick={loadSession}>載入 Session…</button>
+              {#if appSettings?.lastSessionPath}
+                <button class="mini" onclick={() => reopenLastSession()} title={appSettings.lastSessionPath}
+                  >最近:{appSettings.lastSessionPath.split(/[\\/]/).pop() ?? ""}</button
+                >
+              {/if}
+            </div>
+            <p class="dim startinfo">
+              裝置:{selDev?.name ?? (devices.length ? "選擇中" : "無 ASIO 裝置")} ·
+              {running ? `執行中 ${Math.round(status!.sampleRate)} Hz` : "音訊未啟動"} ·
+              監聽/串流輸出軌已就緒
+            </p>
+          </div>
         {/each}
+        {#if inputSp.right > 0}<div class="spacer" style="flex:0 0 {inputSp.right}px" aria-hidden="true"></div>{/if}
       </div>
     </section>
 
@@ -713,19 +1022,26 @@
       </div>
       <div
         class="lanes"
+        bind:this={outputLaneEl}
+        role="list"
+        aria-label="輸出軌帶"
         onpointerdowncapture={(e) => (pressEl = e.target as HTMLElement)}
+        onscroll={(e) => onLaneScroll("output", e)}
         ondragstart={onDragStart("output")}
         ondragover={onDragOver("output")}
         ondrop={onDrop("output")}
         ondragend={onDragEnd}
       >
-        {#each outputTracks as t, i (t.trackId)}
+        {#if outputSp.left > 0}<div class="spacer" style="flex:0 0 {outputSp.left}px" aria-hidden="true"></div>{/if}
+        {#each outputTracks.slice(outputWin.start, outputWin.end) as t, vi (t.trackId)}
+          {@const i = outputWin.start + vi}
           <TrackStrip
             track={t}
             {tracks}
             {devices}
             selectedDeviceKey={selected}
             strips={meters?.strips}
+            metered={t.metered !== false}
             scanModules={scanModules}
             scanFailed={scanFailed}
             scanRunning={scanRunning}
@@ -733,6 +1049,7 @@
             scanNotice={scanNotice}
             onScan={startScan}
             onCancelScan={cancelScan}
+            {openMenu}
             dropBefore={dropAt?.group === "output" && dropAt.pos === i}
             dropAfter={dropAt?.group === "output" && dropAt.pos === i + 1}
             dragging={drag?.id === t.trackId}
@@ -740,10 +1057,14 @@
         {:else}
           <p class="dim hint">新增輸出軌(監聽 / 串流)</p>
         {/each}
+        {#if outputSp.right > 0}<div class="spacer" style="flex:0 0 {outputSp.right}px" aria-hidden="true"></div>{/if}
       </div>
     </section>
   </section>
 </main>
+
+<!-- P2-M:右鍵選單(全域一份) -->
+<ContextMenu {menu} onClose={() => (menu = null)} />
 
 <dialog
   bind:this={settingsDlg}
@@ -948,6 +1269,9 @@
     left: 50%;
     transform: translate(-50%, -50%);
     margin: 0;
+    /* P1-K:窄視窗不裁掉關閉/確認 —— 內容上限 85vh、垂直捲動 */
+    max-height: 85vh;
+    overflow-y: auto;
   }
   .settingsdlg::backdrop {
     background: rgb(0 0 0 / 0.5);
@@ -1135,5 +1459,52 @@
   }
   .hint {
     font-size: 11px;
+  }
+  /* P1-I:虛擬化 spacer(撐住捲軸寬度;flex gap 由 spacerWidths 校正) */
+  .spacer {
+    flex: 0 0 auto;
+    min-width: 0;
+  }
+  /* P1-L:空帶起始區 */
+  .startcard {
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-width: 460px;
+  }
+  .startcard p {
+    margin: 0;
+  }
+  .startrow {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .startinfo {
+    font-size: 11px;
+  }
+  /* P1-O:頂欄通知 */
+  .notice {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    max-width: 340px;
+  }
+  .notice-msg {
+    font-size: 12px;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    user-select: text; /* P1-O:錯誤文字可選取複製 */
+  }
+  .notice.iserr .notice-msg {
+    color: var(--warn);
+  }
+  .dot.err {
+    background: var(--err);
   }
 </style>

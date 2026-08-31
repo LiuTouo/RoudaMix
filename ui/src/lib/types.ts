@@ -4,6 +4,10 @@ export interface ConnectionStatus {
   connected: boolean;
   epoch: number;
   engineVersion: string;
+  /** P1-L 細分:connecting | spawning | connected | spawn_failed | disconnected */
+  phase?: string;
+  /** phase 詳情(spawn 失敗原因等;空 = 無) */
+  detail?: string;
 }
 
 export interface ParamValue {
@@ -29,6 +33,7 @@ export interface TrackOutput {
 export interface AudioApp {
   pid: number;
   name: string;
+  path?: string | null; // P1-C:exe 完整路徑(同名程序辨識)
 }
 
 export interface RenderDevice {
@@ -50,6 +55,8 @@ export interface Track {
   gain: number; // 線性 [0,4]
   mute: boolean;
   plugins: RackSlot[];
+  /** P1-H:telemetry strip 預算內有錶(false = 錶不可用,非靜音) */
+  metered?: boolean;
   error?: string | null; // 軌道級錯誤(capture 失效等)
 }
 
@@ -153,6 +160,8 @@ export interface MeterStrip {
 export interface MetersFrame {
   sequence: number;
   xruns: number;
+  /** P1-J:audio callback CPU 佔比(RT 端 TSC 量測;>1 = 過載) */
+  callbackLoad?: number;
   sampleRate: number;
   bufferSize: number;
   inputLatency: number;

@@ -109,6 +109,10 @@ nlohmann::json output_json(const rmx::TrackOutput& out) {
 
 nlohmann::json tracks_json() {
     auto arr = nlohmann::json::array();
+    // strip 預算與 swap_graph 同一純函式:master 序兩輪(track 先、plugin 後),
+    // 超出 64 預算的節點 metered=false —— UI 顯示「無錶」而不是誤當靜音(P1-H)
+    const auto strips = rmx::plan_telemetry_strips(g_engine.tracks(), rmx::kTelemetryStrips);
+    std::size_t ti = 0;
     for (const auto& t : g_engine.tracks()) {
         auto plugins = nlohmann::json::array();
         for (const auto& s : t.chain) {
@@ -129,6 +133,8 @@ nlohmann::json tracks_json() {
             });
         }
         const char* role = rmx::system_role_str(t.system_role);
+        const bool metered =
+            ti < strips.size() && strips[ti].track_strip != rmx::kNoStrip;
         arr.push_back({
             {"trackId", t.track_id},
             {"kind", rmx::track_kind_str(t.kind)},
@@ -141,8 +147,10 @@ nlohmann::json tracks_json() {
             {"gain", t.gain},
             {"mute", t.mute},
             {"plugins", plugins},
+            {"metered", metered},
             {"error", t.track_error.empty() ? nlohmann::json(nullptr) : nlohmann::json(t.track_error)},
         });
+        ++ti;
     }
     return arr;
 }
@@ -345,7 +353,10 @@ bool dispatch(HANDLE client, const Command& c) {
         // 主 thread COM(STA)列舉 active audio sessions;不持鎖(純讀系統狀態)
         nlohmann::json apps = nlohmann::json::array();
         for (const auto& a : g_engine.list_audio_apps()) {
-            apps.push_back({{"pid", a.pid}, {"name", a.name}});
+            apps.push_back({{"pid", a.pid},
+                            {"name", a.name},
+                            {"path", a.path.empty() ? nlohmann::json(nullptr)
+                                                    : nlohmann::json(a.path)}});
         }
         ok(nlohmann::json{{"apps", apps}});
     } else if (c.kind == "list_render_devices") {

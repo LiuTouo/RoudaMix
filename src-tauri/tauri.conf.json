@@ -15,8 +15,8 @@
         "title": "RoudaMix",
         "width": 1100,
         "height": 820,
-        "minWidth": 760,
-        "minHeight": 560,
+        "minWidth": 900,
+        "minHeight": 600,
         "maximized": true,
         "dragDropEnabled": false
       }

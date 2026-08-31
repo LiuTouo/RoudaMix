@@ -57,6 +57,11 @@ public:
     // Audio thread:samples 為本 block 樣本數,squared_sum 為振幅平方和
     void accumulate(std::size_t strip, float peak_l, float peak_r, float squared_sum_l,
                     float squared_sum_r, std::uint32_t samples) noexcept;
+    // Audio thread:本 callback 的 in-TSC 差(RT 端唯一開銷 = 一次 relaxed fetch_add;
+    // 不校準頻率 —— publish 端以 TSC 差比值算佔比,免去絕對頻率)
+    void add_busy_cycles(std::uint64_t cycles) noexcept {
+        busy_cycles_.fetch_add(cycles, std::memory_order_relaxed);
+    }
     // Audio thread:engine 最終輸出 mono((l+r)/2)進頻譜 ring
     void append_spectrum(const float* l, const float* r, std::uint32_t frames) noexcept;
     void set_runtime(float sample_rate, std::uint32_t buffer_size, std::uint32_t in_lat,
@@ -81,6 +86,10 @@ private:
     std::atomic<std::uint32_t> sq_l_bits_[kTelemetryStrips]{};
     std::atomic<std::uint32_t> sq_r_bits_[kTelemetryStrips]{};
     std::atomic<std::uint32_t> sample_counts_[kTelemetryStrips]{};
+    std::atomic<std::uint64_t> busy_cycles_{};  // RT 累積(relaxed add)
+    // publish thread 專屬(publish 單一 consumer,不必 atomic)
+    std::uint64_t last_tsc_{};
+    std::uint64_t last_busy_snapshot_{};
     std::atomic<std::uint32_t> sample_rate_{};
     std::atomic<std::uint32_t> buffer_size_{};
     std::atomic<std::uint32_t> in_lat_{}, out_lat_{};

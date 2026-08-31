@@ -55,6 +55,7 @@ public:
     struct AudioAppInfo {
         std::uint32_t pid{};
         std::string name;
+        std::string path;  // P1-C:exe 完整路徑(辨識同名程序;拿不到 = 空)
     };
     std::vector<AudioAppInfo> list_audio_apps();
     // M5c:WASAPI render endpoints(串流軌裝置選擇器用;default = 預設裝置)

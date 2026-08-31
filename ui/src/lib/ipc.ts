@@ -31,20 +31,33 @@ export function onMeters(cb: (m: MetersFrame) => void) {
   return listen<MetersFrame>("meters", (e) => cb(e.payload));
 }
 
-// ---------- 應用層設定(bridge settings.json) ----------
+// ---------- 應用層設定(bridge settings.json;P1-E typed schema) ----------
 
 export type AppSettings = {
+  schemaVersion?: number;
   startupMode: "blank" | "last" | "folder";
   sessionDir: string | null;
   /** folder 模式:sessionDir 內選定的檔名(空 = 空白 session) */
   startupFile: string | null;
   /** last 模式:上次存/載的路徑 */
   lastSessionPath: string | null;
+  /** P1-D:最後「成功啟動」的裝置/Buffer(只有成功才寫入) */
+  lastWorkingDevice?: string | null;
+  lastWorkingBuffer?: number | null;
 };
 
-export const getSettings = () => invoke<AppSettings>("get_settings");
+/** get/set 的回覆:typed settings + 載入時的 normalize 警告(可呈現) */
+export interface SettingsReply {
+  settings: AppSettings;
+  warnings: string[];
+}
+
+export const getSettings = () => invoke<SettingsReply>("get_settings");
 
 export const setSettings = (patch: Partial<AppSettings>) =>
-  invoke<AppSettings>("set_settings", { patch });
+  invoke<SettingsReply>("set_settings", { patch });
 
 export const listSessions = (dir: string) => invoke<string[]>("list_sessions", { dir });
+
+/** P1-L:連線失敗/spawn 失敗時手動重試(冪等) */
+export const respawnEngine = () => invoke<void>("respawn_engine");

@@ -119,6 +119,17 @@ void asio_channel_union(const std::vector<TrackNode>& tracks,
                         std::vector<std::uint32_t>& in_chans,
                         std::vector<std::uint32_t>& out_chans);
 
+// telemetry strip 預算規劃(P1-H,kTelemetryStrips=64,strip 0 = engine 輸出)。
+// 兩輪、可預測:第一輪所有軌先各拿一個 track strip(master 序,最多 63 條軌有錶);
+// 第二輪剩餘預算依 master 序、鏈序配給 plugin。超出預算 = kNoStrip(該節點沒錶,
+// 不影響音訊)。UI 以 status.tracks[].metered 辨認「無錶」而非當成靜音。
+struct TrackStrips {
+    std::uint32_t track_strip{kNoStrip};
+    std::vector<std::uint32_t> chain_strips;  // 平行於 chain
+};
+std::vector<TrackStrips> plan_telemetry_strips(const std::vector<TrackNode>& nodes,
+                                               std::size_t budget);
+
 // 系統輸出補齊/去重(確定性;migration + 新 session 共用):
 // 每個 role 保留第一個持有者(其餘降級 kNone),沒有持有者時優先指派給
 // 「尚無 role 的 output 軌」(monitor 取第一條、stream 取下一條),不夠才新建

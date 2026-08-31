@@ -45,7 +45,8 @@ body {
   background: var(--bg);
   color: var(--text);
   font: 13px/1.45 "IBM Plex Sans TC", "Segoe UI", system-ui, sans-serif;
-  user-select: none;
+  /* P1-O:全域不鎖 user-select —— 錯誤/路徑/技術細節要能選取複製;
+     拖曳區(軌條)自己在元件內禁選 */
 }
 
 #app {

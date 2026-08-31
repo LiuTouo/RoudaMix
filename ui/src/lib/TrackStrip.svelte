@@ -1,6 +1,6 @@
 <script lang="ts">
   // 軌條:輸入/輸出軌共用。由上而下 = 名稱列 → 來源/輸出裝置 → 目的地多選 →
-  // VST 展開列表(電源=bypass、雙擊=原生 GUI、上→下=訊號序)→ 推桿+靜音 →
+  // VST 展開列表(電源=bypass、GUI 鈕、上→下=訊號序)→ 推桿+靜音 →
   // 錶 → 底部顏色條。engine 溝通自含(ipc 直呼),App 只餵狀態。
   import MeterCanvas from "./MeterCanvas.svelte";
   import { powerOff, powerOn } from "./icons";
@@ -8,6 +8,11 @@
   import { open as openFile } from "@tauri-apps/plugin-dialog";
   import { engineCommand } from "./ipc";
   import { cssColor, parseColor, stripOfTrack } from "./tracks";
+  import { MutationQueue, mutKey } from "./mutations";
+  import { laneDropToMasterIndex } from "./laneView";
+  import { friendlyError } from "./errors";
+  import AppPicker from "./AppPicker.svelte";
+  import ConfirmDialog from "./ConfirmDialog.svelte";
   import type {
     AudioApp,
     DeviceInfo,
@@ -25,6 +30,7 @@
     devices,
     selectedDeviceKey,
     strips,
+    metered = true,
     // 掃描 job 由 App 統一跑(共用 registry,所有軌同一份清單;進度/取消也在 App)
     scanModules = [],
     scanFailed = [],
@@ -33,6 +39,7 @@
     scanNotice = "",
     onScan,
     onCancelScan,
+    openMenu,
     dropBefore = false,
     dropAfter = false,
     dragging = false,
@@ -42,6 +49,7 @@
     devices: DeviceInfo[];
     selectedDeviceKey: string;
     strips: MeterStrip[] | undefined;
+    metered?: boolean;
     scanModules?: ScanModule[];
     scanFailed?: ScanFailure[];
     scanRunning?: boolean;
@@ -49,6 +57,8 @@
     scanNotice?: string;
     onScan: () => void;
     onCancelScan: () => void;
+    /** P2-M:請求右鍵選單(App 持有全域 ContextMenu;{x,y} + items) */
+    openMenu: (x: number, y: number, label: string, items: Array<{ label: string; disabled?: boolean; run: () => void }>) => void;
     dropBefore?: boolean;
     dropAfter?: boolean;
     dragging?: boolean;
@@ -57,9 +67,18 @@
   let err = $state("");
   let scanDlg = $state<HTMLDialogElement | null>(null);
   let destDlg = $state<HTMLDialogElement | null>(null);
-  // app 程序清單 / WASAPI render 裝置清單(focus 時拉,保持常新)
-  let apps = $state<AudioApp[]>([]);
+  // WASAPI render 裝置清單(focus 時拉,保持常新)
   let renderDevices = $state<RenderDevice[]>([]);
+  // P2-N:刪除確認(track/plugin);系統輸出軌不可刪(engine 權威)
+  let confirmBox = $state<{ title: string; impact: string[]; confirmLabel: string } | null>(null);
+  let pendingDelete: (() => void) | null = null;
+  // P1-C:app 軌程序選擇器(needsRebind / 程序死亡重綁)
+  let pickerOpen = $state(false);
+
+  // P1-B:本軌命令序列化 + latest-wins(連點 mute/bypass/dests 不會用 stale
+  // props 互蓋);錯誤進 err 顯示,engine 權威 status event 會把實際值帶回
+  const mq = new MutationQueue((_, e) => (err = friendlyError(String(e)).friendly));
+
   // placeholder(missing/broken)槽:黯淡顯示 + 重試/重新定位/移除
   const isPh = (s: RackSlot) => s.availability !== undefined && s.availability !== "ok";
   const phLabel = (s: RackSlot) =>
@@ -104,15 +123,6 @@
     }
   }
 
-  async function loadApps() {
-    try {
-      const r = await engineCommand("list_audio_apps", {});
-      apps = (r.apps as AudioApp[]) ?? [];
-    } catch (e) {
-      err = String(e);
-    }
-  }
-
   async function loadRenderDevices() {
     try {
       const r = await engineCommand("list_render_devices", {});
@@ -122,25 +132,24 @@
     }
   }
 
-  async function setAppSource(value: string) {
+  // ---- P1-C:app 軌來源 = 程序選擇器(不猜 PID)----
+  // needsRebind = session 載入後只有名字、還沒有有效 runtime pid
+  const needsRebind = $derived(track.kind === "app" && (track.source === null || track.source.type !== "app" || track.source.pid === 0));
+
+  function pickApp(pid: number, name: string) {
     err = "";
-    if (value === "") {
-      try {
-        await engineCommand("track_set_source", { trackId: track.trackId, source: null });
-      } catch (e) {
-        err = String(e);
-      }
-      return;
-    }
-    const app = apps.find((a) => a.pid === Number(value));
-    try {
-      await engineCommand("track_set_source", {
+    mq.run(mutKey.track(track.trackId), "source", () =>
+      engineCommand("track_set_source", {
         trackId: track.trackId,
-        source: { type: "app", pid: Number(value), name: app?.name },
-      });
-    } catch (e) {
-      err = String(e); // app_not_found / unsupported_windows 等
-    }
+        source: { type: "app", pid, name },
+      }),
+    );
+  }
+  function clearApp() {
+    err = "";
+    mq.run(mutKey.track(track.trackId), "source", () =>
+      engineCommand("track_set_source", { trackId: track.trackId, source: null }),
+    );
   }
 
   async function setOutput(value: string) {
@@ -164,16 +173,25 @@
     }
   }
 
-  async function toggleDest(destId: number, checked: boolean) {
+  /** P1-B:dests 本地疊加 —— 命令在飛時繼續勾選,以「本地最新 + 引擎回報」計算,
+   *  使用者最後意圖不被 stale props 蓋掉;失敗 = err + engine 權威 status 對齊 */
+  let destsLocal = $state<number[] | null>(null);
+  $effect(() => {
+    // engine 廣播追上本地值(或本地無疊加)= 清疊加
+    if (destsLocal !== null && arraysEqual(track.dests, destsLocal)) destsLocal = null;
+  });
+  const shownDests = $derived(destsLocal ?? track.dests);
+  function toggleDest(destId: number, checked: boolean) {
     err = "";
-    const dests = checked
-      ? [...track.dests, destId]
-      : track.dests.filter((d) => d !== destId);
-    try {
-      await engineCommand("track_set_dests", { trackId: track.trackId, dests });
-    } catch (e) {
-      err = String(e); // cycle_detected 等:engine 權威,UI 顯示即可
-    }
+    const base = shownDests;
+    const dests = checked ? [...base, destId] : base.filter((d) => d !== destId);
+    destsLocal = dests;
+    mq.run(mutKey.track(track.trackId), "dests", () =>
+      engineCommand("track_set_dests", { trackId: track.trackId, dests }),
+    );
+  }
+  function arraysEqual(a: number[], b: number[]): boolean {
+    return a.length === b.length && a.every((v, i) => v === b[i]);
   }
 
   async function setColor(css: string) {
@@ -266,13 +284,11 @@
     if (dragGain !== null && Math.abs(track.gain - dragGain) < 0.005) dragGain = null;
   });
 
-  async function setMute(mute: boolean) {
+  function setMute(mute: boolean) {
     err = "";
-    try {
-      await engineCommand("track_set", { trackId: track.trackId, mute });
-    } catch (e) {
-      err = String(e);
-    }
+    mq.run(mutKey.track(track.trackId), "mute", () =>
+      engineCommand("track_set", { trackId: track.trackId, mute }),
+    );
   }
 
   // ---- 雙擊改名(engine track_set 已支援 name)----
@@ -299,27 +315,67 @@
     if (editing) nameInput?.select();
   });
 
-  async function removeTrack() {
-    err = "";
-    try {
-      await engineCommand("track_remove", { trackId: track.trackId });
-    } catch (e) {
-      err = String(e);
-    }
+  /** P2-N:刪除前確認 + 影響清單。不做假 Undo —— plugin instance 的內部 state
+   *  無法安全還原;刪除快照(整軌 JSON)留在 console,是日後 command-snapshot
+   *  Undo 的資料基礎(見 contracts/undo-snapshot-design.md)。 */
+  function removeTrack() {
+    if (track.systemRole) return; // 系統輸出不可刪(engine 端權威擋)
+    const downstream = tracks.filter((t) => t.dests.includes(track.trackId));
+    const impact = [
+      `刪除軌道「${track.name}」(${track.kind})`,
+      track.plugins.length > 0 ? `移除 ${track.plugins.length} 個 plugin(含其參數與狀態)` : null,
+      downstream.length > 0
+        ? `${downstream.length} 條軌道對此軌的路由會一併移除(${downstream.map((t) => t.name).join("、")})`
+        : null,
+    ].filter((x): x is string => x !== null);
+    pendingDelete = async () => {
+      err = "";
+      try {
+        // 刪除快照(未來 Undo 的還原材料;不做恢復 UI)
+        console.info("[undo-snapshot] track_remove", JSON.stringify(track));
+        await engineCommand("track_remove", { trackId: track.trackId });
+      } catch (e) {
+        err = friendlyError(String(e)).friendly;
+      }
+    };
+    confirmBox = { title: "刪除軌道?", impact, confirmLabel: "刪除" };
+  }
+
+  function removePlugin(id: number) {
+    const slot = track.plugins.find((s) => s.instanceId === id);
+    const impact = [
+      `從「${track.name}」移除 plugin「${slot?.name ?? id}」`,
+      "其參數與內部狀態一併消失(無法直接還原;可重新加入後重套 preset)",
+    ];
+    pendingDelete = async () => {
+      err = "";
+      try {
+        if (slot) console.info("[undo-snapshot] remove_plugin", JSON.stringify(slot));
+        await engineCommand("remove_plugin", { instanceId: id });
+      } catch (e) {
+        err = friendlyError(String(e)).friendly;
+      }
+    };
+    confirmBox = { title: "移除 plugin?", impact, confirmLabel: "移除" };
+  }
+
+  function answerConfirm(yes: boolean) {
+    const go = pendingDelete;
+    confirmBox = null;
+    pendingDelete = null;
+    if (yes && go) void go();
   }
 
   // ---- VST 鏈 ----
 
-  async function bypass(slot: RackSlot) {
+  function bypass(slot: RackSlot) {
     err = "";
-    try {
-      await engineCommand("set_bypass", {
+    mq.run(mutKey.plugin(slot.instanceId), "bypass", () =>
+      engineCommand("set_bypass", {
         instanceId: slot.instanceId,
         bypassed: !slot.bypassed,
-      });
-    } catch (e) {
-      err = String(e);
-    }
+      }),
+    );
   }
 
   // 開啟即忘:關閉由 plugin 原生視窗自己做(engine 端冪等)
@@ -379,15 +435,6 @@
     plugDrag = null;
     plugDropAt = null;
     removeDragGhost();
-  }
-
-  async function removePlugin(id: number) {
-    err = "";
-    try {
-      await engineCommand("remove_plugin", { instanceId: id });
-    } catch (e) {
-      err = String(e);
-    }
   }
 
   // ---- placeholder 回收:重試載入(原路徑)/重新定位(挑新檔,同 instanceId 原位)----
@@ -465,8 +512,86 @@
       await engineCommand("add_plugin", { trackId: track.trackId, path, classId });
       scanDlg?.close(); // registry 共用,不清(別條軌直接用)
     } catch (e) {
-      err = String(e);
+      err = friendlyError(String(e)).friendly;
     }
+  }
+
+  // ---- P2-M:右鍵選單(移到最前/最後/上移/下移;拖曳之外的可發現路徑)----
+
+  // 同帶群組(輸入 vs 輸出);move 語意 = 帶內重排
+  const lanePeers = $derived(
+    tracks.filter((t) => (track.kind === "output") === (t.kind === "output")),
+  );
+  function laneMove(to: "first" | "last" | "up" | "down") {
+    const i = lanePeers.findIndex((t) => t.trackId === track.trackId);
+    if (i < 0) return;
+    let pos: number;
+    if (to === "first") pos = 0;
+    else if (to === "last") pos = lanePeers.length;
+    else if (to === "up") {
+      if (i === 0) return;
+      pos = i - 1;
+    } else {
+      if (i >= lanePeers.length - 1) return;
+      pos = i + 2; // 插到下一條之後(erase 補回後 = i+1)
+    }
+    const masterIdx = laneDropToMasterIndex(
+      pos,
+      i,
+      (laneIdx) => tracks.findIndex((t) => t.trackId === lanePeers[laneIdx].trackId),
+      lanePeers.length,
+      tracks.length,
+    );
+    err = "";
+    mq.run(mutKey.track(track.trackId), "move", () =>
+      engineCommand("track_move", { trackId: track.trackId, newIndex: masterIdx }),
+    );
+  }
+  function trackMenu(e: MouseEvent) {
+    openMenu(e.clientX, e.clientY, `軌道「${track.name}」排序`, [
+      { label: "上移", disabled: lanePeers[0]?.trackId === track.trackId, run: () => laneMove("up") },
+      {
+        label: "下移",
+        disabled: lanePeers[lanePeers.length - 1]?.trackId === track.trackId,
+        run: () => laneMove("down"),
+      },
+      { label: "移到最前", disabled: lanePeers[0]?.trackId === track.trackId, run: () => laneMove("first") },
+      {
+        label: "移到最後",
+        disabled: lanePeers[lanePeers.length - 1]?.trackId === track.trackId,
+        run: () => laneMove("last"),
+      },
+    ]);
+  }
+  function plugMove(slot: RackSlot, to: "first" | "last" | "up" | "down") {
+    const chain = track.plugins;
+    const i = chain.findIndex((s) => s.instanceId === slot.instanceId);
+    if (i < 0) return;
+    let ni = i;
+    if (to === "first") ni = 0;
+    else if (to === "last") ni = chain.length - 1;
+    else if (to === "up") {
+      if (i === 0) return;
+      ni = i - 1;
+    } else {
+      if (i >= chain.length - 1) return;
+      ni = i + 1;
+    }
+    if (ni === i) return;
+    err = "";
+    mq.run(mutKey.plugin(slot.instanceId), "move", () =>
+      engineCommand("move_plugin", { instanceId: slot.instanceId, newIndex: ni }),
+    );
+  }
+  function plugMenu(e: MouseEvent, slot: RackSlot) {
+    const chain = track.plugins;
+    const i = chain.findIndex((s) => s.instanceId === slot.instanceId);
+    openMenu(e.clientX, e.clientY, `Plugin「${slot.name}」排序`, [
+      { label: "上移", disabled: i <= 0, run: () => plugMove(slot, "up") },
+      { label: "下移", disabled: i >= chain.length - 1, run: () => plugMove(slot, "down") },
+      { label: "移到最前", disabled: i <= 0, run: () => plugMove(slot, "first") },
+      { label: "移到最後", disabled: i >= chain.length - 1, run: () => plugMove(slot, "last") },
+    ]);
   }
 </script>
 
@@ -476,9 +601,17 @@
   class:dropbefore={dropBefore}
   class:dropafter={dropAfter}
   class:dragging={dragging}
+  class:unbound={needsRebind}
   draggable="true"
   data-track-id={track.trackId}
-  title="拖曳空白處排序 · 雙擊名稱改名"
+  role="listitem"
+  aria-label="軌道 {track.name}"
+  title="拖曳空白處排序 · 雙擊名稱改名 · 右鍵排序選單"
+  oncontextmenu={(e) => {
+    if ((e.target as HTMLElement).closest("input, select, button, dialog")) return;
+    e.preventDefault();
+    trackMenu(e);
+  }}
 >
   <div class="head">
     <input
@@ -486,6 +619,7 @@
       class="swatch"
       value={cssColor(track.color)}
       title="軌道顏色"
+      aria-label="軌道 {track.name} 的顏色"
       onchange={(e) => setColor(e.currentTarget.value)}
     />
     {#if editing}
@@ -494,6 +628,7 @@
         bind:this={nameInput}
         bind:value={draft}
         draggable="false"
+        aria-label="軌道名稱(Enter 套用、Esc 取消)"
         onkeydown={(e) => {
           if (e.key === "Enter") commitName();
           else if (e.key === "Escape") editing = false;
@@ -502,7 +637,15 @@
         ondblclick={(e) => e.stopPropagation()}
       />
     {:else}
-      <span class="name" title={track.name} ondblclick={startEdit}>{track.name}</span>
+      <!-- P2-P:語意控制(非無語意 span);雙擊/Enter 進入改名 -->
+      <button
+        class="name"
+        title="{track.name} — 雙擊改名"
+        aria-label="軌道名稱:{track.name}(雙擊改名)"
+        ondblclick={startEdit}
+        onclick={(e) => e.detail === 0 && startEdit()}
+        >{track.name}</button
+      >
     {/if}
     <span class="badge">{track.kind}</span>
     <span style="flex:1"></span>
@@ -514,7 +657,13 @@
         >系統</span
       >
     {:else}
-      <button class="mini danger" onclick={removeTrack} title="刪除軌道">×</button>
+      <button
+        class="mini danger del"
+        onclick={removeTrack}
+        aria-label="刪除軌道 {track.name}(會先確認)"
+        title="刪除軌道(會先確認)"
+        >×</button
+      >
     {/if}
   </div>
 
@@ -540,17 +689,28 @@
       </select>
     {:else if track.kind === "app"}
       <span class="lbl">輸入</span>
-      <select
-        value={track.source?.type === "app" ? String(track.source.pid) : ""}
-        onfocus={loadApps}
-        onchange={(e) => setAppSource(e.currentTarget.value)}
-        title="抓該 App 的聲音(process loopback);清單 = 正在出聲的程式"
-      >
-        <option value="">(選 App — 點此重新整理)</option>
-        {#each apps as a (a.pid)}
-          <option value={String(a.pid)}>{a.name}</option>
-        {/each}
-      </select>
+      {#if needsRebind}
+        <!-- P1-C:session 恢復後未綁定(engine 不猜 PID)→ 明確選擇程式 -->
+        <span class="dim unboundtxt" title={track.error ?? "Session 載入後未綁定程序 — 引擎不自動猜測"}
+          >未綁定程序</span
+        >
+        <button class="mini rebind" onclick={() => (pickerOpen = true)}
+          >選擇程式…</button
+        >
+      {:else}
+        <span class="boundname" title={`PID ${track.source?.pid ?? 0}`}
+          >{track.source?.name ?? `PID ${track.source?.pid}`}</span
+        >
+        <button
+          class="mini"
+          onclick={() => (pickerOpen = true)}
+          title="重新選擇要捕捉的程序(清單 = 正在出聲的程式)"
+          >更換</button
+        >
+        <button class="mini danger" onclick={clearApp} title="解除綁定(軌道保留、靜音)"
+          >解除</button
+        >
+      {/if}
     {:else if track.kind === "fx"}
       <span class="lbl dim" title="FX 軌:上游軌把輸出指到這裡(insert 型)">insert · 無輸入</span>
     {:else}
@@ -582,8 +742,12 @@
     {/if}
   </div>
 
-  <button class="destsbtn" onclick={() => destDlg?.showModal()} title="選擇輸出目的地(勾選即套用)">
-    輸出到 ({track.dests.length})
+  <button
+    class="destsbtn"
+    onclick={() => destDlg?.showModal()}
+    title="選擇輸出目的地(勾選即套用)"
+  >
+    輸出到 ({shownDests.length}){destsLocal !== null ? " …" : ""}
   </button>
 
   <div class="lower">
@@ -601,11 +765,18 @@
           class:dragging={plugDrag === s.instanceId}
           class:dropbefore={plugDropAt === i}
           class:dropafter={plugDropAt === i + 1 && plugDropAt === track.plugins.length}
+          role="listitem"
+          aria-label="plugin {s.name}"
           ondragstart={(e) => onPlugDragStart(e, s)}
           ondragover={(e) => onPlugDragOver(e, i)}
           ondrop={onPlugDrop}
           ondragend={onPlugDragEnd}
-          title={isPh(s) ? undefined : "拖曳上下排序"}
+          oncontextmenu={(e) => {
+            if ((e.target as HTMLElement).closest("button")) return;
+            e.preventDefault();
+            plugMenu(e, s);
+          }}
+          title={isPh(s) ? undefined : "拖曳排序 · 右鍵移到最前/最後"}
         >
           {#if isPh(s)}
             <!-- missing/broken:原鏈位保留,不參與 DSP;提供重試/重新定位/移除 -->
@@ -624,28 +795,42 @@
             <button class="mini" onclick={() => relocatePlugin(s)} title="重新定位 plugin 檔"
               >定位</button
             >
-            <button class="mini danger" onclick={() => removePlugin(s.instanceId)} title="移除"
-              >×</button
+            <button
+              class="mini danger del"
+              onclick={() => removePlugin(s.instanceId)}
+              aria-label="移除 plugin {s.name}(會先確認)"
+              title="移除(會先確認)">×</button
             >
           {:else}
             <button
               class="mini power"
               class:off={s.bypassed}
+              aria-pressed={!s.bypassed}
+              aria-label={s.bypassed ? `${s.name} bypass 中(點此啟用)` : `${s.name} 啟用中(點此 bypass)`}
               onclick={() => bypass(s)}
               title={s.bypassed ? "Bypassed(點此啟用)" : "啟用中(點此 Bypass)"}
             >
               <img class="picon" src={s.bypassed ? powerOff : powerOn} alt="" draggable="false" />
             </button>
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
             <span
               class="plugname"
-              title="雙擊開啟 plugin 原生 GUI"
-              ondblclick={() => openEditor(s)}
-              >{s.name}</span
+              title="{s.name} — 雙擊開啟操作介面"
+              ondblclick={() => openEditor(s)}>{s.name}</span
+            >
+            <!-- P2-M:開啟 GUI 有明確按鈕(不靠雙擊名稱);常態不佔名稱寬度,
+                 hover/聚焦該列才出現(鍵盤 focus-within 同樣可達) -->
+            <button
+              class="mini gui"
+              onclick={() => openEditor(s)}
+              aria-label="開啟 {s.name} 的操作介面"
+              title="開啟 plugin 原生操作介面(GUI)">GUI</button
             >
             <button
-              class="mini danger"
+              class="mini danger del"
               onclick={() => removePlugin(s.instanceId)}
-              title="移除">×</button
+              aria-label="移除 plugin {s.name}(會先確認)"
+              title="移除(會先確認)">×</button
             >
           {/if}
         </div>
@@ -676,12 +861,18 @@
       {/if}
     </div>
   </div>
-  <div
+  <!-- P2-P:resize grip = button(可聚焦、Enter = 還原高度;拖曳調整) -->
+  <button
+    type="button"
     class="vstgrip"
-    onpointerdown={onGripDown}
+    aria-label="調整插件清單高度(拖曳;雙擊或 Enter 還原)"
+    onpointerdown={(e) => {
+      // button 的 pointerdown 預設行為(焦點/後續 click)不影響拖曳
+      onGripDown(e);
+    }}
     ondblclick={onGripDbl}
     title="拖曳調整高度 · 雙擊還原"
-  ></div>
+  ></button>
   </div>
 
   <dialog bind:this={scanDlg} class="scanlistdlg">
@@ -749,10 +940,10 @@
         <label class="dest">
           <input
             type="checkbox"
-            checked={track.dests.includes(t.trackId)}
+            checked={shownDests.includes(t.trackId)}
             onchange={(e) => toggleDest(t.trackId, e.currentTarget.checked)}
           />
-          <span class="dot" style="background:{cssColor(t.color)}"></span>
+          <span class="dot" style="background:{cssColor(t.color)}" aria-hidden="true"></span>
           {t.name}
         </label>
       {:else}
@@ -766,8 +957,10 @@
       <button
         class="mini mute"
         class:on={track.mute}
+        aria-pressed={track.mute}
+        aria-label={track.mute ? `靜音中(點此取消)` : `靜音 ${track.name}`}
         onclick={() => setMute(!track.mute)}
-        title="靜音">M</button
+        title={track.mute ? "靜音中 — 點此取消靜音" : "靜音"}>{track.mute ? "M✓" : "M"}</button
       >
       <input
         type="range"
@@ -775,6 +968,7 @@
         max="1.5"
         step="0.01"
         value={shownGain}
+        aria-label="{track.name} 音量({Math.round(shownGain * 100)}%;滾輪微調,每格 2%;Ctrl+點擊 = 恢復 100%)"
         oninput={onGainInput}
         onchange={onGainChange}
         onclick={onGainClick}
@@ -783,12 +977,19 @@
         onpointermove={onFaderMove}
         onpointerup={onFaderUp}
         onpointercancel={onFaderUp}
-        title="音量(滾輪微調 · ctrl+點擊 = 恢復 100%)"
+        title="音量 — 滾輪微調(每格 2%)· Ctrl+點擊 = 恢復 100% · 目前 {Math.round(shownGain * 100)}%"
       />
       <span class="gain mono">{Math.round(shownGain * 100)}%</span>
     </div>
     <div class="meterwrap">
-      <MeterCanvas strip={stripOfTrack(track.trackId, strips)} />
+      {#if metered}
+        <MeterCanvas strip={stripOfTrack(track.trackId, strips)} />
+      {:else}
+        <!-- P1-H:telemetry 預算外 = 錶不可用(非靜音);明確顯示狀態 -->
+        <div class="nometer" title="軌道數超過錶預算(64)—— 音訊不受影響,此軌不顯示電平錶"
+          ><span>無<br />錶</span></div
+        >
+      {/if}
     </div>
   </div>
   </div>
@@ -796,8 +997,19 @@
   <div class="colorbar" style="background:{cssColor(track.color)}"></div>
 
   {#if err || track.error}
-    <p class="err mono">{err || track.error}</p>
+    <!-- P1-O:錯誤文字可選取複製;title 帶原文 -->
+    <p class="err mono" title={(err || track.error) ?? ""} role="alert">{err || track.error}</p>
   {/if}
+
+  {#if pickerOpen}
+    <AppPicker
+      trackName={track.name}
+      savedName={track.source?.name ?? null}
+      onPick={pickApp}
+      onClose={() => (pickerOpen = false)}
+    />
+  {/if}
+  <ConfirmDialog confirm={confirmBox} onAnswer={answerConfirm} />
 
   {#if tip}
     <div class="gaintip mono" style="left:{tip.x + 14}px; top:{tip.y - 28}px"
@@ -819,6 +1031,10 @@
     width: 250px;
     min-height: 0;
     overflow-y: auto;
+    user-select: none; /* 拖曳區禁選(全域已開放選取;錯誤文字 .err 例外) */
+  }
+  .strip .err {
+    user-select: text;
   }
   .strip.dragging {
     opacity: 0.35;
@@ -848,11 +1064,24 @@
     cursor: pointer;
   }
   .name {
+    /* P2-P:改名入口改為 button(語意控制);視覺維持纯文字 */
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
     font-size: 13px;
     font-weight: 600;
+    color: var(--text);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    min-width: 0;
+    flex: 1;
+    text-align: left;
+  }
+  .name:hover {
+    color: var(--accent);
+    border: none;
   }
   .nameedit {
     font-size: 13px;
@@ -1035,6 +1264,14 @@
     align-items: center;
     padding: 2px 4px;
   }
+  /* P2-M:GUI 鈕 hover/focus 該列才顯示 —— 常態不擠名稱寬度(雙擊名稱同效) */
+  .plug .mini.gui {
+    display: none;
+  }
+  .plug:hover .mini.gui,
+  .plug:focus-within .mini.gui {
+    display: inline-block;
+  }
   .picon {
     width: 12px;
     height: 12px;
@@ -1054,14 +1291,64 @@
   .plugname:hover {
     color: var(--accent);
   }
-  .idx {
+  /* P1-C:needsRebind 黯淡提示(軌道保留、安全靜音) */
+  .strip.unbound {
+    opacity: 0.75;
+  }
+  .unboundtxt {
+    font-size: 12px;
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .boundname {
+    font-size: 12px;
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .rebind {
+    border-color: var(--warn);
+    color: var(--warn);
+  }
+  /* P1-H:telemetry 預算外的「無錶」狀態(非靜音) */
+  .nometer {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: repeating-linear-gradient(
+      45deg,
+      var(--bg) 0 6px,
+      var(--bg-raised) 6px 12px
+    );
+    border: 1px solid var(--border);
+    border-radius: 4px;
     color: var(--text-dim);
     font-size: 10px;
+    text-align: center;
+    line-height: 1.3;
+    user-select: none;
   }
   .mini {
     padding: 1px 6px;
     font-size: 11px;
     line-height: 1.4;
+  }
+  /* P2-M:破壞性/常誤點操作的 hit target 擴大 */
+  .mini.del {
+    min-width: 24px;
+    min-height: 22px;
+    padding: 0 6px;
+    font-size: 13px;
+  }
+  .mute {
+    min-width: 30px;
+    min-height: 26px;
   }
   .power.off {
     color: var(--text-dim);
@@ -1174,6 +1461,9 @@
     left: 50%;
     transform: translate(-50%, -50%);
     margin: 0;
+    /* P1-K:矮視窗不裁掉關閉鈕 —— 85vh 上限 + 內容捲動 */
+    max-height: 85vh;
+    overflow-y: auto;
   }
   .scanlistdlg::backdrop,
   .destlistdlg::backdrop {
@@ -1187,8 +1477,7 @@
     font-weight: 600;
     font-size: 13px;
   }
-  .scanlistdlg p,
-  .destlistdlg p {
+  .scanlistdlg p {
     margin: 2px 0;
   }
   .destsbtn {
