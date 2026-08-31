@@ -70,13 +70,18 @@
   onclose={onClose}
   aria-label="選擇要捕捉的程式"
 >
-  <div class="cardhead">
-    <span>選擇程式 — 「{trackName}」</span>
-    <span style="flex:1"></span>
+  <div class="cardhead dialog-head">
+    <span class="dialog-title">選擇程式 — 「{trackName}」</span>
     <button onclick={() => void refresh()} disabled={loading}
       >{loading ? "整理中…" : "重新整理"}</button
     >
-    <button onclick={onClose} title="關閉">×</button>
+    <button
+      class="dialog-close"
+      type="button"
+      aria-label="關閉程序選擇器"
+      onclick={onClose}
+      data-tooltip="關閉程序選擇器，不變更目前綁定。">×</button
+    >
   </div>
   {#if savedName}
     <p class="dim saved">
@@ -91,7 +96,7 @@
     <input id="appfilter" type="search" bind:value={filter} placeholder="名稱或路徑" />
   </div>
   {#if err}
-    <p class="err mono" title={err}>{err}</p>
+    <p class="err mono" data-tooltip={`無法取得程序清單：${err}`}>{err}</p>
   {:else if shown.length === 0}
     <p class="dim empty">
       {apps.length === 0
@@ -103,7 +108,9 @@
       {#each shown as a (a.pid)}
         <button class="app" onclick={() => pick(a)}>
           <span class="appname">{a.name}</span>
-          <span class="apppath mono" title={a.path ?? ""}
+          <span
+            class="apppath mono"
+            data-tooltip={a.path ? `執行檔：\n${a.path}\nPID ${a.pid}` : `PID ${a.pid}`}
             >{a.path ? dirOf(a.path) : ""} · PID {a.pid}</span
           >
         </button>

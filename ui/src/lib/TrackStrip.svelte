@@ -606,7 +606,7 @@
   data-track-id={track.trackId}
   role="listitem"
   aria-label="軌道 {track.name}"
-  title="拖曳空白處排序 · 雙擊名稱改名 · 右鍵排序選單"
+  data-tooltip="拖曳軌道空白區調整順序；雙擊軌道名稱可重新命名；按右鍵開啟排序選單。"
   oncontextmenu={(e) => {
     if ((e.target as HTMLElement).closest("input, select, button, dialog")) return;
     e.preventDefault();
@@ -618,7 +618,7 @@
       type="color"
       class="swatch"
       value={cssColor(track.color)}
-      title="軌道顏色"
+      data-tooltip="設定此軌道的識別色。"
       aria-label="軌道 {track.name} 的顏色"
       onchange={(e) => setColor(e.currentTarget.value)}
     />
@@ -640,7 +640,7 @@
       <!-- P2-P:語意控制(非無語意 span);雙擊/Enter 進入改名 -->
       <button
         class="name"
-        title="{track.name} — 雙擊改名"
+        data-tooltip="{track.name} — 雙擊重新命名；鍵盤操作時按 Enter。"
         aria-label="軌道名稱:{track.name}(雙擊改名)"
         ondblclick={startEdit}
         onclick={(e) => e.detail === 0 && startEdit()}
@@ -653,7 +653,7 @@
       <!-- 系統輸出:每 session 恰好一條 monitor/stream,不可刪(engine 也擋) -->
       <span
         class="sysbadge"
-        title="系統輸出({track.systemRole === "monitor" ? "監聽" : "串流"}):可改名、改輸出裝置與路由,但不可刪除"
+        data-tooltip="系統{track.systemRole === "monitor" ? "監聽" : "串流"}輸出軌：可重新命名並調整裝置與路由；為維持固定輸出角色，無法刪除。"
         >系統</span
       >
     {:else}
@@ -661,7 +661,7 @@
         class="mini danger del"
         onclick={removeTrack}
         aria-label="刪除軌道 {track.name}(會先確認)"
-        title="刪除軌道(會先確認)"
+        data-tooltip="刪除此軌道；執行前會要求確認。"
         >×</button
       >
     {/if}
@@ -691,28 +691,39 @@
       <span class="lbl">輸入</span>
       {#if needsRebind}
         <!-- P1-C:session 恢復後未綁定(engine 不猜 PID)→ 明確選擇程式 -->
-        <span class="dim unboundtxt" title={track.error ?? "Session 載入後未綁定程序 — 引擎不自動猜測"}
+        <span
+          class="dim unboundtxt"
+          data-tooltip={track.error ?? "Session 已恢復，但尚未指定捕捉程序。請手動重新綁定；引擎不會依名稱自動推測 PID。"}
           >未綁定程序</span
         >
         <button class="mini rebind" onclick={() => (pickerOpen = true)}
           >選擇程式…</button
         >
       {:else}
-        <span class="boundname" title={`PID ${track.source?.pid ?? 0}`}
+        <span
+          class="boundname"
+          data-tooltip={`目前捕捉 ${track.source?.name ?? "應用程式"}（PID ${track.source?.pid ?? 0}）。`}
           >{track.source?.name ?? `PID ${track.source?.pid}`}</span
         >
         <button
           class="mini"
           onclick={() => (pickerOpen = true)}
-          title="重新選擇要捕捉的程序(清單 = 正在出聲的程式)"
+          data-tooltip="重新選擇此軌道要捕捉的程序；清單僅顯示目前正在輸出音訊的應用程式。"
           >更換</button
         >
-        <button class="mini danger" onclick={clearApp} title="解除綁定(軌道保留、靜音)"
+        <button
+          class="mini danger"
+          onclick={clearApp}
+          data-tooltip="解除目前的程序綁定；軌道與 plugin chain 會保留，並停止輸出音訊。"
           >解除</button
         >
       {/if}
     {:else if track.kind === "fx"}
-      <span class="lbl dim" title="FX 軌:上游軌把輸出指到這裡(insert 型)">insert · 無輸入</span>
+      <span
+        class="lbl dim"
+        data-tooltip="FX 軌不直接擷取應用程式；請將上游軌道的輸出路由至此軌，作為 insert 效果鏈。"
+        >insert · 無輸入</span
+      >
     {:else}
       <span class="lbl">輸出裝置</span>
       <select
@@ -723,7 +734,9 @@
             : ""}
         onchange={(e) => setOutput(e.currentTarget.value)}
         onfocus={loadRenderDevices}
-        title="ASIO 輸出 pair 或 WASAPI 裝置(串流用,如 VB-Cable)"
+        data-tooltip={track.systemRole === "monitor"
+          ? "指定監聽輸出的 ASIO channel pair。"
+          : "指定串流輸出的 WASAPI 裝置，例如 VB-CABLE 等虛擬音訊端點。"}
       >
         <option value="">(無)</option>
         {#if dev}
@@ -745,7 +758,7 @@
   <button
     class="destsbtn"
     onclick={() => destDlg?.showModal()}
-    title="選擇輸出目的地(勾選即套用)"
+    data-tooltip="設定此軌道的輸出路由；勾選目的地後立即套用。"
   >
     輸出到 ({shownDests.length}){destsLocal !== null ? " …" : ""}
   </button>
@@ -776,30 +789,36 @@
             e.preventDefault();
             plugMenu(e, s);
           }}
-          title={isPh(s) ? undefined : "拖曳排序 · 右鍵移到最前/最後"}
+          data-tooltip={isPh(s) ? undefined : "拖曳調整 plugin chain 順序；按右鍵可移至鏈首或鏈尾。"}
         >
           {#if isPh(s)}
             <!-- missing/broken:原鏈位保留,不參與 DSP;提供重試/重新定位/移除 -->
-            <span class="phmark" title={s.loadError ?? ""}>⚠</span>
+            <span class="phmark" data-tooltip={`Plugin 載入失敗：${s.loadError ?? "原因未提供"}`}>⚠</span>
             <span
               class="plugname phname"
-              title={`${s.pluginPath}\n${s.loadError ?? ""}`}
+              data-tooltip={`Plugin 檔案：\n${s.pluginPath}\n\n載入錯誤：${s.loadError ?? "原因未提供"}`}
             >
               <span class="phwhy">{phLabel(s)}</span>
               {s.name || basename(s.pluginPath)}
               {#if s.loadError}<span class="pherr">{s.loadError}</span>{/if}
             </span>
-            <button class="mini" onclick={() => retryPlugin(s)} title="重試載入(原路徑)"
+            <button
+              class="mini"
+              onclick={() => retryPlugin(s)}
+              data-tooltip="使用原始檔案路徑重新載入此 plugin。"
               >重試</button
             >
-            <button class="mini" onclick={() => relocatePlugin(s)} title="重新定位 plugin 檔"
+            <button
+              class="mini"
+              onclick={() => relocatePlugin(s)}
+              data-tooltip="指定替代的 plugin 檔案，並嘗試恢復此插槽。"
               >定位</button
             >
             <button
               class="mini danger del"
               onclick={() => removePlugin(s.instanceId)}
               aria-label="移除 plugin {s.name}(會先確認)"
-              title="移除(會先確認)">×</button
+              data-tooltip="從效果鏈移除此 plugin；執行前會要求確認。">×</button
             >
           {:else}
             <button
@@ -808,14 +827,16 @@
               aria-pressed={!s.bypassed}
               aria-label={s.bypassed ? `${s.name} bypass 中(點此啟用)` : `${s.name} 啟用中(點此 bypass)`}
               onclick={() => bypass(s)}
-              title={s.bypassed ? "Bypassed(點此啟用)" : "啟用中(點此 Bypass)"}
+              data-tooltip={s.bypassed
+                ? "此 plugin 目前為 bypass；按下可恢復處理。"
+                : "此 plugin 目前正在處理音訊；按下可切換為 bypass。"}
             >
               <img class="picon" src={s.bypassed ? powerOff : powerOn} alt="" draggable="false" />
             </button>
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <span
               class="plugname"
-              title="{s.name} — 雙擊開啟操作介面"
+              data-tooltip="{s.name} — 雙擊開啟 plugin 操作介面。"
               ondblclick={() => openEditor(s)}>{s.name}</span
             >
             <!-- P2-M:開啟 GUI 有明確按鈕(不靠雙擊名稱);常態不佔名稱寬度,
@@ -824,13 +845,13 @@
               class="mini gui"
               onclick={() => openEditor(s)}
               aria-label="開啟 {s.name} 的操作介面"
-              title="開啟 plugin 原生操作介面(GUI)">GUI</button
+              data-tooltip="開啟此 plugin 提供的原生操作介面（GUI）。">GUI</button
             >
             <button
               class="mini danger del"
               onclick={() => removePlugin(s.instanceId)}
               aria-label="移除 plugin {s.name}(會先確認)"
-              title="移除(會先確認)">×</button
+              data-tooltip="從效果鏈移除此 plugin；執行前會要求確認。">×</button
             >
           {/if}
         </div>
@@ -846,7 +867,7 @@
             onScan();
             scanDlg?.showModal();
           }}
-          title="開 plugin picker(用共用清單;背景掃描可在清單裡重掃)"
+          data-tooltip="開啟 plugin 選擇器；清單共用掃描結果，並可在背景重新掃描預設 VST3 目錄。"
           >＋ 掃描加入</button
         >
       {:else}
@@ -871,20 +892,28 @@
       onGripDown(e);
     }}
     ondblclick={onGripDbl}
-    title="拖曳調整高度 · 雙擊還原"
+    data-tooltip="拖曳調整 plugin 區域高度；雙擊或按 Enter 還原預設高度。"
   ></button>
   </div>
 
   <dialog bind:this={scanDlg} class="scanlistdlg">
-    <div class="cardhead">
-      <span>VST 插件列表 — 加入「{track.name}」</span>
-      <span style="flex:1"></span>
+    <div class="cardhead dialog-head">
+      <span class="dialog-title">VST 插件列表 — 加入「{track.name}」</span>
       {#if !scanRunning}
-        <button class="mini" onclick={onScan} title="重新掃描預設 VST3 目錄(背景 job)"
+        <button
+          class="mini"
+          onclick={onScan}
+          data-tooltip="在背景重新掃描預設 VST3 目錄，更新共用 plugin 清單。"
           >重新掃描</button
         >
       {/if}
-      <button onclick={() => scanDlg?.close()} title="關閉(不加入)">×</button>
+      <button
+        class="dialog-close"
+        type="button"
+        aria-label="關閉 plugin 選擇器"
+        onclick={() => scanDlg?.close()}
+        data-tooltip="關閉 plugin 選擇器，不加入任何項目。">×</button
+      >
     </div>
     {#if scanRunning}
       <div class="scanlive">
@@ -904,13 +933,13 @@
       <div class="scanlist">
         {#each scanModules as m (m.path)}
           <div class="mod">
-            <div class="modpath mono" title={m.path}>{basename(m.path)}</div>
+            <div class="modpath mono" data-tooltip={`Plugin 模組：\n${m.path}`}>{basename(m.path)}</div>
             <div class="classes">
               {#each m.classes as c (c.uid)}
                 <button
                   class="mini"
                   onclick={() => addPlugin(m.path, c.uid)}
-                  title={`${c.vendor} ${c.version}`}
+                  data-tooltip={`${c.vendor || "未知廠牌"} · ${c.version || "版本未提供"}`}
                   >{c.name}</button
                 >
               {/each}
@@ -922,7 +951,7 @@
         <details class="quarantine">
           <summary class="dim">無法載入({scanFailed.length})— 已隔離</summary>
           {#each scanFailed as f (f.path)}
-            <div class="modpath mono" title={f.error}>{basename(f.path)}:{f.error}</div>
+            <div class="modpath mono" data-tooltip={`掃描失敗：${f.error}\n${f.path}`}>{basename(f.path)}:{f.error}</div>
           {/each}
         </details>
       {/if}
@@ -930,10 +959,15 @@
   </dialog>
 
   <dialog bind:this={destDlg} class="destlistdlg">
-    <div class="cardhead">
-      <span>輸出到 — 「{track.name}」</span>
-      <span style="flex:1"></span>
-      <button onclick={() => destDlg?.close()} title="關閉">×</button>
+    <div class="cardhead dialog-head">
+      <span class="dialog-title">輸出到 — 「{track.name}」</span>
+      <button
+        class="dialog-close"
+        type="button"
+        aria-label="關閉輸出路由設定"
+        onclick={() => destDlg?.close()}
+        data-tooltip="關閉輸出路由設定。">×</button
+      >
     </div>
     <div class="destlist">
       {#each tracks.filter((t) => t.trackId !== track.trackId) as t (t.trackId)}
@@ -960,7 +994,8 @@
         aria-pressed={track.mute}
         aria-label={track.mute ? `靜音中(點此取消)` : `靜音 ${track.name}`}
         onclick={() => setMute(!track.mute)}
-        title={track.mute ? "靜音中 — 點此取消靜音" : "靜音"}>{track.mute ? "M✓" : "M"}</button
+        data-tooltip={track.mute ? "此軌目前已靜音；按下可取消靜音。" : "將此軌靜音。"}
+        >{track.mute ? "M✓" : "M"}</button
       >
       <input
         type="range"
@@ -977,7 +1012,7 @@
         onpointermove={onFaderMove}
         onpointerup={onFaderUp}
         onpointercancel={onFaderUp}
-        title="音量 — 滾輪微調(每格 2%)· Ctrl+點擊 = 恢復 100% · 目前 {Math.round(shownGain * 100)}%"
+        data-tooltip="調整軌道音量；滾輪每格微調 2%；Ctrl + 按一下還原為 100%。目前為 {Math.round(shownGain * 100)}%。"
       />
       <span class="gain mono">{Math.round(shownGain * 100)}%</span>
     </div>
@@ -986,7 +1021,9 @@
         <MeterCanvas strip={stripOfTrack(track.trackId, strips)} />
       {:else}
         <!-- P1-H:telemetry 預算外 = 錶不可用(非靜音);明確顯示狀態 -->
-        <div class="nometer" title="軌道數超過錶預算(64)—— 音訊不受影響,此軌不顯示電平錶"
+        <div
+          class="nometer"
+          data-tooltip="已達即時電平錶顯示上限（64 軌）；音訊處理不受影響，但此軌不顯示電平。"
           ><span>無<br />錶</span></div
         >
       {/if}
@@ -997,8 +1034,8 @@
   <div class="colorbar" style="background:{cssColor(track.color)}"></div>
 
   {#if err || track.error}
-    <!-- P1-O:錯誤文字可選取複製;title 帶原文 -->
-    <p class="err mono" title={(err || track.error) ?? ""} role="alert">{err || track.error}</p>
+    <!-- P1-O:錯誤文字可選取複製;tooltip 帶完整原文 -->
+    <p class="err mono" data-tooltip={`完整錯誤訊息：\n${(err || track.error) ?? ""}`} role="alert">{err || track.error}</p>
   {/if}
 
   {#if pickerOpen}

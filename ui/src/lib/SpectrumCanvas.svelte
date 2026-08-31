@@ -175,5 +175,10 @@
   }
 </script>
 
-<canvas bind:this={canvas} width={BARS * 8} {height} style="width:100%;height:{height}px"
-  title="輸出頻譜(對數頻率軸 20 Hz 起;engine 30Hz FFT)"></canvas>
+<canvas
+  bind:this={canvas}
+  width={BARS * 8}
+  {height}
+  style="width:100%;height:{height}px"
+  data-tooltip="主輸出頻譜；頻率軸採對數刻度（20 Hz 起），引擎 FFT 資料自 30 Hz 起。"
+></canvas>

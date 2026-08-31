@@ -71,6 +71,36 @@ button:disabled {
   cursor: default;
 }
 
+/* ---- 置中內部視窗:標題在左、關閉鈕固定在右上 ---- */
+.dialog-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.dialog-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 5px 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.dialog-head > .dialog-close {
+  display: grid;
+  flex: 0 0 34px;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  margin: 0;
+  padding: 0;
+  font-size: 16px;
+  line-height: 1;
+}
+
 .mono {
   font-family: var(--mono);
 }
@@ -104,6 +134,37 @@ button:disabled {
 :focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: 1px;
+}
+
+/* ---- 應用程式提示:取代瀏覽器原生 title，沿用機架面板語彙 ---- */
+.app-tooltip {
+  position: fixed;
+  inset: auto;
+  z-index: 2147483647;
+  width: max-content;
+  max-width: min(360px, calc(100vw - 16px));
+  max-height: min(320px, calc(100vh - 16px));
+  margin: 0;
+  padding: 6px 9px 7px;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+  color: var(--text);
+  background: #22262c;
+  border: 1px solid #4b535e;
+  border-left: 2px solid var(--accent);
+  border-radius: 3px;
+  box-shadow:
+    0 7px 20px rgb(0 0 0 / 0.58),
+    inset 0 1px rgb(255 255 255 / 0.035);
+  font: 12px/1.5 "IBM Plex Sans TC", "Segoe UI", system-ui, sans-serif;
+  letter-spacing: 0.01em;
+  pointer-events: none;
+  user-select: none;
+}
+
+.app-tooltip[hidden] {
+  display: none;
 }
 
 /* ---- 拖曳「拿起」幽靈圖(ui/src/lib/ghost.ts 掛的 clone;全域因為在 body 下) ---- */

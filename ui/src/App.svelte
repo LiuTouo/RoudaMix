@@ -892,14 +892,14 @@
 <header class="bar">
   <!-- P1-L:連線細分狀態(spawning/connected/spawn_failed/version mismatch…)+ retry -->
   <span class="dot" class:ok={cv.tone === "ok"} class:err={cv.tone === "err"}></span>
-  <span title={cv.detail || cv.label}>{cv.label}</span>
+  <span data-tooltip={cv.detail ? `連線診斷：${cv.detail}` : `引擎連線狀態：${cv.label}`}>{cv.label}</span>
   {#if cv.phase === "spawn_failed" || cv.phase === "version_mismatch" || cv.phase === "disconnected"}
     <button class="settings" onclick={() => void respawnEngine()}>重試連線</button>
   {/if}
   {#if cv.phase !== "connected"}
     <button
       class="settings"
-      title="複製連線診斷(狀態、版本、原因)"
+      data-tooltip="複製引擎連線狀態、版本與診斷原因至剪貼簿。"
       onclick={() =>
         void copyText(
           `phase=${cv.phase} connected=${conn.connected} epoch=${conn.epoch} engine=${conn.engineVersion} detail=${cv.detail}`,
@@ -909,12 +909,12 @@
   {/if}
   <button class="settings" onclick={() => (settingsOpen = true)}>設定</button>
   {#if audioStale}
-    <button class="err aslink" onclick={() => (settingsOpen = true)} title={notice}
+    <button class="err aslink" onclick={() => (settingsOpen = true)} data-tooltip={`音訊啟動異常：${notice}`}
       >音訊未啟動 — 詳情見設定</button
     >
   {/if}
   {#if restoreError}
-    <button class="err aslink" onclick={() => (settingsOpen = true)} title={restoreError}
+    <button class="err aslink" onclick={() => (settingsOpen = true)} data-tooltip={`Session 恢復失敗：${restoreError}`}
       >Session 恢復失敗,已開空白 — 詳情見設定</button
     >
   {/if}
@@ -922,23 +922,23 @@
     <button
       class="err aslink"
       onclick={() => (missing = [])}
-      title={missing
-        .map((m) => `${m.trackName}[${m.index}] ${m.name || m.pluginPath}:${m.message}`)
-        .join("\n")}
+      data-tooltip={`未載入的 plugin：\n${missing
+        .map((m) => `${m.trackName} [${m.index}] ${m.name || m.pluginPath}：${m.message}`)
+        .join("\n")}`}
       >⚠ {missing.length} 個 plugin 無法載入(已保留 placeholder)— 點此收起</button
     >
   {/if}
   {#if dirty}
-    <span class="dim" title="有未儲存的變更">● 未儲存</span>
+    <span class="dim" data-tooltip="目前 Session 有尚未儲存的變更。">● 未儲存</span>
   {/if}
   <!-- P1-O:通知中心(最近數條;技術細節可複製) -->
   {#each notices as n (n.id)}
     <span class="notice" class:iserr={n.kind === "error"}>
-      <span class="notice-msg" title={n.raw ?? n.msg}>{n.msg}</span>
+      <span class="notice-msg" data-tooltip={`詳細訊息：${n.raw ?? n.msg}`}>{n.msg}</span>
       {#if n.raw}
-        <button class="settings" onclick={() => copyNotice(n)} title={`複製詳細資料:${n.raw}`}>複製</button>
+        <button class="settings" onclick={() => copyNotice(n)} data-tooltip="複製此通知的完整技術資訊至剪貼簿。">複製</button>
       {/if}
-      <button class="settings" onclick={() => dismissNotice(n.id)} title="關閉此通知">×</button>
+      <button class="settings" onclick={() => dismissNotice(n.id)} data-tooltip="關閉此通知。">×</button>
     </span>
   {/each}
   <span style="flex:1"></span>
@@ -948,7 +948,7 @@
     <span
       class="mono"
       class:err={overloadOn}
-      title="audio callback CPU 佔比(持續超過 100% = 過載,xrun 風險)"
+      data-tooltip="音訊 callback 的即時運算負載；持續達 100% 以上表示處理逾時，可能產生 xrun 或爆音。"
       >load {Math.round((meters?.callbackLoad ?? 0) * 100)}%</span
     >
     <span class="mono"
@@ -959,10 +959,16 @@
       )}ms · xrun {status!.xruns}</span
     >
   {:else if selDev?.currentSampleRate}
-    <span class="dim mono" title="driver 現行取樣率(在硬體面板改)">{selDev.currentSampleRate} Hz · buf {bufSize ?? selDev.preferredBufferSize}</span>
+    <span
+      class="dim mono"
+      data-tooltip="目前由音訊驅動程式提供的取樣率與緩衝大小；取樣率請於硬體控制面板調整。"
+      >{selDev.currentSampleRate} Hz · buf {bufSize ?? selDev.preferredBufferSize}</span
+    >
   {/if}
   {#if status?.pluginFails}
-    <span class="err mono" title="RT 端 plugin process 失敗次數(失敗時維持 bypass 效果)"
+    <span
+      class="err mono"
+      data-tooltip="即時音訊執行緒中的 plugin 處理失敗累計；失敗時該 plugin 會維持 bypass，避免中斷音訊。"
       >plugin fail {status.pluginFails}</span
     >
   {/if}
@@ -1022,7 +1028,10 @@
               <button class="mini" onclick={() => addTrack("app")}>＋ App 軌(抓程式聲音)</button>
               <button class="mini" onclick={loadSession}>載入 Session…</button>
               {#if appSettings?.lastSessionPath}
-                <button class="mini" onclick={() => reopenLastSession()} title={appSettings.lastSessionPath}
+                <button
+                  class="mini"
+                  onclick={() => reopenLastSession()}
+                  data-tooltip={`重新開啟最近使用的 Session：\n${appSettings.lastSessionPath}`}
                   >最近:{appSettings.lastSessionPath.split(/[\\/]/).pop() ?? ""}</button
                 >
               {/if}
@@ -1095,10 +1104,15 @@
   class="settingsdlg"
   onclose={() => (settingsOpen = false)}
 >
-  <div class="cardhead">
-    <span>設定</span>
-    <span style="flex:1"></span>
-    <button onclick={() => settingsDlg?.close()}>×</button>
+  <div class="dialog-head">
+    <span class="dialog-title">設定</span>
+    <button
+      class="dialog-close"
+      type="button"
+      aria-label="關閉設定視窗"
+      data-tooltip="關閉設定視窗。"
+      onclick={() => settingsDlg?.close()}>×</button
+    >
   </div>
   <div class="tabs">
     <button class:on={tab === "audio"} onclick={() => (tab = "audio")}>音訊 / Session</button>
@@ -1150,7 +1164,7 @@
       <button
         onclick={openDevicePanel}
         disabled={!running}
-        title="開硬體驅動控制面板(取樣率在這改;緩衝請用 Buffer 下拉 —— 面板的緩衝選擇會被 ASIO 蓋掉)。關閉面板後自動同步並重建"
+        data-tooltip="開啟 ASIO 驅動程式控制面板以調整硬體取樣率。Buffer 大小請使用 RoudaMix 的 Buffer 選單；面板關閉後會自動同步並重建音訊引擎。"
         >硬體面板</button
       >
       {#if panelOpen}
@@ -1198,7 +1212,10 @@
     </div>
     <div class="formrow">
       <label class="formlabel" for="sessiondir">Session 資料夾</label>
-      <span class="dim mono dirpath" title={appSettings?.sessionDir ?? "未設定"}>
+      <span
+        class="dim mono dirpath"
+        data-tooltip={`Session 預設儲存位置：\n${appSettings?.sessionDir ?? "未設定"}`}
+      >
         {appSettings?.sessionDir ?? "(未設定)"}
       </span>
       <button onclick={pickSessionDir}>選擇…</button>
@@ -1208,7 +1225,10 @@
     {/if}
     {#if appSettings?.startupMode === "last"}
       <div class="formrow">
-        <span class="dim mono dirpath" title={appSettings.lastSessionPath ?? ""}>
+        <span
+          class="dim mono dirpath"
+          data-tooltip={`啟動時開啟最近 Session：\n${appSettings.lastSessionPath ?? "尚未儲存過 Session"}`}
+        >
           上一次:{appSettings.lastSessionPath ?? "(尚未存過 session)"}
         </span>
       </div>
