@@ -16,5 +16,8 @@
     "svelte-check": "^4",
     "typescript": "^5",
     "vite": "^6"
+  },
+  "dependencies": {
+    "@tauri-apps/plugin-autostart": "^2.5.1"
   }
 }

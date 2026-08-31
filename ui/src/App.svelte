@@ -1,6 +1,11 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { open, save } from "@tauri-apps/plugin-dialog";
+  import {
+    disable as disableAutostart,
+    enable as enableAutostart,
+    isEnabled as isAutostartEnabled,
+  } from "@tauri-apps/plugin-autostart";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import TrackStrip from "./lib/TrackStrip.svelte";
   import ContextMenu from "./lib/ContextMenu.svelte";
@@ -50,6 +55,9 @@
   let settingsDlg = $state<HTMLDialogElement | null>(null);
   let tab = $state<"audio" | "general" | "about">("audio");
   let appSettings = $state<AppSettings | null>(null);
+  let autostartEnabled = $state<boolean | null>(null);
+  let autostartBusy = $state(false);
+  let startMinimizedBusy = $state(false);
   let folderFiles = $state<string[]>([]);
   let audioStale = $state(false); // 應該在跑但沒跑(啟動失敗)→ 頂欄極簡警示
   let ensuredDefaults = false; // 首次連線確保有系統輸出;engine 端保保證唯一
@@ -918,9 +926,62 @@
     folderFiles = await listSessions(appSettings.sessionDir).catch(() => []);
   }
 
+  async function refreshAutostartState() {
+    if (autostartBusy) return;
+    autostartBusy = true;
+    try {
+      autostartEnabled = await isAutostartEnabled();
+    } catch (e) {
+      autostartEnabled = null;
+      addNotice("error", "無法讀取 Windows 自動啟動狀態", String(e));
+    } finally {
+      autostartBusy = false;
+    }
+  }
+
+  async function updateAutostart(enabled: boolean) {
+    if (autostartBusy) return;
+    autostartBusy = true;
+    try {
+      if (enabled) await enableAutostart();
+      else await disableAutostart();
+      const actual = await isAutostartEnabled();
+      if (actual !== enabled) throw new Error("Windows 回報的自動啟動狀態未完成變更");
+      autostartEnabled = actual;
+    } catch (e) {
+      try {
+        autostartEnabled = await isAutostartEnabled();
+      } catch {
+        autostartEnabled = null;
+      }
+      addNotice("error", enabled ? "開啟自動啟動失敗" : "關閉自動啟動失敗", String(e));
+    } finally {
+      autostartBusy = false;
+    }
+  }
+
+  async function updateStartMinimized(enabled: boolean) {
+    if (!appSettings || startMinimizedBusy) return;
+    startMinimizedBusy = true;
+    const previous = appSettings.startMinimizedOnAutostart;
+    appSettings.startMinimizedOnAutostart = enabled;
+    try {
+      const result = await setSettings({ startMinimizedOnAutostart: enabled });
+      appSettings = result.settings;
+      if (result.warnings.length > 0)
+        addNotice("error", "設定有部分值不合法,已回復預設", result.warnings.join("\n"));
+    } catch (e) {
+      appSettings.startMinimizedOnAutostart = previous;
+      addNotice("error", "自動啟動縮小偏好儲存失敗", String(e));
+    } finally {
+      startMinimizedBusy = false;
+    }
+  }
+
   function openGeneral() {
     tab = "general";
     refreshFolderFiles().catch(() => {});
+    void refreshAutostartState();
   }
 
   async function pickSessionDir() {
@@ -937,6 +998,7 @@
           sessionDir: null,
           startupFile: null,
           lastSessionPath: null,
+          startMinimizedOnAutostart: false,
         };
       appSettings.sessionDir = d as string;
       appSettings.startupFile = null; // 換資料夾 = 舊選擇作廢
@@ -1260,6 +1322,47 @@
       <p class="err mono">{notice}</p>
     {/if}
   {:else if tab === "general"}
+    <h2>啟動</h2>
+    <div class="formrow checkrow" class:disabled={autostartBusy || autostartEnabled === null}>
+      <input
+        id="autostartenabled"
+        type="checkbox"
+        checked={autostartEnabled === true}
+        disabled={autostartBusy || autostartEnabled === null}
+        onchange={(e) => void updateAutostart(e.currentTarget.checked)}
+      />
+      <label
+        class="checklabel"
+        for="autostartenabled"
+        data-tooltip="在目前 Windows 使用者登入後自動啟動 RoudaMix。"
+        >Windows 登入後自動啟動 RoudaMix</label
+      >
+      {#if autostartBusy}<span class="dim">讀取中…</span>{/if}
+    </div>
+    <div
+      class="formrow checkrow"
+      class:disabled={!appSettings ||
+        autostartEnabled !== true ||
+        autostartBusy ||
+        startMinimizedBusy}
+    >
+      <input
+        id="startminimizedonautostart"
+        type="checkbox"
+        checked={appSettings?.startMinimizedOnAutostart ?? false}
+        disabled={!appSettings ||
+          autostartEnabled !== true ||
+          autostartBusy ||
+          startMinimizedBusy}
+        onchange={(e) => void updateStartMinimized(e.currentTarget.checked)}
+      />
+      <label
+        class="checklabel"
+        for="startminimizedonautostart"
+        data-tooltip="只影響 Windows 自動啟動；手動開啟 RoudaMix 時仍會顯示主視窗。"
+        >自動啟動時縮小到系統匣</label
+      >
+    </div>
     <h2>視窗</h2>
     <div class="formrow">
       <label class="formlabel" for="closebehavior">關閉視窗時</label>
@@ -1493,6 +1596,21 @@
     flex-shrink: 0;
     color: var(--text-dim);
     font-size: 13px;
+  }
+  .checkrow {
+    min-height: 26px;
+  }
+  .checkrow input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    accent-color: var(--accent);
+  }
+  .checklabel {
+    font-size: 13px;
+  }
+  .checkrow.disabled .checklabel {
+    opacity: 0.45;
   }
   .dirpath {
     flex: 1;

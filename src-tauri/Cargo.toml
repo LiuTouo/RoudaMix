@@ -18,3 +18,4 @@ serde_json = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["net", "time", "sync"] }
 tauri-plugin-dialog = "2.7.2"
+tauri-plugin-autostart = "2"

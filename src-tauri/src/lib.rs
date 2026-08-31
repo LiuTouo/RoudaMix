@@ -8,11 +8,27 @@ mod settings;
 mod shm;
 mod spawn;
 
+use std::ffi::OsStr;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager,
 };
+
+const AUTOSTART_ARG: &str = "--autostart";
+
+fn has_autostart_arg<I, S>(args: I) -> bool
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    args.into_iter()
+        .any(|arg| arg.as_ref() == OsStr::new(AUTOSTART_ARG))
+}
+
+fn should_start_hidden(autostart_launch: bool, start_minimized_on_autostart: bool) -> bool {
+    autostart_launch && start_minimized_on_autostart
+}
 
 fn show_dashboard(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
@@ -63,9 +79,20 @@ fn quit_app(app: AppHandle) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .app_name("RoudaMix")
+                .args([AUTOSTART_ARG])
+                .build(),
+        )
         .manage(bridge::Bridge::new())
         .setup(|app| {
             setup_tray(app)?;
+            let app_settings = settings::get_settings(app.handle().clone()).settings;
+            let autostart_launch = has_autostart_arg(std::env::args_os());
+            if !should_start_hidden(autostart_launch, app_settings.start_minimized_on_autostart) {
+                show_dashboard(app.handle());
+            }
             let b = app.state::<bridge::Bridge>().inner().clone();
             b.start(app.handle().clone());
             shm::start(app.handle().clone());
@@ -82,4 +109,24 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("tauri run failed");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_only_explicit_autostart_argument() {
+        assert!(has_autostart_arg(["RoudaMix.exe", AUTOSTART_ARG]));
+        assert!(!has_autostart_arg(["RoudaMix.exe"]));
+        assert!(!has_autostart_arg(["RoudaMix.exe", "--autostart=false"]));
+    }
+
+    #[test]
+    fn hides_only_when_autostart_launch_and_preference_are_both_enabled() {
+        assert!(!should_start_hidden(false, false));
+        assert!(!should_start_hidden(false, true));
+        assert!(!should_start_hidden(true, false));
+        assert!(should_start_hidden(true, true));
+    }
 }

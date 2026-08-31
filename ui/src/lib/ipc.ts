@@ -46,6 +46,8 @@ export type AppSettings = {
   lastWorkingBuffer?: number | null;
   /** 主視窗關閉按鈕的行為；null/undefined 代表首次關閉時詢問。 */
   closeBehavior?: "tray" | "exit" | null;
+  /** 僅由 Windows 登入自動啟動時，讓主視窗保持在系統匣。 */
+  startMinimizedOnAutostart: boolean;
 };
 
 /** get/set 的回覆:typed settings + 載入時的 normalize 警告(可呈現) */

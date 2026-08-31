@@ -14,7 +14,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// blank | last | folder(不接受任意字串;非法值 normalize 回 blank + warning)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,6 +47,8 @@ pub struct Settings {
     pub last_working_device: Option<String>,
     pub last_working_buffer: Option<u32>,
     pub close_behavior: Option<CloseBehavior>,
+    /// 僅由 Windows 登入自動啟動時，讓主視窗保持隱藏並常駐系統匣。
+    pub start_minimized_on_autostart: bool,
 }
 
 impl Default for Settings {
@@ -60,6 +62,7 @@ impl Default for Settings {
             last_working_device: None,
             last_working_buffer: None,
             close_behavior: None,
+            start_minimized_on_autostart: false,
         }
     }
 }
@@ -68,7 +71,7 @@ fn path(app: &AppHandle) -> Option<PathBuf> {
     app.path().app_data_dir().ok().map(|d| d.join("settings.json"))
 }
 
-/// 版本 migration 階梯:vN → vN+1。目前為 v2；未來欄位搬移
+/// 版本 migration 階梯:vN → vN+1。目前為 v3；未來欄位搬移
 /// 在這裡加階段,`normalize` 拿到的永遠是當版形狀的原始 JSON。
 fn migrate(mut raw: Value) -> Value {
     let cur = raw
@@ -76,9 +79,16 @@ fn migrate(mut raw: Value) -> Value {
         .and_then(Value::as_u64)
         .unwrap_or(0);
     if cur < SCHEMA_VERSION as u64 && raw.is_object() {
-        // v0/v1 沒有關閉行為；保留未選狀態，讓 UI 在首次關閉時詢問。
         if let Some(obj) = raw.as_object_mut() {
-            obj.entry("closeBehavior").or_insert(Value::Null);
+            // v0/v1 沒有關閉行為；保留未選狀態，讓 UI 在首次關閉時詢問。
+            if cur < 2 {
+                obj.entry("closeBehavior").or_insert(Value::Null);
+            }
+            // v0～v2 沒有自動啟動時縮小偏好；預設仍顯示主視窗。
+            if cur < 3 {
+                obj.entry("startMinimizedOnAutostart")
+                    .or_insert(Value::Bool(false));
+            }
             obj.insert("schemaVersion".into(), Value::from(SCHEMA_VERSION));
         }
     }
@@ -149,6 +159,11 @@ pub fn normalize(raw: Value) -> (Settings, Vec<String>) {
                 Some(_) | None => warnings.push(format!(
                     "settings.closeBehavior 值不合法({v}),已回復為首次關閉時詢問"
                 )),
+            },
+            "startMinimizedOnAutostart" => match v.as_bool() {
+                Some(value) => s.start_minimized_on_autostart = value,
+                None => warnings
+                    .push("settings.startMinimizedOnAutostart 型別錯誤,已回復預設 false".into()),
             },
             _ => {} // 未知鍵:保留策略(merge 寫回)
         }
@@ -317,12 +332,13 @@ mod tests {
             "startupMode": 123,
             "sessionDir": 42,
             "lastWorkingBuffer": "big",
+            "startMinimizedOnAutostart": "yes",
             "unknownKey": "kept"
         }));
         assert_eq!(s.startup_mode, StartupMode::Blank);
         assert_eq!(s.session_dir, None);
         assert_eq!(s.last_working_buffer, None);
-        assert_eq!(w.len(), 3); // 三個壞欄位各一條 warning
+        assert_eq!(w.len(), 4); // 四個壞欄位各一條 warning
     }
 
     #[test]
@@ -332,12 +348,14 @@ mod tests {
             "sessionDir": "C:/x",
             "startupFile": "a.rmsession",
             "lastWorkingDevice": "asio:dev1",
-            "lastWorkingBuffer": 256
+            "lastWorkingBuffer": 256,
+            "startMinimizedOnAutostart": true
         }));
         assert_eq!(s.startup_mode, StartupMode::Folder);
         assert_eq!(s.session_dir.as_deref(), Some("C:/x"));
         assert_eq!(s.last_working_device.as_deref(), Some("asio:dev1"));
         assert_eq!(s.last_working_buffer, Some(256));
+        assert!(s.start_minimized_on_autostart);
         assert!(w.is_empty());
     }
 
@@ -361,6 +379,7 @@ mod tests {
         assert_eq!(m["schemaVersion"], json!(SCHEMA_VERSION));
         assert_eq!(m["startupMode"], json!("last"));
         assert_eq!(m["closeBehavior"], Value::Null);
+        assert_eq!(m["startMinimizedOnAutostart"], json!(false));
     }
 
     #[test]
@@ -368,6 +387,18 @@ mod tests {
         let m = migrate(json!({"schemaVersion": 1, "startupMode": "blank"}));
         assert_eq!(m["schemaVersion"], json!(SCHEMA_VERSION));
         assert_eq!(m["closeBehavior"], Value::Null);
+        assert_eq!(m["startMinimizedOnAutostart"], json!(false));
+    }
+
+    #[test]
+    fn migrate_v2_adds_start_minimized_default() {
+        let m = migrate(json!({
+            "schemaVersion": 2,
+            "closeBehavior": "tray"
+        }));
+        assert_eq!(m["schemaVersion"], json!(SCHEMA_VERSION));
+        assert_eq!(m["closeBehavior"], json!("tray"));
+        assert_eq!(m["startMinimizedOnAutostart"], json!(false));
     }
 
     #[test]

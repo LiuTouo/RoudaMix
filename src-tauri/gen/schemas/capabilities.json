@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"RoudaMix 主視窗能力","local":true,"windows":["main"],"permissions":["core:default","dialog:default","core:window:allow-close","core:window:allow-destroy","core:window:allow-hide"]}}
+{"default":{"identifier":"default","description":"RoudaMix 主視窗能力","local":true,"windows":["main"],"permissions":["core:default","dialog:default","autostart:default","core:window:allow-close","core:window:allow-destroy","core:window:allow-hide"]}}
