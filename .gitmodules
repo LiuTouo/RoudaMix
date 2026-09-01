@@ -1,0 +1,3 @@
+[submodule "engine/third_party/asio-sdk"]
+	path = engine/third_party/asio-sdk
+	url = https://github.com/audiosdk/asio.git
