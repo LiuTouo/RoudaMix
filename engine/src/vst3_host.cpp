@@ -173,8 +173,12 @@ std::vector<Vst3ModuleScan> scan_vst3_dirs(const std::vector<std::filesystem::pa
                 ec.clear();
                 continue;
             }
+            if (_wcsicmp(it->path().extension().c_str(), L".vst3") != 0) continue;
             std::error_code file_ec;
-            if (!it->is_regular_file(file_ec) || it->path().extension() != ".vst3") continue;
+            const bool regular = it->is_regular_file(file_ec);
+            const bool directory = !file_ec && !regular && it->is_directory(file_ec);
+            if (file_ec || (!regular && !directory)) continue;
+            if (directory) it.disable_recursion_pending();
             std::string error;
             auto classes = scan_vst3_module(it->path(), error);
             if (classes.empty()) continue;  // 壞 module / 非 audio effect:略過

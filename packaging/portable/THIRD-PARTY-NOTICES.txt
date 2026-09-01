@@ -1,0 +1,31 @@
+RoudaMix Third-Party Notices
+============================
+
+本測試產物包含或連結下列第三方元件。各元件仍受其原授權條款約束。
+
+Microsoft Edge WebView2 Fixed Version Runtime
+---------------------------------------------
+Copyright Microsoft Corporation.
+Runtime 由打包者自 Microsoft 官方下載。使用與散布受下載套件內及 Microsoft
+WebView2 頁面所列授權條款約束。
+
+Steinberg VST 3 SDK
+-------------------
+Copyright Steinberg Media Technologies GmbH.
+本專案所用版本採 MIT License；完整文字隨附於 LICENSES/VST3-LICENSE.txt。
+
+Steinberg ASIO SDK
+------------------
+Copyright Steinberg Media Technologies GmbH.
+ASIO SDK 提供 proprietary license 或 GPLv3 選擇；完整上游說明隨附於
+LICENSES/ASIO-LICENSE.txt。公開散布前必須由發佈者確認所採授權方案。
+
+IBM Plex Sans TC
+----------------
+Copyright IBM Corp.
+字型依 SIL Open Font License 1.1 發佈。公開散布前應補入完整 OFL 授權文字。
+
+Rust、Tauri、Svelte、Vite 與其他建置相依套件
+---------------------------------------------
+各套件依其上游授權條款使用。本檔不是完整的公開發佈 license inventory；目前產物
+限定自己或內部測試用途。

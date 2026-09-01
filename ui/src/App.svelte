@@ -14,6 +14,7 @@
   import { connView, epochChanged } from "./lib/connPhase";
   import { friendlyError, OverloadDetector } from "./lib/errors";
   import { visibleRange, spacerWidths, dropPosFromX, laneDropToMasterIndex } from "./lib/laneView";
+  import { matchScanJob } from "./lib/scanFlow";
   import {
     connectStatus,
     onConnection,
@@ -25,6 +26,7 @@
     setSettings,
     listSessions,
     onTrayExitRequested,
+    onSingleInstance,
     quitApp,
     respawnEngine,
     type AppSettings,
@@ -131,6 +133,7 @@
   let scanFailed = $state<ScanFailure[]>([]);
   let scanJobId = $state<number | null>(null);
   let scanRunning = $state(false);
+  let scanRequestPending = false;
   let scanProgress = $state<{ done: number; total: number } | null>(null);
   let scanNotice = $state("");
   // ---- A:load_session 的 missing diagnostics 摘要(頂欄)----
@@ -196,6 +199,11 @@
     void (async () => {
 
       sub(await onTrayExitRequested(() => void requestAppExit()));
+      sub(
+        await onSingleInstance(() =>
+          addNotice("info", "RoudaMix 已經在執行，已切換到目前的主視窗"),
+        ),
+      );
 
       sub(
       await onConnection((c) => {
@@ -206,6 +214,7 @@
           currentSessionPath = null; // 新 engine 尚未成功恢復任何檔案，不得覆寫上一代 Session
           scanJobId = null;
           scanRunning = false;
+          scanRequestPending = false;
         }
         conn = c;
         if (c.connected && devices.length === 0) void refreshDevices();
@@ -239,30 +248,40 @@
         // ---- E:掃描 job events(jobId 不符 = 上一代的 late event,忽略)----
         if (kind === "scan_progress") {
           const p = payload as { jobId: number; done: number; total: number };
-          if (p.jobId === scanJobId) scanProgress = { done: p.done, total: p.total };
+          if (acceptScanEvent(p.jobId))
+            scanProgress = { done: p.done, total: p.total };
         }
         if (kind === "scan_done") {
           const p = payload as { jobId: number; plugins: ScanModule[]; failed: ScanFailure[] };
-          if (p.jobId === scanJobId) {
+          if (acceptScanEvent(p.jobId)) {
             scanModules = p.plugins ?? [];
             scanFailed = p.failed ?? [];
             scanRunning = false;
+            scanRequestPending = false;
             scanProgress = null;
+            addNotice(
+              "info",
+              `VST 清單已更新：${scanModules.length} 個模組${scanFailed.length ? `，${scanFailed.length} 個無法載入` : ""}`,
+            );
           }
         }
         if (kind === "scan_failed") {
           const p = payload as { jobId: number; error: string };
-          if (p.jobId === scanJobId) {
+          if (acceptScanEvent(p.jobId)) {
             scanNotice = p.error;
             scanRunning = false;
+            scanRequestPending = false;
             scanProgress = null;
+            addNotice("error", "VST 掃描失敗，已保留原清單", p.error);
           }
         }
         if (kind === "scan_cancelled") {
           const p = payload as { jobId: number };
-          if (p.jobId === scanJobId) {
+          if (acceptScanEvent(p.jobId)) {
             scanRunning = false;
+            scanRequestPending = false;
             scanProgress = null;
+            addNotice("info", "VST 掃描已取消，已保留原清單");
           }
         }
       }),
@@ -292,6 +311,8 @@
       if (typeof s.status.revision === "number") revision = s.status.revision;
       if (!scanRunning && Array.isArray(s.lastScan)) scanModules = s.lastScan;
       connProbeErr = null;
+      // 每次程式啟動主動跑一次；持久 fingerprint 讓未變更 VST 不重新載入。
+      await startScan();
     } catch (e) {
       connProbeErr = String(e); // version mismatch 等分類顯示(connView)
     }
@@ -687,28 +708,41 @@
 
   // ---- E:背景掃描 job(共用 registry;回覆立即回 jobId,進度走 events)----
 
-  async function startScan() {
-    if (scanRunning) return;
+  function acceptScanEvent(jobId: number): boolean {
+    const match = matchScanJob(scanJobId, scanRequestPending, jobId);
+    scanJobId = match.jobId;
+    return match.matches;
+  }
+
+  async function startScan(): Promise<boolean> {
+    if (scanRunning || scanRequestPending) return false;
     scanNotice = "";
+    scanJobId = null;
+    scanRunning = true;
+    scanRequestPending = true;
+    scanProgress = null;
     try {
       const r = await engineCommand("start_scan", {});
-      scanJobId = r.jobId as number;
-      if (!r.reused) {
-        scanModules = [];
-        scanFailed = [];
-      }
-      scanRunning = true;
-      scanProgress = null;
+      if (scanJobId === null) scanJobId = r.jobId as number;
+      scanRequestPending = false;
+      return true;
     } catch (e) {
       scanNotice = String(e);
+      scanRunning = false;
+      scanRequestPending = false;
+      scanJobId = null;
+      addNotice("error", "無法開始 VST 掃描", scanNotice);
+      return false;
     }
   }
 
   async function cancelScan() {
+    if (!scanRunning) return;
     try {
       await engineCommand("cancel_scan", {});
     } catch (e) {
       scanNotice = String(e);
+      addNotice("error", "無法取消 VST 掃描", scanNotice);
     }
   }
 
@@ -1038,6 +1072,17 @@
     >
   {/if}
   <button class="settings" onclick={() => (settingsOpen = true)}>設定</button>
+  <button
+    class="settings"
+    disabled={!conn.connected && !scanRunning}
+    onclick={() => (scanRunning ? void cancelScan() : void startScan())}
+    data-tooltip={scanRunning
+      ? "取消目前的背景 VST 掃描；取消後會保留掃描前的 plugin 清單。"
+      : "在背景掃描預設 VST3 目錄；未變更的 plugin 會沿用持久快取，不重新載入。"}
+    >{scanRunning
+      ? `取消掃描${scanProgress ? ` ${scanProgress.done}/${scanProgress.total}` : ""}`
+      : "掃描 VST"}</button
+  >
   {#if audioStale}
     <button class="err aslink" onclick={() => (settingsOpen = true)} data-tooltip={`音訊啟動異常：${notice}`}
       >音訊未啟動 — 詳情見設定</button
@@ -1142,7 +1187,6 @@
             scanRunning={scanRunning}
             scanProgress={scanProgress}
             scanNotice={scanNotice}
-            onScan={startScan}
             onCancelScan={cancelScan}
             {openMenu}
             dropBefore={dropAt?.group === "input" && dropAt.pos === i}
@@ -1210,7 +1254,6 @@
             scanRunning={scanRunning}
             scanProgress={scanProgress}
             scanNotice={scanNotice}
-            onScan={startScan}
             onCancelScan={cancelScan}
             {openMenu}
             dropBefore={dropAt?.group === "output" && dropAt.pos === i}

@@ -4,6 +4,12 @@ project(roudamix-engine CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Portable 發佈不得要求目標電腦先安裝 Visual C++ Redistributable。
+# Debug 仍使用 debug CRT；Release 與其他非 Debug 組態使用靜態 release CRT。
+if(MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
 set(ASIO_SDK_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/asio-sdk)
 
 # Steinberg ASIO SDK(只編 host 端 asiolist.cpp;/W0 壓 SDK 警告)
@@ -58,6 +64,7 @@ add_executable(roudamix-engine
     src/editor_host.cpp
     src/session.cpp
     src/sandbox.cpp
+    src/vst_registry.cpp
 )
 target_include_directories(roudamix-engine PRIVATE src)
 target_include_directories(roudamix-engine SYSTEM PRIVATE third_party)
@@ -73,6 +80,7 @@ endif()
 add_executable(roudamix-worker
     worker_main.cpp
     src/vst3_host.cpp
+    src/vst_registry.cpp
 )
 target_include_directories(roudamix-worker PRIVATE src)
 target_include_directories(roudamix-worker SYSTEM PRIVATE third_party)
@@ -131,3 +139,12 @@ if(MSVC)
     target_compile_options(track_graph_test PRIVATE /W4 /utf-8)
 endif()
 add_test(NAME track_graph COMMAND track_graph_test)
+
+# VST registry 純檔案邏輯：fingerprint、增量命中、去重、原子持久化。
+add_executable(vst_registry_test tests/vst_registry_test.cpp src/vst_registry.cpp)
+target_include_directories(vst_registry_test PRIVATE src)
+target_include_directories(vst_registry_test SYSTEM PRIVATE third_party)
+if(MSVC)
+    target_compile_options(vst_registry_test PRIVATE /W4 /utf-8)
+endif()
+add_test(NAME vst_registry COMMAND vst_registry_test)

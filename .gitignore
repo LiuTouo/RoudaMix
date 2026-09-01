@@ -2,6 +2,9 @@
 /target/
 /engine/build/
 /ui/dist/
+/dist/
+/output/
+/src-tauri/WebView2Runtime/
 
 # Dependencies
 node_modules/

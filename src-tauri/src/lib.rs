@@ -3,6 +3,7 @@
 
 mod bridge;
 mod commands;
+mod portable;
 mod protocol;
 mod settings;
 mod shm;
@@ -12,8 +13,9 @@ use std::ffi::OsStr;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager,
+    AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder,
 };
+use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
 const AUTOSTART_ARG: &str = "--autostart";
 
@@ -38,6 +40,23 @@ fn show_dashboard(app: &AppHandle) {
     }
 }
 
+fn ensure_main_window(app: &mut tauri::App) -> tauri::Result<()> {
+    if app.get_webview_window("main").is_some() {
+        return Ok(());
+    }
+    let data_dir = portable::webview_data_dir(app.handle())?;
+    WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+        .title("RoudaMix")
+        .inner_size(1100.0, 820.0)
+        .min_inner_size(900.0, 600.0)
+        .maximized(true)
+        .visible(false)
+        .disable_drag_drop_handler()
+        .data_directory(data_dir)
+        .build()?;
+    Ok(())
+}
+
 fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let show = MenuItemBuilder::with_id("show-dashboard", "顯示儀表板").build(app)?;
     let quit = MenuItemBuilder::with_id("quit", "結束程式").build(app)?;
@@ -50,6 +69,8 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show-dashboard" => show_dashboard(app),
             "quit" => {
+                // dirty 詢問由 WebView 管；先喚醒主視窗，dialog 才不會開在隱藏視窗裡。
+                show_dashboard(app);
                 let _ = app.emit("tray-exit-requested", ());
             }
             _ => {}
@@ -78,6 +99,16 @@ fn quit_app(app: AppHandle) {
 
 pub fn run() {
     tauri::Builder::default()
+        // 官方 single-instance plugin 必須最先註冊；第二次啟動只喚醒既有視窗。
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            show_dashboard(app);
+            let _ = app.emit("single-instance-requested", ());
+            app.dialog()
+                .message("RoudaMix 主程序已經在執行，已切換到目前的視窗。")
+                .title("RoudaMix 已在執行")
+                .kind(MessageDialogKind::Info)
+                .show(|_| {});
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_autostart::Builder::new()
@@ -87,6 +118,7 @@ pub fn run() {
         )
         .manage(bridge::Bridge::new())
         .setup(|app| {
+            ensure_main_window(app)?;
             setup_tray(app)?;
             let app_settings = settings::get_settings(app.handle().clone()).settings;
             let autostart_launch = has_autostart_arg(std::env::args_os());

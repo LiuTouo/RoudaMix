@@ -4,6 +4,8 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::OnceLock;
 
+use tauri::AppHandle;
+
 use std::os::windows::io::AsRawHandle;
 use std::os::windows::process::CommandExt;
 
@@ -81,11 +83,16 @@ pub fn engine_exe_path() -> Option<PathBuf> {
     candidates().into_iter().find(|p| p.is_file())
 }
 
-pub fn spawn_supervised() -> std::io::Result<()> {
+pub fn spawn_supervised(app: &AppHandle) -> std::io::Result<()> {
     let exe = engine_exe_path().ok_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::NotFound, "roudamix-engine.exe not found")
     })?;
+    let registry = crate::portable::app_data_dir(app)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?
+        .join("vst-registry.json");
     let spawned = Command::new(&exe)
+        // engine 與其 worker 共用；OsStr 保留非 ASCII Windows 使用者路徑。
+        .env("ROUDAMIX_VST_REGISTRY", registry)
         .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
         .spawn()?;
     // 進 job(app 退出 = engine 結束)。engine 已在別的 job(沙箱/測試環境)會失敗

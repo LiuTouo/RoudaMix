@@ -1,4 +1,5 @@
-//! 應用層設定(bridge 自己的偏好,engine 不涉入)— JSON 存 app data dir。
+//! 應用層設定(bridge 自己的偏好,engine 不涉入)— 一般版存 app data dir；
+//! portable 版存主程式旁的 data/settings.json。
 //! P1-E:typed schema + 版本 migration + 原子寫入。
 //! - 讀檔必經 `normalize`:known field 型別錯/值非法 → 回預設 + warning(UI 可呈現);
 //!   未知鍵保留(向前相容,寫回時合併)。
@@ -12,7 +13,7 @@ use serde_json::Value;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 pub const SCHEMA_VERSION: u32 = 3;
 
@@ -68,7 +69,9 @@ impl Default for Settings {
 }
 
 fn path(app: &AppHandle) -> Option<PathBuf> {
-    app.path().app_data_dir().ok().map(|d| d.join("settings.json"))
+    crate::portable::app_data_dir(app)
+        .ok()
+        .map(|d| d.join("settings.json"))
 }
 
 /// 版本 migration 階梯:vN → vN+1。目前為 v3；未來欄位搬移

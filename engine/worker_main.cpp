@@ -3,31 +3,21 @@
 //   --verify <module.vst3> [classId] <sampleRate> <blockSize>
 //       載入 + instantiate + initialize + setActive(true→false);成功 exit 0。
 //   --scan <root>
-//       遞迴掃 *.vst3;每 module 一行「OK\t<path>\t<classes JSON>」或
-//       「FAIL\t<path>\t<error>」,逐行 flush —— worker 中途崩潰時 engine 保留
-//       已 flush 的增量結果。單 module SEH 攔硬體例外,能續就續。
+//       遞迴掃 *.vst3；fingerprint 未變時沿用 ROUDAMIX_VST_REGISTRY 快取，
+//       新增/變更才載 module。每 module 輸出一行 JSONL 並 flush；單 module
+//       SEH 攔硬體例外，worker 整體失敗時 engine 保留上一版 registry。
 #include <windows.h>
 
 #include <cstdio>
 #include <filesystem>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
+#include "vst_registry.hpp"
 #include "vst3_host.hpp"
 
 namespace {
-
-// path → UTF-8(預設 narrow string 是 ANSI;engine 端 JSON 需要 UTF-8)
-std::string path_utf8(const std::filesystem::path& p) {
-    const std::wstring w = p.wstring();
-    if (w.empty()) return {};
-    const int n = WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()),
-                                      nullptr, 0, nullptr, nullptr);
-    std::string s(static_cast<size_t>(n), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), s.data(), n,
-                        nullptr, nullptr);
-    return s;
-}
 
 int verify(const std::vector<std::string>& args) {
     if (args.size() < 3) {
@@ -79,45 +69,47 @@ std::uint32_t scan_module_seh(const std::filesystem::path* path,
     }
 }
 
-void scan_module(const std::filesystem::path& path) {
+rmx::vst_registry::Entry scan_module(const std::filesystem::path& path,
+                                     const rmx::vst_registry::Fingerprint& fingerprint) {
     std::string error;
     std::vector<rmx::Vst3ClassInfo> classes;
-    // load 時硬體例外(AV)攔下繼續下一顆;heap 污染的延遲炸 = worker 整顆死,
-    // engine 靠已 flush 行數兜底 —— 兩層都成立
+    // load 時硬體例外(AV)攔下繼續下一顆；heap 污染的延遲炸 = worker 整顆死，
+    // engine 會把本輪視為失敗並保留上一版 registry。
     if (scan_module_seh(&path, &classes, &error) != 0) error = "SEH exception in module";
+    rmx::vst_registry::Entry entry;
+    entry.path = path;
+    entry.fingerprint = fingerprint;
     if (classes.empty()) {
-        const std::string p8 = path_utf8(path);
-        std::fwrite("FAIL\t", 1, 5, stdout);
-        std::fwrite(p8.c_str(), 1, p8.size(), stdout);
-        std::fwrite("\t", 1, 1, stdout);
-        std::fwrite(error.c_str(), 1, error.size(), stdout);
-        std::fwrite("\n", 1, 1, stdout);
-    } else {
-        std::string line = "OK\t" + path_utf8(path) + "\t[";
-        for (std::size_t i = 0; i < classes.size(); ++i) {
-            const auto& c = classes[i];
-            if (i > 0) line += ",";
-            // JSON 字串:路徑/name 內的 " \ 控制字元跳脫(最小實作)
-            const auto json_str = [](const std::string& s) {
-                std::string out = "\"";
-                for (const char ch : s) {
-                    if (ch == '"' || ch == '\\') out += '\\';
-                    if (static_cast<unsigned char>(ch) < 0x20) continue;
-                    out += ch;
-                }
-                return out + "\"";
-            };
-            line += "{\"uid\":" + json_str(c.uid) + ",\"name\":" + json_str(c.name) +
-                    ",\"vendor\":" + json_str(c.vendor) + ",\"version\":" + json_str(c.version) +
-                    ",\"subcategories\":" + json_str(c.subcategories) + "}";
-        }
-        line += "]\n";
-        std::fwrite(line.data(), 1, line.size(), stdout);
+        entry.error = error.empty() ? "module contains no VST3 audio effect classes" : error;
+        return entry;
     }
+    for (const auto& c : classes) {
+        entry.classes.push_back({
+            {"uid", c.uid},
+            {"name", c.name},
+            {"vendor", c.vendor},
+            {"version", c.version},
+            {"subcategories", c.subcategories},
+        });
+    }
+    return entry;
+}
+
+void emit_entry(const rmx::vst_registry::Entry& entry) {
+    const std::string line = rmx::vst_registry::entry_json(entry).dump() + "\n";
+    std::fwrite(line.data(), 1, line.size(), stdout);
     std::fflush(stdout);  // 增量契約:每 module 一行即沖
 }
 
 int scan(const std::string& root) {
+    rmx::vst_registry::Registry cache;
+    std::string cache_error;
+    (void)rmx::vst_registry::load(rmx::vst_registry::cache_path_from_env(), cache,
+                                  cache_error);
+    std::unordered_map<std::wstring, const rmx::vst_registry::Entry*> cache_by_path;
+    cache_by_path.reserve(cache.entries.size());
+    for (const auto& entry : cache.entries)
+        cache_by_path.emplace(rmx::vst_registry::path_key(entry.path), &entry);
     std::error_code ec;
     std::filesystem::recursive_directory_iterator it{
         std::filesystem::path{root},
@@ -131,9 +123,32 @@ int scan(const std::string& root) {
             ec.clear();
             continue;
         }
+        if (_wcsicmp(it->path().extension().c_str(), L".vst3") != 0) continue;
         std::error_code fec;
-        if (!it->is_regular_file(fec) || it->path().extension() != ".vst3") continue;
-        scan_module(it->path());
+        const bool regular = it->is_regular_file(fec);
+        const bool directory = !fec && !regular && it->is_directory(fec);
+        if (fec || (!regular && !directory)) continue;
+        // VST3 bundle 目錄本身就是 module；不可再把 Contents 內二進位掃成第二顆。
+        if (directory) it.disable_recursion_pending();
+        rmx::vst_registry::Fingerprint value;
+        std::string error;
+        if (!rmx::vst_registry::fingerprint(it->path(), value, error)) {
+            rmx::vst_registry::Entry failed;
+            failed.path = it->path();
+            failed.error = std::move(error);
+            emit_entry(failed);
+            continue;
+        }
+        const auto cached_it = cache_by_path.find(rmx::vst_registry::path_key(it->path()));
+        if (cached_it != cache_by_path.end() &&
+            cached_it->second->fingerprint == value) {
+            const auto* cached = cached_it->second;
+            auto reused = *cached;
+            reused.path = it->path();
+            emit_entry(reused);
+        } else {
+            emit_entry(scan_module(it->path(), value));
+        }
     }
     return 0;
 }

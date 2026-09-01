@@ -58,7 +58,9 @@ struct PendingMap {
 
 impl PendingMap {
     fn new() -> Self {
-        Self { map: Mutex::new(HashMap::new()) }
+        Self {
+            map: Mutex::new(HashMap::new()),
+        }
     }
     fn register(&self, id: u64, tx: oneshot::Sender<Value>) {
         self.map.lock().unwrap().insert(id, tx);
@@ -119,7 +121,7 @@ impl Bridge {
         let b = self.clone();
         tauri::async_runtime::spawn(async move {
             b.set_phase(&app, "spawning", "");
-            match spawn::spawn_supervised() {
+            match spawn::spawn_supervised(&app) {
                 Ok(()) => b.set_phase(&app, "connecting", ""),
                 Err(se) => b.set_phase(&app, "spawn_failed", &format!("{se}")),
             }
@@ -187,7 +189,7 @@ impl Bridge {
             }
             Ok(Err(_)) => Err("disconnected".into()),
             Err(_) => {
-                self.inner.pending.take(id);  // 晚到 reply 由此丟棄(resolve 不到)
+                self.inner.pending.take(id); // 晚到 reply 由此丟棄(resolve 不到)
                 Err("timeout".into())
             }
         }
@@ -240,7 +242,7 @@ async fn run(app: AppHandle, b: Bridge) {
                 eprintln!("[bridge] connect fail (try {tries}): {e}");
                 if tries == 1 || tries % 20 == 0 {
                     b.set_phase(&app, "spawning", "");
-                    match spawn::spawn_supervised() {
+                    match spawn::spawn_supervised(&app) {
                         Ok(()) => {
                             eprintln!("[bridge] spawned engine");
                             b.set_phase(&app, "connecting", "");
@@ -301,9 +303,8 @@ async fn serve(app: &AppHandle, b: &Bridge, pipe: NamedPipeClient) {
             Err(_) => continue, // 壞 JSON 容錯:丟 frame 不斷線(契約 §9)
         };
         match parse_frame(j.clone()) {
-            Ok(Frame::Reply(_)) => {
-                let id = j["id"].as_u64().unwrap_or(0);
-                if let Some(tx) = b.inner.pending.take(id) {
+            Ok(Frame::Reply(r)) => {
+                if let Some(tx) = b.inner.pending.take(r.id) {
                     let _ = tx.send(j);
                 }
             }
@@ -311,7 +312,10 @@ async fn serve(app: &AppHandle, b: &Bridge, pipe: NamedPipeClient) {
                 if e.kind == "snapshot" {
                     b.on_snapshot(app, &e.payload);
                 }
-                let _ = app.emit("engine-event", json!({ "kind": e.kind, "payload": e.payload }));
+                let _ = app.emit(
+                    "engine-event",
+                    json!({ "kind": e.kind, "payload": e.payload }),
+                );
             }
             _ => continue, // client 不收 command;壞 frame 容錯
         }
@@ -351,7 +355,7 @@ mod tests {
         let removed = p.take(7); // send 逾時路徑:移除登記
         assert!(removed.is_some());
         drop(removed); // sender 釋放
-        // 晚到的 reply(id=7)再來:take = None = 丟棄
+                       // 晚到的 reply(id=7)再來:take = None = 丟棄
         assert!(p.take(7).is_none());
         // 新命令註冊新 id,不受舊 reply 影響
         let (tx2, rx2) = oneshot::channel();

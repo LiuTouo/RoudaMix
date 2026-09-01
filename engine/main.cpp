@@ -21,6 +21,7 @@
 #include "sandbox.hpp"
 #include "session.hpp"
 #include "vst3_host.hpp"
+#include "vst_registry.hpp"
 
 namespace {
 
@@ -61,6 +62,9 @@ ScanJob g_scan_job;
 std::uint64_t g_scan_next_id = 1;
 nlohmann::json g_last_scan = nlohmann::json::array();        // OK modules(全域 registry)
 nlohmann::json g_last_scan_failed = nlohmann::json::array(); // 壞 module quarantine(診斷用)
+rmx::vst_registry::Registry g_vst_registry;
+std::filesystem::path g_vst_registry_path;
+constexpr std::uint32_t kScanRootTimeoutMs = 10u * 60u * 1000u;
 
 struct Task {
     uint64_t gen;
@@ -206,12 +210,32 @@ void send_event_active(const nlohmann::json& ev) {
     if (HANDLE c = g_active_pipe.load(std::memory_order_acquire)) send_frame(c, ev);
 }
 
-// 掃描 thread body:逐 root 跑 worker(cancel 可中斷),行解析 OK/FAIL;
-// 收尾把 registry 換掉並推結案 event。worker 不在 = fail closed(job failed,
-// 不 fallback in-process:壞 DLL 的代價是炸 engine process,不能省 worker)
+std::vector<std::filesystem::path> default_vst_roots() {
+    std::vector<std::filesystem::path> roots{
+        std::filesystem::path{L"C:\\Program Files\\Common Files\\VST3"},
+        std::filesystem::path{L"C:\\Program Files\\VST3"},
+    };
+    const DWORD needed = GetEnvironmentVariableW(L"LOCALAPPDATA", nullptr, 0);
+    if (needed > 1) {
+        std::wstring local_app_data(static_cast<std::size_t>(needed), L'\0');
+        const DWORD written =
+            GetEnvironmentVariableW(L"LOCALAPPDATA", local_app_data.data(), needed);
+        if (written > 0 && written < needed) {
+            local_app_data.resize(written);
+            roots.push_back(std::filesystem::path{local_app_data} / L"Programs" /
+                            L"Common" / L"VST3");
+        }
+    }
+    return roots;
+}
+
+// 掃描 thread body:逐 root 跑 worker(cancel 可中斷),解析 JSONL registry entries;
+// 只有全部 root + cache 原子寫入成功才換 registry。取消/失敗保留舊清單。
+// worker 不在 = fail closed(job failed,不 fallback in-process:壞 DLL 的代價是
+// 炸 engine process,不能省 worker)
 void scan_job_thread(std::uint64_t job_id, std::vector<std::filesystem::path> roots) {
-    nlohmann::json plugins = nlohmann::json::array();
-    nlohmann::json failed = nlohmann::json::array();
+    rmx::vst_registry::Registry candidate;
+    candidate.roots = roots;
     std::string job_error;
     int outcome = 0;  // 0 = done、1 = failed、2 = cancelled
     const std::size_t total = roots.size();
@@ -222,10 +246,30 @@ void scan_job_thread(std::uint64_t job_id, std::vector<std::filesystem::path> ro
         }
         send_event_active(rmx::make_event(
             "scan_progress",
-            {{"jobId", job_id}, {"done", i}, {"total", total}, {"root", roots[i].string()}}));
-        // 掃描在隔離 worker 跑:壞 module 崩潰只死 worker,已 flush 的行 = 增量照收
-        const auto r = rmx::sandbox::run_worker({"--scan", roots[i].string()}, 120000,
-                                                &g_scan_job.cancel);
+            {{"jobId", job_id},
+             {"done", i},
+             {"total", total},
+             {"root", rmx::vst_registry::path_utf8(roots[i])}}));
+        std::error_code root_ec;
+        const bool root_exists = std::filesystem::exists(roots[i], root_ec);
+        if (root_ec) {
+            job_error = "cannot inspect VST root: " +
+                        rmx::vst_registry::path_utf8(roots[i]) + ": " + root_ec.message();
+            outcome = 1;
+            break;
+        }
+        // 未安裝這個預設 root = 合法空目錄；舊 cache 內該 root 的項目會被移除。
+        if (!root_exists) continue;
+        if (!std::filesystem::is_directory(roots[i], root_ec) || root_ec) {
+            job_error = "VST root is not an accessible directory: " +
+                        rmx::vst_registry::path_utf8(roots[i]);
+            outcome = 1;
+            break;
+        }
+        // 掃描在隔離 worker 跑；worker 整體異常時本輪不 commit。
+        const auto r = rmx::sandbox::run_worker(
+            {"--scan", rmx::vst_registry::path_utf8(roots[i])}, kScanRootTimeoutMs,
+            &g_scan_job.cancel);
         if (r.cancelled) {
             outcome = 2;
             break;
@@ -236,43 +280,49 @@ void scan_job_thread(std::uint64_t job_id, std::vector<std::filesystem::path> ro
             break;
         }
         if (r.timed_out) {
-            job_error = "scan timed out after 120s (worker killed)";
+            job_error = "scan timed out after 10 minutes (worker killed)";
+            outcome = 1;
+            break;
+        }
+        if (r.exit_code != 0) {
+            job_error = "scan worker exited with code " + std::to_string(r.exit_code) +
+                        " for root: " + rmx::vst_registry::path_utf8(roots[i]);
             outcome = 1;
             break;
         }
         std::istringstream stream(r.output);
         std::string line;
         while (std::getline(stream, line)) {
-            const auto tab1 = line.find('\t');
-            if (tab1 == std::string::npos) continue;
-            const auto tab2 = line.find('\t', tab1 + 1);
-            if (tab2 == std::string::npos) continue;
-            const std::string status = line.substr(0, tab1);
-            const std::string path = line.substr(tab1 + 1, tab2 - tab1 - 1);
-            if (status == "OK") {
-                nlohmann::json classes =
-                    nlohmann::json::parse(line.substr(tab2 + 1), nullptr, false);
-                if (classes.is_discarded() || !classes.is_array() || classes.empty()) continue;
-                plugins.push_back({{"path", path}, {"classes", classes}});
-            } else if (status == "FAIL") {
-                // 壞 module 進 quarantine(診斷用);add_plugin 的 verify 也不會放它進來
-                failed.push_back({{"path", path},
-                                  {"error", line.substr(tab2 + 1)}});
-            }
+            const auto json = nlohmann::json::parse(line, nullptr, false);
+            if (json.is_discarded()) continue;  // SDK/stderr 診斷行不是 worker record
+            rmx::vst_registry::Entry entry;
+            if (rmx::vst_registry::entry_from_json(json, entry))
+                candidate.entries.push_back(std::move(entry));
         }
+    }
+    nlohmann::json committed_plugins;
+    nlohmann::json committed_failed;
+    if (outcome == 0) {
+        rmx::vst_registry::normalize(candidate);
+        if (!rmx::vst_registry::save_atomic(g_vst_registry_path, candidate, job_error))
+            outcome = 1;
     }
     {
         std::lock_guard<std::mutex> lock(g_scan_mutex);
-        g_last_scan = std::move(plugins);
-        g_last_scan_failed = std::move(failed);
+        if (outcome == 0) {
+            g_vst_registry = std::move(candidate);
+            g_last_scan = rmx::vst_registry::plugins_json(g_vst_registry);
+            g_last_scan_failed = rmx::vst_registry::failures_json(g_vst_registry);
+            committed_plugins = g_last_scan;
+            committed_failed = g_last_scan_failed;
+        }
         g_scan_job.running.store(false, std::memory_order_release);
     }
     if (outcome == 0) {
-        std::lock_guard<std::mutex> lock(g_scan_mutex);
         send_event_active(rmx::make_event("scan_done", {
             {"jobId", job_id},
-            {"plugins", g_last_scan},
-            {"failed", g_last_scan_failed},
+            {"plugins", committed_plugins},
+            {"failed", committed_failed},
         }));
     } else if (outcome == 1) {
         send_event_active(rmx::make_event(
@@ -556,8 +606,7 @@ bool dispatch(HANDLE client, const Command& c) {
             }
         }
         if (roots.empty()) {
-            roots = {std::filesystem::path{L"C:\\Program Files\\Common Files\\VST3"},
-                     std::filesystem::path{L"C:\\Program Files\\VST3"}};
+            roots = default_vst_roots();
         }
         std::uint64_t job_id = 0;
         bool reused = false;
@@ -1013,6 +1062,20 @@ int main() {
     // GUI 訊息全部由本 thread 的 message loop 服務(STA 是 Win32 GUI 標配)
     if (FAILED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED))) {
         std::fprintf(stderr, "[engine] CoInitializeEx failed\n");
+    }
+
+    // 只讀 JSON registry，不載入任何 plugin DLL；因此啟動可立即提供上次清單。
+    // Tauri 未提供路徑(單獨跑 engine 測試)時仍可掃描，只是不跨啟動持久化。
+    g_vst_registry_path = rmx::vst_registry::cache_path_from_env();
+    std::string registry_error;
+    if (rmx::vst_registry::load(g_vst_registry_path, g_vst_registry, registry_error)) {
+        g_last_scan = rmx::vst_registry::plugins_json(g_vst_registry);
+        g_last_scan_failed = rmx::vst_registry::failures_json(g_vst_registry);
+        std::fprintf(stderr, "[engine] VST registry loaded: %zu entries\n",
+                     g_vst_registry.entries.size());
+    } else {
+        std::fprintf(stderr, "[engine] VST registry ignored: %s\n", registry_error.c_str());
+        g_vst_registry = {};
     }
 
     WNDCLASSEXW wc{};

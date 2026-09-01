@@ -66,6 +66,10 @@ export const listSessions = (dir: string) => invoke<string[]>("list_sessions", {
 export const onTrayExitRequested = (cb: () => void) =>
   listen("tray-exit-requested", cb);
 
+/** 第二個主程序啟動要求已被攔截，既有主視窗會被喚醒。 */
+export const onSingleInstance = (cb: () => void) =>
+  listen("single-instance-requested", cb);
+
 export const quitApp = () => invoke<void>("quit_app");
 
 /** P1-L:連線失敗/spawn 失敗時手動重試(冪等) */

@@ -37,7 +37,6 @@
     scanRunning = false,
     scanProgress = null,
     scanNotice = "",
-    onScan,
     onCancelScan,
     openMenu,
     dropBefore = false,
@@ -55,7 +54,6 @@
     scanRunning?: boolean;
     scanProgress?: { done: number; total: number } | null;
     scanNotice?: string;
-    onScan: () => void;
     onCancelScan: () => void;
     /** P2-M:請求右鍵選單(App 持有全域 ContextMenu;{x,y} + items) */
     openMenu: (x: number, y: number, label: string, items: Array<{ label: string; disabled?: boolean; run: () => void }>) => void;
@@ -866,26 +864,12 @@
       {/each}
     </div>
     <div class="vstfoot">
-      {#if !scanRunning}
-        <button
-          class="mini add"
-          onclick={() => {
-            onScan();
-            scanDlg?.showModal();
-          }}
-          data-tooltip="開啟 plugin 選擇器；清單共用掃描結果，並可在背景重新掃描預設 VST3 目錄。"
-          >＋ 掃描加入</button
-        >
-      {:else}
-        <button
-          class="mini add"
-          onclick={() => {
-            onScan();
-            scanDlg?.showModal();
-          }}
-          >掃描中…(開清單)</button
-        >
-      {/if}
+      <button
+        class="mini add"
+        onclick={() => scanDlg?.showModal()}
+        data-tooltip="開啟共用的 VST plugin 清單；不會自動重新掃描。"
+        >＋ 加入</button
+      >
     </div>
   </div>
   <!-- P2-P:resize grip = button(可聚焦、Enter = 還原高度;拖曳調整) -->
@@ -905,14 +889,6 @@
   <dialog bind:this={scanDlg} class="scanlistdlg">
     <div class="cardhead dialog-head">
       <span class="dialog-title">VST 插件列表 — 加入「{track.name}」</span>
-      {#if !scanRunning}
-        <button
-          class="mini"
-          onclick={onScan}
-          data-tooltip="在背景重新掃描預設 VST3 目錄，更新共用 plugin 清單。"
-          >重新掃描</button
-        >
-      {/if}
       <button
         class="dialog-close"
         type="button"
@@ -934,7 +910,7 @@
       <p class="err mono">{scanNotice}</p>
     {/if}
     {#if scanModules.length === 0 && !scanRunning}
-      <p class="dim">找不到 VST3 — 按「重新掃描」</p>
+      <p class="dim">尚無 VST 清單 — 請按頂欄「掃描 VST」</p>
     {:else}
       <div class="scanlist">
         {#each scanModules as m (m.path)}

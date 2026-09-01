@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "scripts": {
     "tauri": "tauri",
-    "build:engine": "cmake --build engine/build --config Release"
+    "build:engine": "cmake --build engine/build --config Release",
+    "build:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-portable.ps1"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"
