@@ -2,8 +2,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { ConnectionStatus, MetersFrame, Snapshot } from "./types";
 
-export { engineCommand } from "./protocol-commands.generated";
-
 export const connectStatus = () => invoke<ConnectionStatus>("connect_status");
 
 export function onConnection(cb: (s: ConnectionStatus) => void) {

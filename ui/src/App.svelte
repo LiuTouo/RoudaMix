@@ -47,6 +47,7 @@
     type AppSettings,
   } from "./lib/ipc";
   import { engineCommand } from "./lib/protocol-commands.generated";
+  import { samplesToMs } from "./lib/format";
   import type {
     ConnectionStatus,
     DeviceInfo,
@@ -1193,13 +1194,7 @@
   /** P1-L:連線顯示模型(細分 phase + tone;connPhase.ts 純函式) */
   const cv = $derived(connView(conn, connProbeErr));
   const selDev = $derived(devices.find((d) => d.deviceKey === selected) ?? null);
-  // ASIO getLatencies 單位 = samples;換算 ms 顯示(去尾零;driver 沒報 = —)
-  function samplesToMs(n: number | null, rate: number): string {
-    return n == null || rate <= 0 ? "—" : String(parseFloat(((n / rate) * 1000).toFixed(2)));
-  }
-  function pluginSamplesToMs(n: number | null, rate: number): string {
-    return n == null || rate <= 0 ? "—" : ((n / rate) * 1000).toFixed(1);
-  }
+  // ASIO / plugin latency 單位 = samples;統一走 lib/format.samplesToMs(2 位小數)
 </script>
 
 <header class="bar">
@@ -1303,7 +1298,7 @@
       aria-expanded={latencyDrawerOpen}
       aria-label="開啟 Plugin 延遲與 Process Load 明細"
       data-tooltip="Monitor／Stream 的最大有效 Plugin Path Latency；點擊開啟逐 instance 與 PDC 明細。"
-      >plug M {pluginSamplesToMs(status?.pluginDelay?.monitorSamples ?? null, status?.sampleRate ?? 0)} / S {pluginSamplesToMs(status?.pluginDelay?.streamSamples ?? null, status?.sampleRate ?? 0)} ms</button
+      >plug M {samplesToMs(status?.pluginDelay?.monitorSamples ?? null, status?.sampleRate ?? 0)} / S {samplesToMs(status?.pluginDelay?.streamSamples ?? null, status?.sampleRate ?? 0)} ms</button
     >
   {/if}
   {#if status?.pluginFails}

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import { engineCommand } from "./protocol-commands.generated";
+  import { samplesToMs } from "./format";
   import type { EngineStatus, LatencyReport, MetersFrame, RackSlot, Track } from "./types";
 
   let { open, status, meters, onClose }: { open: boolean; status: EngineStatus | null; meters: MetersFrame | null; onClose: () => void } =
@@ -14,8 +15,7 @@
   const loadHistory = new Map<string, number[]>();
 
   const rate = $derived(status?.sampleRate ?? 0);
-  const ms = (samples: number | null | undefined) =>
-    samples === null || samples === undefined || rate <= 0 ? "—" : (samples * 1000 / rate).toFixed(3);
+  const ms = (samples: number | null | undefined) => samplesToMs(samples, rate);
   const trackName = (id: number) =>
     (report?.tracks ?? status?.tracks ?? []).find((track) => track.trackId === id)?.name ?? `#${id}`;
   const loadKey = (instanceId: number, variant: number) => `${instanceId}:${variant}`;
