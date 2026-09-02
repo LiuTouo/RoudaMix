@@ -385,6 +385,46 @@ int main() {
         CHECK(output_latency(plan, 5).total_plugin_delay_samples == 80);
     }
 
+    // Plugin Latency 邊界軸:RoutePlan 層對 0、1、block−1、block、block+1、
+    // multi-block 與兩秒上限的 dry delay / total 語意(spec #2 測試軸)。
+    for (const std::uint64_t rate : {44100u, 48000u, 96000u, 192000u}) {
+        for (const std::uint32_t block : {64u, 128u, 512u, 2048u}) {
+            const std::uint64_t values[]{0u, 1u, block - 1u, block, block + 1u,
+                                         static_cast<std::uint64_t>(block) * 3u,
+                                         rate * 2u};
+            for (const auto latency : values) {
+                const rmx::PdcLimits block_limits{rate * 2u, 256u * 1024u * 1024u, 2,
+                                                  sizeof(float), block};
+                const auto plan = rmx::plan_routes(
+                    {
+                        {1, false, false, rmx::OutputLatencyPolicy::kFullPdc,
+                         {active_slot(10, latency)}, {2}},
+                        {2, false, false, rmx::OutputLatencyPolicy::kFullPdc, {}, {3}},
+                        {3, false, true, rmx::OutputLatencyPolicy::kFullPdc, {}, {}},
+                    },
+                    block_limits);
+                CHECK(plan.ok());
+                const auto& slot_plan = find_track(plan, 1).slots[0];
+                CHECK(slot_plan.primary.action == rmx::RouteSlotAction::kProcess);
+                CHECK(slot_plan.primary.dry_delay_samples == latency);
+                // 串流 chain 無 fan-in:compensation 由 slot dry delay 吸收,
+                // send edge 不帶 delay、不配置 buffer。
+                CHECK(find_track(plan, 1).sends[0].primary_delay_samples == 0u);
+                CHECK(plan.latency.buffer_bytes == 0);
+                CHECK(output_latency(plan, 3).total_plugin_delay_samples == latency);
+            }
+            const auto over_boundary = rmx::plan_routes(
+                {
+                    {1, false, false, rmx::OutputLatencyPolicy::kFullPdc,
+                     {active_slot(10, rate * 2u + 1u)}, {2}},
+                    {2, false, true, rmx::OutputLatencyPolicy::kFullPdc, {}, {}},
+                },
+                {rate * 2u, 256u * 1024u * 1024u, 2, sizeof(float), block});
+            CHECK(!over_boundary.ok());
+            CHECK(over_boundary.latency.error == rmx::PdcPlanError::kPathLimitExceeded);
+        }
+    }
+
     std::printf("route_planner_test PASSED\n");
     return 0;
 }
