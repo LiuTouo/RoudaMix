@@ -124,6 +124,14 @@ test("start 失敗可回滾為 failed；cancel request 失敗維持 scanning", (
   assert.equal(startRejected.state.jobId, null);
   assert.equal(cancelRejected.state.phase, "scanning");
   assert.equal(cancelRejected.state.error, "cancel failed");
+  assert.equal(
+    transitionScanJob(startRejected.state, { type: "dismiss", jobId: null }).state.phase,
+    "idle",
+  );
+  assert.equal(
+    transitionScanJob(cancelRejected.state, { type: "dismiss", jobId: null }).state.error,
+    "",
+  );
 });
 
 test("reset 與 terminal state 收到重複 late event 都保持冪等", () => {

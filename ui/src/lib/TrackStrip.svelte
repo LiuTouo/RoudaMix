@@ -11,13 +11,21 @@
   import { MutationQueue, mutKey } from "./mutations";
   import { reorderLane } from "./laneOrder";
   import {
+    beginLatencyPolicy,
     beginMonitorBypass,
+    finishLatencyPolicy,
     finishMonitorBypass,
+    initialLatencyPolicy,
     initialMonitorBypass,
+    isLatencyPolicyPending,
     isMonitorBypassPending,
+    latencyPolicyValue,
     monitorBypassValue,
+    reconcileLatencyPolicy,
     reconcileMonitorBypass,
+    type LatencyPolicyState,
     type MonitorBypassState,
+    type OutputLatencyPolicy,
   } from "./monitorBypass";
   import { friendlyError } from "./errors";
   import AppPicker from "./AppPicker.svelte";
@@ -82,7 +90,7 @@
   let confirmBox = $state<{ title: string; impact: string[]; confirmLabel: string } | null>(null);
   let pendingDelete: (() => void) | null = null;
   let monitorBypassState = $state<MonitorBypassState>(initialMonitorBypass());
-  let pendingLatencyPolicy = $state(false);
+  let latencyPolicyState = $state<LatencyPolicyState>(initialLatencyPolicy());
   // P1-C:app 軌程序選擇器(needsRebind / 程序死亡重綁)
   let pickerOpen = $state(false);
 
@@ -104,9 +112,16 @@
       track.plugins.map((slot) => [slot.instanceId, slot.monitorBypassed ?? false] as const),
     );
     if (reconciled !== monitorBypassState) monitorBypassState = reconciled;
+    const latencyPolicy = reconcileLatencyPolicy(
+      latencyPolicyState,
+      track.latencyPolicy ?? "fullPdc",
+    );
+    if (latencyPolicy !== latencyPolicyState) latencyPolicyState = latencyPolicy;
   });
   const shownMonitorBypass = (slot: RackSlot) =>
     monitorBypassValue(monitorBypassState, slot.instanceId, slot.monitorBypassed ?? false);
+  const shownLatencyPolicy = () =>
+    latencyPolicyValue(latencyPolicyState, track.latencyPolicy ?? "fullPdc");
 
   // ASIO pair 選項:基底偶數 ch,顯示「1/2 名稱」
   function pairOptions(names: string[], dir: "in" | "out") {
@@ -422,21 +437,26 @@
     }
   }
 
-  async function setLatencyPolicy(
-    policy: "fullPdc" | "lowLatency",
-    select: HTMLSelectElement,
-  ) {
-    if (pendingLatencyPolicy) return;
+  async function setLatencyPolicy(policy: OutputLatencyPolicy) {
+    const request = beginLatencyPolicy(
+      latencyPolicyState,
+      track.latencyPolicy ?? "fullPdc",
+      policy,
+    );
+    if (!request.requested) return;
     err = "";
-    const previous = track.latencyPolicy ?? "fullPdc";
-    pendingLatencyPolicy = true;
+    latencyPolicyState = request.state;
+    let outcome: "confirmed" | "rejected" = "confirmed";
     try {
-      await engineCommand("track_set_latency_policy", { trackId: track.trackId, policy });
+      await engineCommand("track_set_latency_policy", {
+        trackId: track.trackId,
+        policy: request.requested,
+      });
     } catch (e) {
-      select.value = previous;
+      outcome = "rejected";
       err = friendlyError(String(e)).friendly;
     } finally {
-      pendingLatencyPolicy = false;
+      latencyPolicyState = finishLatencyPolicy(latencyPolicyState, outcome);
     }
   }
 
@@ -829,12 +849,9 @@
       {#if latencyEnabled}
         <select
           class="latency-policy"
-          value={track.latencyPolicy ?? "fullPdc"}
-          disabled={pendingLatencyPolicy}
-          onchange={(e) => void setLatencyPolicy(
-            e.currentTarget.value as "fullPdc" | "lowLatency",
-            e.currentTarget,
-          )}
+          value={shownLatencyPolicy()}
+          disabled={isLatencyPolicyPending(latencyPolicyState)}
+          onchange={(e) => void setLatencyPolicy(e.currentTarget.value as OutputLatencyPolicy)}
           aria-label="輸出軌 {track.name} 的延遲政策"
           data-tooltip="Full PDC 會對齊匯流分支；Low Latency 不加入 Compensation Delay，且不保證平行路徑同步。"
         >

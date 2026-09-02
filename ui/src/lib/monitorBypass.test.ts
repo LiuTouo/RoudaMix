@@ -2,10 +2,16 @@ import assert from "node:assert";
 import { test } from "node:test";
 import {
   beginMonitorBypass,
+  beginLatencyPolicy,
+  finishLatencyPolicy,
   finishMonitorBypass,
+  initialLatencyPolicy,
   initialMonitorBypass,
+  isLatencyPolicyPending,
   isMonitorBypassPending,
+  latencyPolicyValue,
   monitorBypassValue,
+  reconcileLatencyPolicy,
   reconcileMonitorBypass,
 } from "./monitorBypass.ts";
 
@@ -55,4 +61,29 @@ test("重複完成或未知 instance 是冪等操作", () => {
 
   assert.equal(finishMonitorBypass(state, 999, "confirmed"), state);
   assert.equal(reconcileMonitorBypass(state, []), state);
+});
+
+test("Output Latency Policy pending 期間拒絕新值，成功採用 requested 值", () => {
+  const pending = beginLatencyPolicy(initialLatencyPolicy(), "fullPdc", "lowLatency");
+  const duplicate = beginLatencyPolicy(pending.state, "fullPdc", "fullPdc");
+  const confirmed = finishLatencyPolicy(pending.state, "confirmed");
+
+  assert.equal(pending.requested, "lowLatency");
+  assert.equal(isLatencyPolicyPending(pending.state), true);
+  assert.equal(latencyPolicyValue(pending.state, "fullPdc"), "lowLatency");
+  assert.equal(duplicate.requested, null);
+  assert.equal(duplicate.state, pending.state);
+  assert.equal(latencyPolicyValue(confirmed, "fullPdc"), "lowLatency");
+});
+
+test("Output Latency Policy 失敗回滾，engine observation 對齊後回到權威值", () => {
+  const pending = beginLatencyPolicy(initialLatencyPolicy(), "fullPdc", "lowLatency").state;
+  const rejected = finishLatencyPolicy(pending, "rejected");
+  const confirmed = finishLatencyPolicy(pending, "confirmed");
+  const reconciled = reconcileLatencyPolicy(confirmed, "lowLatency");
+
+  assert.equal(latencyPolicyValue(rejected, "fullPdc"), "fullPdc");
+  assert.equal(isLatencyPolicyPending(rejected), false);
+  assert.notEqual(reconciled, confirmed);
+  assert.equal(latencyPolicyValue(reconciled, "fullPdc"), "fullPdc");
 });

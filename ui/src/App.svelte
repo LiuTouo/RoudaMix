@@ -89,6 +89,7 @@
     raw?: string; // 技術細節(可複製)
     dismissible: boolean;
     autoDismissMs?: number;
+    onDismiss?: () => void;
   }
   let notices = $state<Notice[]>([]);
   let nextNoticeId = 1;
@@ -99,16 +100,19 @@
     raw?: string,
     autoDismissMs = 0,
     dismissible = autoDismissMs <= 0,
+    onDismiss?: () => void,
   ): void {
     const id = nextNoticeId++;
     notices = [
       ...notices.slice(-4),
-      { id, kind, msg, raw, dismissible, autoDismissMs },
+      { id, kind, msg, raw, dismissible, autoDismissMs, onDismiss },
     ];
     if (autoDismissMs > 0) setTimeout(() => dismissNotice(id), autoDismissMs);
   }
   function dismissNotice(id: number): void {
+    const dismissed = notices.find((n) => n.id === id);
     notices = notices.filter((n) => n.id !== id);
+    dismissed?.onDismiss?.();
   }
   function observeLatencyRuntime(tracks: Track[]): void {
     revisionDirty = transitionRevisionDirty(revisionDirty, { type: "runtimeObserved" });
@@ -351,13 +355,13 @@
               undefined,
               completionNotice.autoDismissMs,
               completionNotice.dismissible,
+              () => {
+                scanJob = transitionScanJob(scanJob, {
+                  type: "dismiss",
+                  jobId: p.jobId,
+                }).state;
+              },
             );
-            setTimeout(() => {
-              scanJob = transitionScanJob(scanJob, {
-                type: "dismiss",
-                jobId: p.jobId,
-              }).state;
-            }, completionNotice.autoDismissMs);
           }
         }
         if (kind === "scan_failed") {
@@ -369,7 +373,12 @@
           });
           scanJob = transition.state;
           if (transition.accepted) {
-            addNotice("error", "VST 掃描失敗，已保留原清單", p.error);
+            addNotice("error", "VST 掃描失敗，已保留原清單", p.error, 0, true, () => {
+              scanJob = transitionScanJob(scanJob, {
+                type: "dismiss",
+                jobId: p.jobId,
+              }).state;
+            });
           }
         }
         if (kind === "scan_cancelled") {
@@ -380,7 +389,12 @@
           });
           scanJob = transition.state;
           if (transition.accepted) {
-            addNotice("info", "VST 掃描已取消，已保留原清單");
+            addNotice("info", "VST 掃描已取消，已保留原清單", undefined, 0, true, () => {
+              scanJob = transitionScanJob(scanJob, {
+                type: "dismiss",
+                jobId: p.jobId,
+              }).state;
+            });
           }
         }
       }),
@@ -847,7 +861,9 @@
         type: "startRejected",
         error: message,
       }).state;
-      addNotice("error", "無法開始 VST 掃描", message);
+      addNotice("error", "無法開始 VST 掃描", message, 0, true, () => {
+        scanJob = transitionScanJob(scanJob, { type: "dismiss", jobId: null }).state;
+      });
       return false;
     }
   }
@@ -862,7 +878,13 @@
         type: "cancelRejected",
         error: message,
       }).state;
-      addNotice("error", "無法取消 VST 掃描", message);
+      const failedJobId = scanJob.jobId;
+      addNotice("error", "無法取消 VST 掃描", message, 0, true, () => {
+        scanJob = transitionScanJob(scanJob, {
+          type: "dismiss",
+          jobId: failedJobId,
+        }).state;
+      });
     }
   }
 

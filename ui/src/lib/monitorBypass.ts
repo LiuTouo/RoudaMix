@@ -91,3 +91,63 @@ export function isMonitorBypassPending(
 ): boolean {
   return state.get(instanceId)?.phase === "pending";
 }
+
+export type OutputLatencyPolicy = "fullPdc" | "lowLatency";
+
+export type LatencyPolicyState =
+  | { phase: "observed" }
+  | {
+      phase: "pending";
+      confirmed: OutputLatencyPolicy;
+      requested: OutputLatencyPolicy;
+    }
+  | { phase: "settled"; value: OutputLatencyPolicy };
+
+export function initialLatencyPolicy(): LatencyPolicyState {
+  return { phase: "observed" };
+}
+
+export function latencyPolicyValue(
+  state: LatencyPolicyState,
+  observed: OutputLatencyPolicy,
+): OutputLatencyPolicy {
+  if (state.phase === "observed") return observed;
+  return state.phase === "pending" ? state.requested : state.value;
+}
+
+export function beginLatencyPolicy(
+  state: LatencyPolicyState,
+  observed: OutputLatencyPolicy,
+  requested: OutputLatencyPolicy,
+): { state: LatencyPolicyState; requested: OutputLatencyPolicy | null } {
+  if (state.phase === "pending") return { state, requested: null };
+  const confirmed = latencyPolicyValue(state, observed);
+  if (confirmed === requested) return { state, requested: null };
+  return {
+    requested,
+    state: { phase: "pending", confirmed, requested },
+  };
+}
+
+export function finishLatencyPolicy(
+  state: LatencyPolicyState,
+  outcome: "confirmed" | "rejected",
+): LatencyPolicyState {
+  if (state.phase !== "pending") return state;
+  return {
+    phase: "settled",
+    value: outcome === "confirmed" ? state.requested : state.confirmed,
+  };
+}
+
+export function reconcileLatencyPolicy(
+  state: LatencyPolicyState,
+  observed: OutputLatencyPolicy,
+): LatencyPolicyState {
+  if (state.phase === "settled" && state.value === observed) return initialLatencyPolicy();
+  return state;
+}
+
+export function isLatencyPolicyPending(state: LatencyPolicyState): boolean {
+  return state.phase === "pending";
+}

@@ -33,7 +33,7 @@ export type ScanJobEvent<TModule, TFailure> =
   | { type: "failed"; jobId: number; error: string }
   | { type: "cancelled"; jobId: number }
   | { type: "cancelRejected"; error: string }
-  | { type: "dismiss"; jobId: number }
+  | { type: "dismiss"; jobId: number | null }
   | { type: "reset" };
 
 export interface ScanJobTransition<TModule, TFailure> {
@@ -87,11 +87,11 @@ export function transitionScanJob<TModule, TFailure>(
   }
 
   if (event.type === "dismiss") {
-    if (
-      (state.phase === "completed" || state.phase === "failed") &&
-      state.jobId === event.jobId
-    )
+    if (state.jobId !== event.jobId) return { state, accepted: false };
+    if (state.phase === "completed" || state.phase === "failed")
       return { state: initialScanJob(), accepted: true };
+    if (state.phase === "scanning" && state.error)
+      return { state: { ...state, error: "" }, accepted: true };
     return { state, accepted: false };
   }
 
