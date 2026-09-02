@@ -2014,6 +2014,19 @@ EngineStatusInfo AudioEngine::status() const {
     return s;
 }
 
+TelemetryStripPlan AudioEngine::telemetry_strip_plan() const {
+    const TrackGraph* active = rt_graph_.load(std::memory_order_acquire);
+    if (active == nullptr) return plan_telemetry_strips(tracks_, kTelemetryStrips);
+
+    TelemetryStripPlan plan;
+    plan.engine_strip = active->engine_strip;
+    plan.table = active->strip_table;
+    plan.tracks.reserve(active->nodes.size());
+    for (const auto& node : active->nodes)
+        plan.tracks.push_back({node.track_strip, node.chain_strips});
+    return plan;
+}
+
 // ---- RT:audio callback(禁配置/鎖/系統呼叫)----
 void AudioEngine::process(const AudioBlock& block) noexcept {
     const std::uint64_t tsc0 = __rdtsc();  // callback load 量測(見 telemetry publish)

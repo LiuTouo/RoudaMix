@@ -10,7 +10,7 @@
         "telemetryStrips": [
           {
             "id": 0,
-            "kind": "engineOutput",
+            "kind": 2,
             "trackId": null,
             "instanceId": null
           }
@@ -34,7 +34,7 @@
           "telemetryStrips": [
             {
               "id": 0,
-              "kind": "engineOutput",
+              "kind": 2,
               "trackId": null,
               "instanceId": null
             }

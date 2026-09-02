@@ -53,7 +53,7 @@
 ## 3. 語意
 
 - **peak/rms 單位**:線性振幅 [0,1](非 dB);UI 端自行換 dB 與 ballistics(decay/hold)。
-- **Publish 頻率**:engine 30 Hz；每個 `strips[id]` 的身分由 control-plane snapshot/status 的 `telemetryStrips` table 宣告。SHM 內既有 `instanceId`/`kind` 欄位為 ABI 相容資料，bridge 只照位元搬運，UI 不再解讀其數值語意。graph mutation 後以新的 status table 對齊後續 meter frame；table 尚未對齊或 `id >= stripCount` 時顯示無資料。未啟動時 `stripCount=0`。上限 64 strips = engine 輸出 + 軌 + plugin；超過預算時 plugin 錶先被省略(軌錶優先)。
+- **Publish 頻率**:engine 30 Hz；每個 `strips[id]` 的身分由 control-plane snapshot/status 的 `telemetryStrips` table 宣告。SHM 內既有 `instanceId`/`kind` 欄位為 ABI 相容資料，bridge 只照位元搬運；UI 不宣告數值語意，只把 frame 的 raw 值與 table 提供的 kind／owner 做相等驗證。graph mutation 前後的 table/frame 不相符時丟棄該 strip，避免跨世代錯配；`id >= stripCount` 同樣顯示無資料。未啟動時 `stripCount=0`。上限 64 strips = engine 輸出 + 軌 + plugin；超過預算時 plugin 錶先被省略(軌錶優先)。
 - **Rust 對照**:
 
 ```rust

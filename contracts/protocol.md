@@ -161,9 +161,10 @@ RackSlot     { instanceId: u32, name: str, pluginPath: str, classId: str, bypass
 ParamInfo    { paramId: u32, name: str, normalized: f32, default: f32, bypass: bool }
 ScanModule   { path: str, classes: [PluginClass] }
 PluginClass  { uid: str, name: str, vendor: str, version: str, subcategories: str }
-TelemetryStripIdentity { id: u32, kind: "engineOutput"|"track"|"plugin", trackId: u32?, instanceId: u32? }
+TelemetryStripIdentity { id: u32, kind: u32, trackId: u32?, instanceId: u32? }
                (`id` = telemetry SHM `strips[id]`；engine output 兩個 owner 欄位皆 null，
-                track 只帶 trackId，plugin 同時帶所屬 trackId 與 instanceId。)
+                track 只帶 trackId，plugin 同時帶所屬 trackId 與 instanceId；kind 是
+                engine 發布的 SHM-compatible classifier，client 只做相等比較，不自訂數值常數。)
 Snapshot     { epoch: u64, engineVersion: str, capabilities: [str], status: EngineStatus, tracks: [Track], telemetryStrips: [TelemetryStripIdentity], lastScan: [ScanModule]? }
 SessionFile  { roudamixSession: 3, deviceKey: str?, sampleRate: u32?, bufferSize: u32?, tracks: [SessionTrack] }
 SessionFile.deviceKey/sampleRate/bufferSize = 最近一次成功 start 的設定;save_session payload 帶覆寫值時優先。

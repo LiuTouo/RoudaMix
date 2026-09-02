@@ -163,6 +163,9 @@ public:
     void clear_all_tracks();
 
     const std::vector<TrackNode>& tracks() const noexcept { return tracks_; }
+    // control-plane snapshot 與 SHM publisher 共用 active graph 已提交的 plan。
+    // graph 尚未建立／stop 後才從 control master 純函式重建。
+    [[nodiscard]] TelemetryStripPlan telemetry_strip_plan() const;
     // editor host 顯示資料：tab 用 plugin 名，視窗標題用音軌名
     struct PluginTabInfo {
         std::uint32_t instance_id{};

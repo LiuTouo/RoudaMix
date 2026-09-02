@@ -282,11 +282,7 @@
           "$ref": "#/$defs/u32"
         },
         "kind": {
-          "enum": [
-            "engineOutput",
-            "track",
-            "plugin"
-          ]
+          "$ref": "#/$defs/u32"
         },
         "trackId": {
           "type": [

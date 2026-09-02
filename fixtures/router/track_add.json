@@ -32,13 +32,13 @@
         "telemetryStrips": [
           {
             "id": 0,
-            "kind": "engineOutput",
+            "kind": 2,
             "trackId": null,
             "instanceId": null
           },
           {
             "id": 1,
-            "kind": "track",
+            "kind": 1,
             "trackId": 1,
             "instanceId": null
           }

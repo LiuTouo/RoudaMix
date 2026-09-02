@@ -52,21 +52,12 @@ const char* pdc_error_string(PdcPlanError error) {
     return "unknown";
 }
 
-const char* telemetry_strip_kind_string(TelemetryStripKind kind) {
-    switch (kind) {
-        case TelemetryStripKind::kPlugin: return "plugin";
-        case TelemetryStripKind::kTrack: return "track";
-        case TelemetryStripKind::kEngineOutput: return "engineOutput";
-    }
-    return "plugin";
-}
-
 nlohmann::json telemetry_strips_json(const TelemetryStripPlan& plan) {
     auto table = nlohmann::json::array();
     for (const auto& strip : plan.table) {
         table.push_back({
             {"id", strip.id},
-            {"kind", telemetry_strip_kind_string(strip.kind)},
+            {"kind", static_cast<std::uint32_t>(strip.kind)},
             {"trackId", strip.track_id == kNoTelemetryOwner
                             ? nlohmann::json(nullptr)
                             : nlohmann::json(strip.track_id)},
@@ -80,9 +71,9 @@ nlohmann::json telemetry_strips_json(const TelemetryStripPlan& plan) {
 
 }  // namespace
 
-nlohmann::json tracks_json(const AudioEngine& engine) {
+static nlohmann::json tracks_json_with_strips(const AudioEngine& engine,
+                                              const TelemetryStripPlan& strips) {
     auto tracks = nlohmann::json::array();
-    const auto strips = plan_telemetry_strips(engine.tracks(), kTelemetryStrips);
     std::size_t track_index = 0;
     for (const auto& track : engine.tracks()) {
         auto plugins = nlohmann::json::array();
@@ -142,9 +133,13 @@ nlohmann::json tracks_json(const AudioEngine& engine) {
     return tracks;
 }
 
+nlohmann::json tracks_json(const AudioEngine& engine) {
+    return tracks_json_with_strips(engine, engine.telemetry_strip_plan());
+}
+
 nlohmann::json status_json(const AudioEngine& engine, std::uint64_t revision) {
     const auto status = engine.status();
-    const auto strips = plan_telemetry_strips(engine.tracks(), kTelemetryStrips);
+    const auto strips = engine.telemetry_strip_plan();
     nlohmann::json monitor_delay = nullptr;
     nlohmann::json stream_delay = nullptr;
     if (status.running) {
@@ -179,7 +174,7 @@ nlohmann::json status_json(const AudioEngine& engine, std::uint64_t revision) {
         {"latencyGeneration", engine.latency_generation()},
         {"pluginDelay", {{"monitorSamples", monitor_delay}, {"streamSamples", stream_delay}}},
         {"telemetryStrips", telemetry_strips_json(strips)},
-        {"tracks", tracks_json(engine)},
+        {"tracks", tracks_json_with_strips(engine, strips)},
         {"error", status.error.empty() ? nlohmann::json(nullptr)
                                          : nlohmann::json(status.error)},
     };

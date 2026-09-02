@@ -63,7 +63,8 @@ export interface Track {
 
 export interface TelemetryStripIdentity {
   id: number;
-  kind: "engineOutput" | "track" | "plugin";
+  /** Engine 發布的 SHM-compatible classifier；client 只比較，不宣告數值語意。 */
+  kind: number;
   trackId: number | null;
   instanceId: number | null;
 }

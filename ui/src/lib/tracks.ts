@@ -5,7 +5,11 @@ function stripFor(
   identity: TelemetryStripIdentity | undefined,
   strips: MeterStrip[] | undefined,
 ): MeterStrip | undefined {
-  return identity === undefined ? undefined : strips?.[identity.id];
+  if (identity === undefined) return undefined;
+  const strip = strips?.[identity.id];
+  if (strip === undefined || strip.kind !== identity.kind) return undefined;
+  const owner = identity.instanceId ?? identity.trackId;
+  return owner === null || strip.instanceId === owner ? strip : undefined;
 }
 
 export function stripOfTrack(
@@ -13,7 +17,10 @@ export function stripOfTrack(
   table: TelemetryStripIdentity[] | undefined,
   strips: MeterStrip[] | undefined,
 ): MeterStrip | undefined {
-  return stripFor(table?.find((s) => s.kind === "track" && s.trackId === trackId), strips);
+  return stripFor(
+    table?.find((s) => s.trackId === trackId && s.instanceId === null),
+    strips,
+  );
 }
 
 export function stripOfPlugin(
@@ -22,7 +29,7 @@ export function stripOfPlugin(
   strips: MeterStrip[] | undefined,
 ): MeterStrip | undefined {
   return stripFor(
-    table?.find((s) => s.kind === "plugin" && s.instanceId === instanceId),
+    table?.find((s) => s.instanceId === instanceId),
     strips,
   );
 }
@@ -31,7 +38,10 @@ export function stripEngineOut(
   table: TelemetryStripIdentity[] | undefined,
   strips: MeterStrip[] | undefined,
 ): MeterStrip | undefined {
-  return stripFor(table?.find((s) => s.kind === "engineOutput"), strips);
+  return stripFor(
+    table?.find((s) => s.trackId === null && s.instanceId === null),
+    strips,
+  );
 }
 
 // 0xRRGGBB → css "#rrggbb"
