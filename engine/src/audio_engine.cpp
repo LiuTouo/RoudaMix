@@ -525,29 +525,13 @@ bool AudioEngine::start(const std::string& device_key,
                     }
                 }
                 if (shm_ == nullptr) continue;
-                // strip 位置 = 陣列索引:0 = engine 輸出、其後依 snapshot 的
-                // track_strip / chain_strips 放軌(kind 1)與 plugin(kind 0)
-                std::uint32_t ids[kTelemetryStrips] = {0xFFFFFFFFu};
-                std::uint8_t kinds[kTelemetryStrips] = {2};
                 std::uint32_t plugin_ids[kPluginLoadEntries]{};
                 std::uint32_t plugin_variants[kPluginLoadEntries]{};
-                std::size_t count = 1;
                 std::size_t plugin_count = 0;
                 if (g != nullptr) {
                     for (const auto& t : g->nodes) {
-                        if (t.track_strip != kNoStrip && t.track_strip < kTelemetryStrips) {
-                            ids[t.track_strip] = t.track_id;
-                            kinds[t.track_strip] = 1;
-                            count = (std::max)(count, static_cast<std::size_t>(t.track_strip) + 1);
-                        }
                         for (std::size_t i = 0; i < t.chain.size() && i < t.chain_strips.size();
                              ++i) {
-                            const auto s = t.chain_strips[i];
-                            if (s != kNoStrip && s < kTelemetryStrips) {
-                                ids[s] = t.chain[i].instance_id;
-                                kinds[s] = 0;
-                                count = (std::max)(count, static_cast<std::size_t>(s) + 1);
-                            }
                             const auto& slot = t.chain[i];
                             if (slot.primary_cpu_index < kPluginLoadEntries) {
                                 plugin_ids[slot.primary_cpu_index] = slot.instance_id;
@@ -564,8 +548,12 @@ bool AudioEngine::start(const std::string& device_key,
                         }
                     }
                 }
-                meters_.publish(*shm_, device_.xruns(), ids, kinds, count, plugin_ids,
-                                plugin_variants, plugin_count, device_.running());
+                const auto* strip_table =
+                    g != nullptr && !g->strip_table.empty() ? g->strip_table.data() : nullptr;
+                const auto strip_count = g != nullptr ? g->strip_table.size() : 0;
+                meters_.publish(*shm_, device_.xruns(), strip_table, strip_count,
+                                plugin_ids, plugin_variants, plugin_count,
+                                device_.running());
             }
         });
     }
@@ -591,7 +579,8 @@ void AudioEngine::stop() noexcept {
 
 bool AudioEngine::swap_graph() noexcept {
     // 深拷貝結構殼:chain 內 plugin/ring shared_ptr、RT buffer shared_ptr 共用
-    auto* fresh = new TrackGraph{tracks_, {}, {}, {}};
+    auto* fresh = new TrackGraph{};
+    fresh->nodes = tracks_;
     fresh->order = graph_topo_order(tracks_);
     if (fresh->order.empty()) {
         fresh->order.clear();
@@ -615,7 +604,9 @@ bool AudioEngine::swap_graph() noexcept {
     };
     // telemetry strip 預算:兩輪、可預測(track 全拿完才輪 plugin;純函式與
     // status_json 的 metered 共用 — 見 track_graph.cpp plan_telemetry_strips)
-    const auto strips = plan_telemetry_strips(fresh->nodes, kTelemetryStrips);
+    auto strips = plan_telemetry_strips(fresh->nodes, kTelemetryStrips);
+    fresh->engine_strip = strips.engine_strip;
+    fresh->strip_table = std::move(strips.table);
     for (std::size_t ti = 0; ti < fresh->nodes.size(); ++ti) {
         auto& t = fresh->nodes[ti];
         t.src_l = t.src_r = t.out_l = t.out_r = -1;
@@ -627,8 +618,8 @@ bool AudioEngine::swap_graph() noexcept {
             t.out_l = resolve(omap, t.output.asio_out_ch);
             t.out_r = resolve(omap, t.output.asio_out_ch + 1);
         }
-        t.track_strip = strips[ti].track_strip;
-        t.chain_strips = strips[ti].chain_strips;
+        t.track_strip = strips.tracks[ti].track_strip;
+        t.chain_strips = std::move(strips.tracks[ti].chain_strips);
         for (auto& slot : t.chain) {
             slot.primary_cpu_index = 0xFFFFFFFFu;
             slot.shadow_cpu_index = 0xFFFFFFFFu;
@@ -2292,7 +2283,8 @@ void AudioEngine::process(const AudioBlock& block) noexcept {
     }
 
     if (engine_l != nullptr) {
-        meter_band(meters_, 0, engine_l, engine_r, frames);
+        if (g->engine_strip != kNoStrip)
+            meter_band(meters_, g->engine_strip, engine_l, engine_r, frames);
         meters_.append_spectrum(engine_l, engine_r, frames);  // 最終輸出進頻譜 ring
     }
     meters_.add_busy_cycles(__rdtsc() - tsc0);

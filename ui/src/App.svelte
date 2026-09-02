@@ -229,6 +229,7 @@
   });
 
   const tracks = $derived<Track[]>(status?.tracks ?? []);
+  const telemetryStrips = $derived(status?.telemetryStrips ?? []);
   const inputTracks = $derived(tracks.filter((t) => t.kind !== "output"));
   const outputTracks = $derived(tracks.filter((t) => t.kind === "output"));
 
@@ -1345,6 +1346,7 @@
             {devices}
             selectedDeviceKey={selected}
             strips={meters?.strips}
+            stripTable={telemetryStrips}
             metered={t.metered !== false}
             {latencyEnabled}
             scanModules={scanModules}
@@ -1413,6 +1415,7 @@
             {devices}
             selectedDeviceKey={selected}
             strips={meters?.strips}
+            stripTable={telemetryStrips}
             metered={t.metered !== false}
             {latencyEnabled}
             scanModules={scanModules}

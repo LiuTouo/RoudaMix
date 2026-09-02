@@ -7,6 +7,14 @@
         "epoch": 0,
         "engineVersion": "0.1.0",
         "capabilities": ["pluginLatencyPdcV1"],
+        "telemetryStrips": [
+          {
+            "id": 0,
+            "kind": "engineOutput",
+            "trackId": null,
+            "instanceId": null
+          }
+        ],
         "status": {
           "running": false,
           "deviceKey": null,
@@ -23,6 +31,14 @@
             "monitorSamples": null,
             "streamSamples": null
           },
+          "telemetryStrips": [
+            {
+              "id": 0,
+              "kind": "engineOutput",
+              "trackId": null,
+              "instanceId": null
+            }
+          ],
           "tracks": [],
           "error": null
         },

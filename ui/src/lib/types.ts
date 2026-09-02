@@ -61,6 +61,13 @@ export interface Track {
   error?: string | null; // 軌道級錯誤(capture 失效等)
 }
 
+export interface TelemetryStripIdentity {
+  id: number;
+  kind: "engineOutput" | "track" | "plugin";
+  trackId: number | null;
+  instanceId: number | null;
+}
+
 export interface EngineStatus {
   running: boolean;
   deviceKey: string | null;
@@ -74,6 +81,7 @@ export interface EngineStatus {
   revision?: number; // 權威 dirty 版號(所有成功 mutation +1,含 set_param)
   latencyGeneration?: number;
   pluginDelay?: { monitorSamples: number | null; streamSamples: number | null };
+  telemetryStrips: TelemetryStripIdentity[];
   tracks: Track[];
   error: string | null;
 }
@@ -138,6 +146,7 @@ export interface Snapshot {
   engineVersion: string;
   status: EngineStatus;
   tracks: Track[];
+  telemetryStrips: TelemetryStripIdentity[];
   lastScan: ScanModule[] | null;
   capabilities?: string[];
 }
@@ -182,8 +191,9 @@ export interface DeviceInfo {
 
 // telemetry SHM(contracts/telemetry_abi.md v4)
 export interface MeterStrip {
+  /** SHM 原始身分欄位；消費端不得解讀，對應以 Snapshot.telemetryStrips 為準。 */
   instanceId: number;
-  kind: number; // 0 = plugin、1 = track、2 = engine 輸出
+  kind: number;
   peakL: number;
   peakR: number;
   rmsL: number;

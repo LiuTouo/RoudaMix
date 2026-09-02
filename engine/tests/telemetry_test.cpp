@@ -16,8 +16,9 @@ int main() {
     rmx::MeterAccumulator meters;
     rmx::TelemetryBlockShm block{};
     meters.set_runtime(48000.0F, 128, 10, 12);
-    std::uint32_t strip_ids[1]{0xFFFFFFFFu};
-    std::uint8_t strip_kinds[1]{2};
+    rmx::TelemetryStripIdentity strip_table[1]{
+        {0, rmx::TelemetryStripKind::kEngineOutput, rmx::kNoTelemetryOwner,
+         rmx::kNoTelemetryOwner}};
     std::uint32_t plugin_ids[300]{};
     std::uint32_t variants[300]{};
     for (std::uint32_t i = 0; i < 300; ++i) {
@@ -25,7 +26,7 @@ int main() {
         variants[i] = i < 128 ? 0u : 1u;
         if (i < rmx::kPluginLoadEntries) meters.add_plugin_cycles(i, 100u + i);
     }
-    meters.publish(block, 3, strip_ids, strip_kinds, 1, plugin_ids, variants, 300,
+    meters.publish(block, 3, strip_table, 1, plugin_ids, variants, 300,
                    true);
     CHECK(block.magic == rmx::kTelemetryMagic);
     CHECK(block.abi_version == rmx::kTelemetryAbiVersion);
@@ -38,7 +39,7 @@ int main() {
     }
     CHECK(block.spectrum_count == rmx::kTelemetrySpectrumBins);
 
-    meters.publish(block, 4, strip_ids, strip_kinds, 1, plugin_ids, variants, 0,
+    meters.publish(block, 4, strip_table, 1, plugin_ids, variants, 0,
                    false);
     CHECK(block.sequence == 4);
     CHECK(block.plugin_load_count == 0);

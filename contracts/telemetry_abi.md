@@ -41,7 +41,7 @@
 | offset(相對 strip)| size | 型別 | 欄位 |
 |---|---|---|---|
 | 0 | 4 | u32 | `instanceId` |
-| 4 | 4 | u32 | `kind`(v3,原 `_pad0`:0 = plugin instanceId、1 = trackId、2 = engine 輸出) |
+| 4 | 4 | u32 | `kind`(v3 raw compatibility copy；consumer 不自行解讀) |
 | 8 | 4 | f32 | `peakL` |
 | 12 | 4 | f32 | `peakR` |
 | 16 | 4 | f32 | `rmsL` |
@@ -53,7 +53,7 @@
 ## 3. 語意
 
 - **peak/rms 單位**:線性振幅 [0,1](非 dB);UI 端自行換 dB 與 ballistics(decay/hold)。
-- **Publish 頻率**:engine 30 Hz;`strips[0]` = engine 最終輸出(監聽軌訊號;`instanceId=0xFFFFFFFF`、`kind=2`),`strips[1..stripCount)` = 各軌(`kind=1`、`instanceId`=pipe 協議的 `Track.trackId`)與各 plugin(`kind=0`、`instanceId`=`RackSlot.instanceId`;bypass plugin 也量流過訊號)。**UI 以 (id, kind) 查表對映,不靠順序**;軌增刪瞬間的新舊幀各自丟棄/靜音即可。未啟動時 `stripCount=0`。上限 64 strips = engine 輸出 + 軌 + plugin;超過預算時 plugin 錶先被省略(軌錶優先)。
+- **Publish 頻率**:engine 30 Hz；每個 `strips[id]` 的身分由 control-plane snapshot/status 的 `telemetryStrips` table 宣告。SHM 內既有 `instanceId`/`kind` 欄位為 ABI 相容資料，bridge 只照位元搬運，UI 不再解讀其數值語意。graph mutation 後以新的 status table 對齊後續 meter frame；table 尚未對齊或 `id >= stripCount` 時顯示無資料。未啟動時 `stripCount=0`。上限 64 strips = engine 輸出 + 軌 + plugin；超過預算時 plugin 錶先被省略(軌錶優先)。
 - **Rust 對照**:
 
 ```rust

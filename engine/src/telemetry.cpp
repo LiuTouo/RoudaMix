@@ -2,6 +2,7 @@
 
 #include <intrin.h>  // __rdtsc(publish thread 量 load 用;RT 端在 audio_engine)
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 
@@ -134,8 +135,9 @@ void MeterAccumulator::compute_spectrum(float* out_db) noexcept {
 }
 
 void MeterAccumulator::publish(TelemetryBlockShm& block, std::uint64_t xruns_total,
-                                const std::uint32_t* instance_ids, const std::uint8_t* kinds,
-                                std::size_t id_count, const std::uint32_t* plugin_ids,
+                                const TelemetryStripIdentity* strip_table,
+                                std::size_t strip_table_count,
+                                const std::uint32_t* plugin_ids,
                                 const std::uint32_t* plugin_variants,
                                 std::size_t plugin_count, bool running) noexcept {
     TelemetryBlockShm next{};
@@ -180,12 +182,24 @@ void MeterAccumulator::publish(TelemetryBlockShm& block, std::uint64_t xruns_tot
         next.plugin_loads[i] = {plugin_ids[i], plugin_variants[i], load, 0.0F};
         last_plugin_snapshot_[i] = cycles_now;
     }
-    next.strip_count = static_cast<std::uint32_t>(id_count < kTelemetryStrips
-                                                      ? id_count
-                                                      : kTelemetryStrips);
-    for (std::size_t s = 0; s < kTelemetryStrips; ++s) {
-        next.strips[s].instance_id = s < id_count ? instance_ids[s] : 0u;
-        next.strips[s].kind = s < id_count ? kinds[s] : 0u;
+    for (std::size_t i = 0; i < strip_table_count; ++i) {
+        const auto& identity = strip_table[i];
+        if (identity.id >= kTelemetryStrips) continue;
+        auto& strip = next.strips[identity.id];
+        strip.kind = static_cast<std::uint32_t>(identity.kind);
+        switch (identity.kind) {
+            case TelemetryStripKind::kEngineOutput:
+                strip.instance_id = kNoTelemetryOwner;
+                break;
+            case TelemetryStripKind::kTrack:
+                strip.instance_id = identity.track_id;
+                break;
+            case TelemetryStripKind::kPlugin:
+                strip.instance_id = identity.instance_id;
+                break;
+        }
+        next.strip_count =
+            (std::max)(next.strip_count, static_cast<std::uint32_t>(identity.id + 1));
     }
 
     for (std::size_t s = 0; s < kTelemetryStrips; ++s) {

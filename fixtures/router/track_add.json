@@ -29,6 +29,20 @@
           "monitorSamples": null,
           "streamSamples": null
         },
+        "telemetryStrips": [
+          {
+            "id": 0,
+            "kind": "engineOutput",
+            "trackId": null,
+            "instanceId": null
+          },
+          {
+            "id": 1,
+            "kind": "track",
+            "trackId": 1,
+            "instanceId": null
+          }
+        ],
         "tracks": [
           {
             "trackId": 1,

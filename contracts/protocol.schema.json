@@ -269,6 +269,43 @@
         }
       }
     },
+    "telemetryStripIdentity": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "trackId",
+        "instanceId"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/u32"
+        },
+        "kind": {
+          "enum": [
+            "engineOutput",
+            "track",
+            "plugin"
+          ]
+        },
+        "trackId": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "instanceId": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 4294967295
+        }
+      }
+    },
     "engineStatus": {
       "type": "object",
       "required": [
@@ -281,6 +318,7 @@
         "xruns",
         "trackCount",
         "pluginFails",
+        "telemetryStrips",
         "tracks",
         "error"
       ],
@@ -349,6 +387,12 @@
                 "null"
               ]
             }
+          }
+        },
+        "telemetryStrips": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/telemetryStripIdentity"
           }
         },
         "tracks": {
@@ -559,6 +603,7 @@
         "engineVersion",
         "status",
         "tracks",
+        "telemetryStrips",
         "lastScan"
       ],
       "properties": {
@@ -581,6 +626,12 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/track"
+          }
+        },
+        "telemetryStrips": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/telemetryStripIdentity"
           }
         },
         "lastScan": {

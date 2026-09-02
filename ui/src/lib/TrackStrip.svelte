@@ -39,6 +39,7 @@
     ScanFailure,
     ScanModule,
     Track,
+    TelemetryStripIdentity,
   } from "./types";
 
   let {
@@ -47,6 +48,7 @@
     devices,
     selectedDeviceKey,
     strips,
+    stripTable = [],
     metered = true,
     latencyEnabled = false,
     // 掃描 job 由 App 統一跑(共用 registry,所有軌同一份清單;進度/取消也在 App)
@@ -66,6 +68,7 @@
     devices: DeviceInfo[];
     selectedDeviceKey: string;
     strips: MeterStrip[] | undefined;
+    stripTable?: TelemetryStripIdentity[];
     metered?: boolean;
     latencyEnabled?: boolean;
     scanModules?: ScanModule[];
@@ -1127,7 +1130,7 @@
     </div>
     <div class="meterwrap">
       {#if metered}
-        <MeterCanvas strip={stripOfTrack(track.trackId, strips)} />
+        <MeterCanvas strip={stripOfTrack(track.trackId, stripTable, strips)} />
       {:else}
         <!-- P1-H:telemetry 預算外 = 錶不可用(非靜音);明確顯示狀態 -->
         <div

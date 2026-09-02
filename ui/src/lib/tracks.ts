@@ -1,26 +1,37 @@
-// tracks helpers:meter strip 查表(ABI v3:id+kind,不靠順序)+ 顏色轉換
-import type { MeterStrip, Track } from "./types";
+// tracks helpers:snapshot table 驅動 meter strip 對應 + 顏色轉換
+import type { MeterStrip, TelemetryStripIdentity, Track } from "./types";
 
-export const STRIP_TRACK = 1; // MeterStrip.kind:trackId
-export const STRIP_ENGINE_OUT = 2;
-
-// 軌 meter:以 (trackId, kind=1) 查 SHM strip;查不到 = 該幀沒資料(undefined = 靜音錶)
-export function stripOfTrack(
-  trackId: number,
+function stripFor(
+  identity: TelemetryStripIdentity | undefined,
   strips: MeterStrip[] | undefined,
 ): MeterStrip | undefined {
-  return strips?.find((s) => s.kind === STRIP_TRACK && s.instanceId === trackId);
+  return identity === undefined ? undefined : strips?.[identity.id];
+}
+
+export function stripOfTrack(
+  trackId: number,
+  table: TelemetryStripIdentity[] | undefined,
+  strips: MeterStrip[] | undefined,
+): MeterStrip | undefined {
+  return stripFor(table?.find((s) => s.kind === "track" && s.trackId === trackId), strips);
 }
 
 export function stripOfPlugin(
   instanceId: number,
+  table: TelemetryStripIdentity[] | undefined,
   strips: MeterStrip[] | undefined,
 ): MeterStrip | undefined {
-  return strips?.find((s) => s.kind === 0 && s.instanceId === instanceId);
+  return stripFor(
+    table?.find((s) => s.kind === "plugin" && s.instanceId === instanceId),
+    strips,
+  );
 }
 
-export function stripEngineOut(strips: MeterStrip[] | undefined): MeterStrip | undefined {
-  return strips?.find((s) => s.kind === STRIP_ENGINE_OUT);
+export function stripEngineOut(
+  table: TelemetryStripIdentity[] | undefined,
+  strips: MeterStrip[] | undefined,
+): MeterStrip | undefined {
+  return stripFor(table?.find((s) => s.kind === "engineOutput"), strips);
 }
 
 // 0xRRGGBB → css "#rrggbb"

@@ -115,8 +115,8 @@ Events:
 
 | event | 觸發與處理語意 |
 |---|---|
-| `snapshot` | 連線建立時 |
-| `status` | tracks/running/xrun/latency/裝置變更;`set_param` 不觸發(但 `revision` 會前進);**stream 狀態改變的失敗(start 失敗、ASIO 重建回滾等)也推** —— client 收 reply error 後以此重同步,不得顯示 stale running |
+| `snapshot` | 連線建立時；自帶 engine 權威的 `telemetryStrips` table |
+| `status` | tracks/running/xrun/latency/裝置變更，並帶當前 `telemetryStrips`（graph mutation 後更新）；`set_param` 不觸發(但 `revision` 會前進);**stream 狀態改變的失敗(start 失敗、ASIO 重建回滾等)也推** —— client 收 reply error 後以此重同步,不得顯示 stale running |
 | `scan_progress` | `start_scan` 的 job 每掃完一個 root 前 |
 | `scan_done` | 掃描 job 完成;`failed` = 壞 module quarantine(不進 registry);registry 同步寫進 `Snapshot.lastScan` |
 | `scan_failed` | 掃描 job 失敗(worker 不在/逾時) |
@@ -136,7 +136,7 @@ Events:
 
 ```
 DeviceInfo   { deviceKey: str, name: str, maxIn: u16, maxOut: u16, sampleRates: [u32], currentSampleRate: u32, minBufferSize: u32, maxBufferSize: u32, preferredBufferSize: u32, bufferSizes: [u32], inputNames: [str], outputNames: [str] }
-EngineStatus { running: bool, deviceKey: str?, sampleRate: f32, bufferSize: u32?, inputLatency: u32?, outputLatency: u32?, xruns: u64, trackCount: u32, pluginFails: u32, revision: u64, latencyGeneration: u64, pluginDelay: { monitorSamples: u64?, streamSamples: u64? }, tracks: [Track], error: str? }
+EngineStatus { running: bool, deviceKey: str?, sampleRate: f32, bufferSize: u32?, inputLatency: u32?, outputLatency: u32?, xruns: u64, trackCount: u32, pluginFails: u32, revision: u64, latencyGeneration: u64, pluginDelay: { monitorSamples: u64?, streamSamples: u64? }, telemetryStrips: [TelemetryStripIdentity], tracks: [Track], error: str? }
                (revision = 權威狀態版號,所有成功 mutation +1 含 set_param;client dirty 判定用)
 Track        { trackId: u32, kind: "audio"|"app"|"fx"|"output", systemRole: "monitor"|"stream"|null, latencyPolicy: "fullPdc"|"lowLatency", name: str, color: u32(0xRRGGBB), source: TrackSource, dests: [u32], output: TrackOutput, gain: f32, mute: bool, plugins: [RackSlot], metered: bool, error: str? }
                (error 非 null = 該軌 capture/render 失效等軌道級錯誤;恢復時清空。
@@ -161,7 +161,10 @@ RackSlot     { instanceId: u32, name: str, pluginPath: str, classId: str, bypass
 ParamInfo    { paramId: u32, name: str, normalized: f32, default: f32, bypass: bool }
 ScanModule   { path: str, classes: [PluginClass] }
 PluginClass  { uid: str, name: str, vendor: str, version: str, subcategories: str }
-Snapshot     { epoch: u64, engineVersion: str, capabilities: [str], status: EngineStatus, tracks: [Track], lastScan: [ScanModule]? }
+TelemetryStripIdentity { id: u32, kind: "engineOutput"|"track"|"plugin", trackId: u32?, instanceId: u32? }
+               (`id` = telemetry SHM `strips[id]`；engine output 兩個 owner 欄位皆 null，
+                track 只帶 trackId，plugin 同時帶所屬 trackId 與 instanceId。)
+Snapshot     { epoch: u64, engineVersion: str, capabilities: [str], status: EngineStatus, tracks: [Track], telemetryStrips: [TelemetryStripIdentity], lastScan: [ScanModule]? }
 SessionFile  { roudamixSession: 3, deviceKey: str?, sampleRate: u32?, bufferSize: u32?, tracks: [SessionTrack] }
 SessionFile.deviceKey/sampleRate/bufferSize = 最近一次成功 start 的設定;save_session payload 帶覆寫值時優先。
 SessionTrack { trackId: u32, kind: str, systemRole: "monitor"|"stream"|null, latencyPolicy: "fullPdc"|"lowLatency", name: str, color: u32, source: TrackSource, dests: [u32(舊 id)], output: TrackOutput, gain: f32, mute: bool, plugins: [SessionSlot] }

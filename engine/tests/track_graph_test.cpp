@@ -113,33 +113,50 @@ int main() {
         std::vector<rmx::TrackNode> tracks;
         for (int i = 0; i < 3; ++i) {
             rmx::TrackNode t = make_track(rmx::TrackKind::kAudio);
+            t.track_id = 100u + static_cast<std::uint32_t>(i);
             t.chain.resize(1);
+            t.chain[0].instance_id = 200u + static_cast<std::uint32_t>(i);
             tracks.push_back(std::move(t));
         }
         const auto plan = rmx::plan_telemetry_strips(tracks, 8);
-        CHECK(plan.size() == 3);
+        CHECK(plan.engine_strip == 0);
+        CHECK(plan.tracks.size() == 3);
         // 第一輪:track strips 連號 1..3(plugin 未動)
-        CHECK(plan[0].track_strip == 1 && plan[1].track_strip == 2 && plan[2].track_strip == 3);
+        CHECK(plan.tracks[0].track_strip == 1 && plan.tracks[1].track_strip == 2 &&
+              plan.tracks[2].track_strip == 3);
         // 第二輪:plugin strips 接在後面
-        CHECK(plan[0].chain_strips[0] == 4);
-        CHECK(plan[1].chain_strips[0] == 5);
-        CHECK(plan[2].chain_strips[0] == 6);
+        CHECK(plan.tracks[0].chain_strips[0] == 4);
+        CHECK(plan.tracks[1].chain_strips[0] == 5);
+        CHECK(plan.tracks[2].chain_strips[0] == 6);
+        // table 是 strip 身分的唯一權威來源；id 直接對應 SHM 陣列索引。
+        CHECK(plan.table.size() == 7);
+        CHECK(plan.table[0].id == 0 &&
+              plan.table[0].kind == rmx::TelemetryStripKind::kEngineOutput);
+        CHECK(plan.table[0].track_id == rmx::kNoStrip &&
+              plan.table[0].instance_id == rmx::kNoStrip);
+        CHECK(plan.table[1].id == 1 && plan.table[1].kind == rmx::TelemetryStripKind::kTrack &&
+              plan.table[1].track_id == 100 && plan.table[1].instance_id == rmx::kNoStrip);
+        CHECK(plan.table[4].id == 4 &&
+              plan.table[4].kind == rmx::TelemetryStripKind::kPlugin &&
+              plan.table[4].track_id == 100 && plan.table[4].instance_id == 200);
 
         // 5b. 軌多於預算:100 軌、預算 64 → 前 63 軌有錶(strip 1..63)、後面無;
         //     plugin 全部無錶(track 優先於 plugin,不因陣列順序交錯誤導)
         std::vector<rmx::TrackNode> many;
         for (int i = 0; i < 100; ++i) {
             rmx::TrackNode t = make_track(rmx::TrackKind::kAudio);
+            t.track_id = 1u + static_cast<std::uint32_t>(i);
             t.chain.resize(3);
             many.push_back(std::move(t));
         }
         const auto plan2 = rmx::plan_telemetry_strips(many, 64);
-        CHECK(plan2.size() == 100);
-        CHECK(plan2[0].track_strip == 1);
-        CHECK(plan2[62].track_strip == 63);
-        CHECK(plan2[63].track_strip == rmx::kNoStrip);
-        CHECK(plan2[99].track_strip == rmx::kNoStrip);
-        for (const auto& p : plan2) {
+        CHECK(plan2.tracks.size() == 100);
+        CHECK(plan2.table.size() == 64);
+        CHECK(plan2.tracks[0].track_strip == 1);
+        CHECK(plan2.tracks[62].track_strip == 63);
+        CHECK(plan2.tracks[63].track_strip == rmx::kNoStrip);
+        CHECK(plan2.tracks[99].track_strip == rmx::kNoStrip);
+        for (const auto& p : plan2.tracks) {
             for (const auto s : p.chain_strips) CHECK(s == rmx::kNoStrip);
         }
 
@@ -147,19 +164,33 @@ int main() {
         std::vector<rmx::TrackNode> few;
         for (int i = 0; i < 2; ++i) {
             rmx::TrackNode t = make_track(rmx::TrackKind::kAudio);
+            t.track_id = 10u + static_cast<std::uint32_t>(i);
             t.chain.resize(2);
+            for (std::size_t j = 0; j < t.chain.size(); ++j)
+                t.chain[j].instance_id = 20u + static_cast<std::uint32_t>(i * 2) +
+                                         static_cast<std::uint32_t>(j);
             few.push_back(std::move(t));
         }
         const auto plan3 = rmx::plan_telemetry_strips(few, 64);
-        CHECK(plan3[0].track_strip == 1 && plan3[1].track_strip == 2);
-        CHECK(plan3[0].chain_strips.size() == 2 && plan3[0].chain_strips[0] == 3 &&
-              plan3[0].chain_strips[1] == 4);
-        CHECK(plan3[1].chain_strips.size() == 2 && plan3[1].chain_strips[0] == 5 &&
-              plan3[1].chain_strips[1] == 6);
+        CHECK(plan3.tracks[0].track_strip == 1 && plan3.tracks[1].track_strip == 2);
+        CHECK(plan3.tracks[0].chain_strips.size() == 2 &&
+              plan3.tracks[0].chain_strips[0] == 3 &&
+              plan3.tracks[0].chain_strips[1] == 4);
+        CHECK(plan3.tracks[1].chain_strips.size() == 2 &&
+              plan3.tracks[1].chain_strips[0] == 5 &&
+              plan3.tracks[1].chain_strips[1] == 6);
 
         // 5d. 空場景:預算不動,strip 0 保留給 engine 輸出
         const auto plan4 = rmx::plan_telemetry_strips({}, 64);
-        CHECK(plan4.empty());
+        CHECK(plan4.tracks.empty());
+        CHECK(plan4.engine_strip == 0);
+        CHECK(plan4.table.size() == 1);
+
+        // 5e. 零容量:engine 也無 strip，不可越界建立隱含 strip 0。
+        const auto plan5 = rmx::plan_telemetry_strips({}, 0);
+        CHECK(plan5.tracks.empty());
+        CHECK(plan5.engine_strip == rmx::kNoStrip);
+        CHECK(plan5.table.empty());
     }
 
     std::printf("track_graph_test PASSED\n");

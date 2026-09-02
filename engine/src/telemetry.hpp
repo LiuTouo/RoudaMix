@@ -15,11 +15,27 @@ constexpr std::size_t kTelemetryStrips = 64;
 constexpr std::size_t kTelemetrySpectrumBins = 256;
 constexpr std::size_t kPluginLoadEntries = 256;
 constexpr std::size_t kTelemetryBytes = 8192;
+constexpr std::uint32_t kNoTelemetryOwner = 0xFFFFFFFFu;
+
+// Meter strip 身分的 engine 權威資料。數值刻意等同既有 SHM ABI kind，讓
+// publisher 只投影 table，不再另寫一份分類規則。
+enum class TelemetryStripKind : std::uint32_t {
+    kPlugin = 0,
+    kTrack = 1,
+    kEngineOutput = 2,
+};
+
+struct TelemetryStripIdentity {
+    std::uint32_t id{};  // SHM strips[id]
+    TelemetryStripKind kind{TelemetryStripKind::kPlugin};
+    std::uint32_t track_id{kNoTelemetryOwner};
+    std::uint32_t instance_id{kNoTelemetryOwner};
+};
 
 #pragma pack(push, 8)
 struct TelemetryStripShm {
     std::uint32_t instance_id;
-    std::uint32_t kind;  // v3(原 pad0):0 = plugin instanceId、1 = trackId、2 = engine 輸出
+    std::uint32_t kind;  // v3 raw compatibility copy；consumer 以 snapshot table 解讀
     float peak_l;
     float peak_r;
     float rms_l;
@@ -84,12 +100,11 @@ public:
     void add_xrun() noexcept;
 
     // 30Hz publisher(非 RT):取走並清零區間累積、算頻譜、寫入 SHM(seqlock)。
-    // instance_ids[0] = engine 輸出(慣例 0xFFFFFFFF、kinds[0] = 2)、其後 = 各軌
-    // (kind 1)與 plugin(kind 0)strip 順序 — strip 位置由 ids 陣列索引本身表達。
+    // strip_table 是 snapshot/status 與 SHM 共用的身分來源；id 直接指定 strips[id]。
     // running = false 時 spectrum_count 寫 0(stream 沒在跑,頻譜無意義)。
     void publish(TelemetryBlockShm& block, std::uint64_t xruns_total,
-                 const std::uint32_t* instance_ids, const std::uint8_t* kinds,
-                 std::size_t id_count, const std::uint32_t* plugin_ids,
+                 const TelemetryStripIdentity* strip_table, std::size_t strip_table_count,
+                 const std::uint32_t* plugin_ids,
                  const std::uint32_t* plugin_variants, std::size_t plugin_count,
                  bool running) noexcept;
 

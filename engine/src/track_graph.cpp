@@ -72,20 +72,31 @@ void asio_channel_union(const std::vector<TrackNode>& tracks,
     if (out_chans.empty()) out_chans = {0, 1};
 }
 
-std::vector<TrackStrips> plan_telemetry_strips(const std::vector<TrackNode>& nodes,
-                                               std::size_t budget) {
-    std::vector<TrackStrips> plan(nodes.size());
-    // 純函式:swap_graph(填 snapshot)與 status_json(填 metered)共用同一分配,
-    // 兩端看到的是同一份真相。第一輪 track 先領,第二輪剩餘給 plugin。
+TelemetryStripPlan plan_telemetry_strips(const std::vector<TrackNode>& nodes,
+                                         std::size_t budget) {
+    TelemetryStripPlan plan;
+    plan.tracks.resize(nodes.size());
+    // 純函式:graph、snapshot/status 與 SHM publisher 共用同一份 plan/table。
+    if (budget == 0) return plan;
+    plan.engine_strip = 0;
+    plan.table.push_back({0, TelemetryStripKind::kEngineOutput, kNoTelemetryOwner,
+                          kNoTelemetryOwner});
     std::size_t next = 1;  // strip 0 = engine 輸出
     for (std::size_t i = 0; i < nodes.size(); ++i) {
-        if (next < budget) plan[i].track_strip = static_cast<std::uint32_t>(next++);
+        if (next >= budget) break;
+        const auto id = static_cast<std::uint32_t>(next++);
+        plan.tracks[i].track_strip = id;
+        plan.table.push_back(
+            {id, TelemetryStripKind::kTrack, nodes[i].track_id, kNoTelemetryOwner});
     }
     for (std::size_t i = 0; i < nodes.size(); ++i) {
-        plan[i].chain_strips.assign(nodes[i].chain.size(), kNoStrip);
-        for (auto& s : plan[i].chain_strips) {
+        plan.tracks[i].chain_strips.assign(nodes[i].chain.size(), kNoStrip);
+        for (std::size_t si = 0; si < plan.tracks[i].chain_strips.size(); ++si) {
             if (next >= budget) return plan;
-            s = static_cast<std::uint32_t>(next++);
+            const auto id = static_cast<std::uint32_t>(next++);
+            plan.tracks[i].chain_strips[si] = id;
+            plan.table.push_back({id, TelemetryStripKind::kPlugin, nodes[i].track_id,
+                                  nodes[i].chain[si].instance_id});
         }
     }
     return plan;

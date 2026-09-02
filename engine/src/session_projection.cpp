@@ -52,6 +52,32 @@ const char* pdc_error_string(PdcPlanError error) {
     return "unknown";
 }
 
+const char* telemetry_strip_kind_string(TelemetryStripKind kind) {
+    switch (kind) {
+        case TelemetryStripKind::kPlugin: return "plugin";
+        case TelemetryStripKind::kTrack: return "track";
+        case TelemetryStripKind::kEngineOutput: return "engineOutput";
+    }
+    return "plugin";
+}
+
+nlohmann::json telemetry_strips_json(const TelemetryStripPlan& plan) {
+    auto table = nlohmann::json::array();
+    for (const auto& strip : plan.table) {
+        table.push_back({
+            {"id", strip.id},
+            {"kind", telemetry_strip_kind_string(strip.kind)},
+            {"trackId", strip.track_id == kNoTelemetryOwner
+                            ? nlohmann::json(nullptr)
+                            : nlohmann::json(strip.track_id)},
+            {"instanceId", strip.instance_id == kNoTelemetryOwner
+                               ? nlohmann::json(nullptr)
+                               : nlohmann::json(strip.instance_id)},
+        });
+    }
+    return table;
+}
+
 }  // namespace
 
 nlohmann::json tracks_json(const AudioEngine& engine) {
@@ -92,8 +118,8 @@ nlohmann::json tracks_json(const AudioEngine& engine) {
             });
         }
         const char* role = system_role_str(track.system_role);
-        const bool metered = track_index < strips.size() &&
-                             strips[track_index].track_strip != kNoStrip;
+        const bool metered = track_index < strips.tracks.size() &&
+                             strips.tracks[track_index].track_strip != kNoStrip;
         tracks.push_back({
             {"trackId", track.track_id},
             {"kind", track_kind_str(track.kind)},
@@ -118,6 +144,7 @@ nlohmann::json tracks_json(const AudioEngine& engine) {
 
 nlohmann::json status_json(const AudioEngine& engine, std::uint64_t revision) {
     const auto status = engine.status();
+    const auto strips = plan_telemetry_strips(engine.tracks(), kTelemetryStrips);
     nlohmann::json monitor_delay = nullptr;
     nlohmann::json stream_delay = nullptr;
     if (status.running) {
@@ -151,6 +178,7 @@ nlohmann::json status_json(const AudioEngine& engine, std::uint64_t revision) {
         {"revision", revision},
         {"latencyGeneration", engine.latency_generation()},
         {"pluginDelay", {{"monitorSamples", monitor_delay}, {"streamSamples", stream_delay}}},
+        {"telemetryStrips", telemetry_strips_json(strips)},
         {"tracks", tracks_json(engine)},
         {"error", status.error.empty() ? nlohmann::json(nullptr)
                                          : nlohmann::json(status.error)},
@@ -159,8 +187,10 @@ nlohmann::json status_json(const AudioEngine& engine, std::uint64_t revision) {
 
 nlohmann::json snapshot_json(const AudioEngine& engine, std::uint64_t epoch,
                              std::uint64_t revision, const nlohmann::json& last_scan) {
-    auto snapshot = make_snapshot_json(epoch, status_json(engine, revision), tracks_json(engine));
+    const auto status = status_json(engine, revision);
+    auto snapshot = make_snapshot_json(epoch, status, status.at("tracks"));
     snapshot["capabilities"] = nlohmann::json::array({"pluginLatencyPdcV1"});
+    snapshot["telemetryStrips"] = status.at("telemetryStrips");
     snapshot["lastScan"] = last_scan;
     return snapshot;
 }

@@ -8,6 +8,7 @@
 #include "audio_engine.hpp"
 #include "sandbox.hpp"
 #include "session.hpp"
+#include "session_projection.hpp"
 
 #define CHECK(x)                                                              \
     do {                                                                      \
@@ -56,6 +57,48 @@ int main() {
         CHECK(pj["tracks"][0]["latencyPolicy"] == "lowLatency");
         CHECK(pj["tracks"][1]["systemRole"] == "stream");
         CHECK(pj["tracks"][1]["latencyPolicy"] == "fullPdc");
+    }
+
+    // 1b. 同一份 strip plan 驅動 snapshot table 與 SHM 寫入，兩通道身分一致。
+    {
+        rmx::AudioEngine telemetry_engine;
+        std::string err;
+        std::uint32_t track_id = 0;
+        CHECK(telemetry_engine.track_add(rmx::TrackKind::kAudio, "Metered", 0, track_id, err));
+        std::uint32_t instance_id = 0;
+        CHECK(telemetry_engine.add_placeholder_plugin(
+            track_id, "missing.vst3", "fixture", "Fixture", false,
+            rmx::RackSlot::Availability::kMissing, "missing", {}, instance_id, err));
+
+        const auto plan =
+            rmx::plan_telemetry_strips(telemetry_engine.tracks(), rmx::kTelemetryStrips);
+        const auto snapshot = rmx::session::snapshot_json(
+            telemetry_engine, 1, 1, nlohmann::json::array());
+        const auto& table = snapshot.at("telemetryStrips");
+        CHECK(table == snapshot.at("status").at("telemetryStrips"));
+
+        rmx::MeterAccumulator meters;
+        rmx::TelemetryBlockShm block{};
+        meters.publish(block, 0, plan.table.data(), plan.table.size(), nullptr, nullptr, 0,
+                       false);
+        CHECK(table.size() == block.strip_count);
+        for (const auto& entry : table) {
+            const auto id = entry.at("id").get<std::size_t>();
+            CHECK(id < block.strip_count);
+            CHECK(block.strips[id].kind ==
+                  static_cast<std::uint32_t>(plan.table[id].kind));
+            if (entry.at("kind") == "engineOutput") {
+                CHECK(entry.at("trackId").is_null() && entry.at("instanceId").is_null());
+                CHECK(block.strips[id].instance_id == rmx::kNoTelemetryOwner);
+            } else if (entry.at("kind") == "track") {
+                CHECK(entry.at("trackId") == track_id && entry.at("instanceId").is_null());
+                CHECK(block.strips[id].instance_id == track_id);
+            } else {
+                CHECK(entry.at("kind") == "plugin");
+                CHECK(entry.at("trackId") == track_id && entry.at("instanceId") == instance_id);
+                CHECK(block.strips[id].instance_id == instance_id);
+            }
+        }
     }
 
     // 2. 軌道結構 roundtrip:audio(sine)→fx→output 監聽,dests 鏈 + gain/mute
@@ -363,9 +406,9 @@ int main() {
         // strip 預算:100 app 軌 + 系統輸出 → 只有前 63 條(master 序)有錶
         {
             const auto plan = rmx::plan_telemetry_strips(e.tracks(), rmx::kTelemetryStrips);
-            CHECK(plan.size() == e.tracks().size());
+            CHECK(plan.tracks.size() == e.tracks().size());
             int metered = 0;
-            for (const auto& p : plan) metered += p.track_strip != rmx::kNoStrip;
+            for (const auto& p : plan.tracks) metered += p.track_strip != rmx::kNoStrip;
             CHECK(metered == 63);  // strip 0 = engine 輸出,預算剩 63 給 track
         }
         // move:把最後一條移到最前 → master 序反轉驗證

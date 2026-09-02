@@ -159,11 +159,12 @@ endif()
 add_test(NAME vst3_host COMMAND vst3_host_test)
 
 # session 檔案序列化/載入(無 plugin 環境;真 plugin roundtrip 走 m5a-engine-tracks.ps1)
-add_executable(session_test tests/session_test.cpp src/session.cpp src/audio_engine.cpp
+add_executable(session_test tests/session_test.cpp src/session.cpp src/session_projection.cpp
+    src/protocol.cpp src/command_contract.cpp src/audio_engine.cpp
     src/pdc_planner.cpp src/route_planner.cpp src/pdc_delay_line.cpp src/rt_crossfade.cpp src/track_graph.cpp src/app_capture.cpp src/render_sink.cpp
     src/asio_device.cpp src/pcm_convert.cpp src/telemetry.cpp src/vst3_host.cpp
     src/sandbox.cpp)
-target_include_directories(session_test PRIVATE src)
+target_include_directories(session_test PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_include_directories(session_test SYSTEM PRIVATE third_party)
 target_link_libraries(session_test PRIVATE asio_sdk vst3_sdk user32 ole32 mmdevapi psapi)
 if(MSVC)

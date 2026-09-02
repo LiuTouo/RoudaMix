@@ -14,6 +14,7 @@
 #include "pdc_delay_line.hpp"
 #include "route_planner.hpp"
 #include "rt_crossfade.hpp"
+#include "telemetry.hpp"
 
 namespace rmx {
 
@@ -114,6 +115,8 @@ struct TrackGraph {
     std::vector<TrackNode> nodes;       // master 順序 = UI 欄內順序
     std::vector<std::uint32_t> order;   // 拓撲序的 node index(RT 照跑);有環時 = master 序 fallback
     std::vector<std::uint32_t> id_index;  // trackId → node index(kNoStrip = 無此 id;RT dest sum 查表)
+    std::uint32_t engine_strip{kNoStrip};
+    std::vector<TelemetryStripIdentity> strip_table;
     RoutePlan route_plan;                 // control thread 規劃；RT 只讀
 };
 
@@ -139,8 +142,13 @@ struct TrackStrips {
     std::uint32_t track_strip{kNoStrip};
     std::vector<std::uint32_t> chain_strips;  // 平行於 chain
 };
-std::vector<TrackStrips> plan_telemetry_strips(const std::vector<TrackNode>& nodes,
-                                               std::size_t budget);
+struct TelemetryStripPlan {
+    std::uint32_t engine_strip{kNoStrip};
+    std::vector<TrackStrips> tracks;
+    std::vector<TelemetryStripIdentity> table;
+};
+TelemetryStripPlan plan_telemetry_strips(const std::vector<TrackNode>& nodes,
+                                         std::size_t budget);
 
 // 系統輸出補齊/去重(確定性;migration + 新 session 共用):
 // 每個 role 保留第一個持有者(其餘降級 kNone),沒有持有者時優先指派給
