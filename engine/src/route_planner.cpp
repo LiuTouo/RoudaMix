@@ -111,20 +111,24 @@ RoutePlan plan_routes(const std::vector<RouteTrackSpec>& tracks,
             const bool primary_is_dry =
                 slot_plan.primary.action != RouteSlotAction::kProcess;
             if (!planned.monitor_required) {
-                slot_plan.monitor = {RouteSlotAction::kReusePrimary, RouteBus::kPrimary, 0u};            } else if (primary_is_dry) {
+                slot_plan.monitor = {RouteSlotAction::kReusePrimary, RouteBus::kPrimary, 0u};
+            } else if (primary_is_dry) {
                 slot_plan.monitor = monitor_diverged
                                         ? RoutePathPlan{RouteSlotAction::kDry,
                                                         RouteBus::kMonitor, 0u}
                                         : RoutePathPlan{RouteSlotAction::kReusePrimary,
-                                                        RouteBus::kPrimary, 0u};            } else if (!monitor_diverged && !slot.monitor_bypassed) {
-                slot_plan.monitor = {RouteSlotAction::kReusePrimary, RouteBus::kPrimary, 0u};                if (slot.primary_latency_known &&
+                                                        RouteBus::kPrimary, 0u};
+            } else if (!monitor_diverged && !slot.monitor_bypassed) {
+                slot_plan.monitor = {RouteSlotAction::kReusePrimary, RouteBus::kPrimary, 0u};
+                if (slot.primary_latency_known &&
                     !add_latency(slot.primary_latency_samples, monitor_chain_latency[i])) {
                     result.latency.error = PdcPlanError::kArithmeticOverflow;
                     result.tracks.clear();
                     return result;
                 }
             } else if (slot.monitor_bypassed) {
-                slot_plan.monitor = {RouteSlotAction::kDry, RouteBus::kMonitor, 0u};                monitor_diverged = true;
+                slot_plan.monitor = {RouteSlotAction::kDry, RouteBus::kMonitor, 0u};
+                monitor_diverged = true;
             } else if (!slot.shadow_available) {
                 slot_plan.monitor = {RouteSlotAction::kDry, RouteBus::kMonitor, 0u};
                 slot_plan.shadow = ShadowDisposition::kCreate;
