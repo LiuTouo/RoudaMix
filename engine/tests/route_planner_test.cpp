@@ -82,7 +82,7 @@ int main() {
         CHECK(input.monitor_diverged);
         CHECK(input.slots[0].monitor.action == rmx::RouteSlotAction::kDry);
         CHECK(input.slots[0].monitor.bus == rmx::RouteBus::kMonitor);
-        CHECK(input.slots[0].shadow == rmx::ShadowDisposition::kCreate);
+        CHECK(input.slots[0].shadow == rmx::ShadowDisposition::kNone);
         CHECK(input.slots[1].monitor.action == rmx::RouteSlotAction::kDry);
         CHECK(input.slots[1].shadow == rmx::ShadowDisposition::kCreate);
         CHECK(plan.latency.outputs[0].total_plugin_delay_samples == 0);
@@ -109,7 +109,7 @@ int main() {
         CHECK(suspended_plan.primary.action == rmx::RouteSlotAction::kDrainParameters);
         CHECK(suspended_plan.monitor.action == rmx::RouteSlotAction::kDry);
         CHECK(suspended_plan.monitor.bus == rmx::RouteBus::kMonitor);
-        CHECK(suspended_plan.shadow == rmx::ShadowDisposition::kReuse);
+        CHECK(suspended_plan.shadow == rmx::ShadowDisposition::kRelease);
     }
 
     {
@@ -283,10 +283,38 @@ int main() {
             {{1, false, true, rmx::OutputLatencyPolicy::kFullPdc,
               {preconfigured}, {}}},
             limits());
-        CHECK(plan.monitor_variants_needed);
-        CHECK(plan.tracks[0].monitor_diverged);
-        CHECK(plan.tracks[0].slots[0].shadow == rmx::ShadowDisposition::kCreate);
-        CHECK(plan.tracks[0].slots[0].monitor.action == rmx::RouteSlotAction::kDry);
+        CHECK(!plan.monitor_variants_needed);
+        CHECK(!plan.tracks[0].monitor_diverged);
+        CHECK(plan.tracks[0].slots[0].shadow == rmx::ShadowDisposition::kNone);
+        CHECK(plan.tracks[0].slots[0].monitor.action ==
+              rmx::RouteSlotAction::kReusePrimary);
+    }
+
+    {
+        auto bypass = active_slot(120, 16);
+        bypass.monitor_bypassed = true;
+        auto shadowed = active_slot(121, 32);
+        shadowed.shadow_available = true;
+        shadowed.shadow_latency_known = true;
+        shadowed.shadow_latency_samples = 32;
+        const auto active = rmx::plan_routes(
+            {{1, false, false, rmx::OutputLatencyPolicy::kFullPdc,
+              {bypass, shadowed}, {2}},
+             {2, false, true, rmx::OutputLatencyPolicy::kLowLatency, {}, {}}},
+            limits());
+        const auto suspended = rmx::plan_route_suspension(active);
+        CHECK(suspended.latency.edge_delays.size() == active.latency.edge_delays.size());
+        CHECK(suspended.tracks[0].sends == active.tracks[0].sends);
+        CHECK(suspended.tracks[0].slots[0].primary.action ==
+              rmx::RouteSlotAction::kDelayDry);
+        CHECK(suspended.tracks[0].slots[1].primary.action ==
+              rmx::RouteSlotAction::kDelayDry);
+        CHECK(suspended.tracks[0].slots[0].monitor.action ==
+              rmx::RouteSlotAction::kDry);
+        CHECK(suspended.tracks[0].slots[1].monitor.action ==
+              rmx::RouteSlotAction::kDelayDry);
+        CHECK(suspended.tracks[0].slots[1].shadow ==
+              active.tracks[0].slots[1].shadow);
     }
 
     std::printf("route_planner_test PASSED\n");

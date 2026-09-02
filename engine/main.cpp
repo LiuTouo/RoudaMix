@@ -135,7 +135,10 @@ nlohmann::json tracks_json() {
                 {"latencySamples", s.latency_known ? nlohmann::json(s.latency_samples)
                                                     : nlohmann::json(nullptr)},
                 {"effectiveLatencySamples",
-                 s.latency_known ? nlohmann::json(s.bypass ? 0u : s.latency_samples)
+                 s.latency_known ? nlohmann::json(
+                                       g_engine.primary_route_processes(s.instance_id)
+                                           ? s.latency_samples
+                                           : 0u)
                                  : nlohmann::json(nullptr)},
                 {"monitorLatencySamples",
                  s.monitor_latency_known ? nlohmann::json(s.monitor_latency_samples)

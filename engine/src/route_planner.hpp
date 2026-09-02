@@ -20,6 +20,7 @@ enum class RouteBus : std::uint8_t { kPrimary, kMonitor };
 
 enum class RouteSlotAction : std::uint8_t {
     kDry,
+    kDelayDry,
     kProcess,
     kDrainParameters,
     kReusePrimary,
@@ -53,6 +54,7 @@ struct RouteTrackSpec {
     OutputLatencyPolicy latency_policy{OutputLatencyPolicy::kFullPdc};
     std::vector<RouteSlotSpec> slots;
     std::vector<std::uint32_t> dests;
+    bool uses_input_bus{true};
 };
 
 struct RoutePathPlan {
@@ -103,5 +105,8 @@ struct RoutePlan {
 
 RoutePlan plan_routes(const std::vector<RouteTrackSpec>& tracks,
                       const PdcLimits& limits);
+
+// Shadow 準備期間的暫態 plan：保留現行 PDC/bus routing，只停用所有 plugin process。
+RoutePlan plan_route_suspension(RoutePlan active);
 
 }  // namespace rmx

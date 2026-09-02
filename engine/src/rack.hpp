@@ -54,6 +54,13 @@ private:
     alignas(64) std::atomic<std::size_t> tail_{};  // control 寫
 };
 
+// VST3 可在 RT process() 內同步通知 kLatencyChanged；callback 只能置位，
+// 非 RT publish thread 再取走並通知 main thread，避免 RT 直接呼叫 Win32。
+struct LatencyChangeMailbox {
+    std::atomic<bool> primary{};
+    std::atomic<bool> monitor{};
+};
+
 struct RackSlot {
     // placeholder 語意:plugin == nullptr 且 availability != kOk。session 載入時
     // module 消失/壞檔/worker 不在 → 保留原位置與 metadata(params/bypass),
@@ -80,6 +87,8 @@ struct RackSlot {
     std::shared_ptr<ParamRing> ring{std::make_shared<ParamRing>()};
     std::shared_ptr<Vst3Plugin> monitor_shadow;            // low-latency 分岔後的獨立 processor
     std::shared_ptr<ParamRing> monitor_ring{std::make_shared<ParamRing>()};
+    std::shared_ptr<LatencyChangeMailbox> latency_change_mailbox{
+        std::make_shared<LatencyChangeMailbox>()};
     // host 端參數權威值(control 讀寫;VST3 host 設值不反映到 controller)
     std::vector<std::pair<std::uint32_t, double>> param_values;
     Availability availability{Availability::kOk};

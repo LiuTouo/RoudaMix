@@ -72,6 +72,7 @@ RoutePlan route_plan_for_tracks(const std::vector<TrackNode>& tracks,
         spec.is_output = track.kind == TrackKind::kOutput;
         spec.latency_policy = track.latency_policy;
         spec.dests = track.dests;
+        spec.uses_input_bus = track.source.type == TrackSource::kNone;
         spec.slots.reserve(track.chain.size());
         for (const auto& slot : track.chain) {
             spec.slots.push_back({
@@ -508,6 +509,21 @@ bool AudioEngine::start(const std::string& device_key,
             while (!exiting_.load(std::memory_order_acquire)) {
                 next += std::chrono::milliseconds(33);  // ~30Hz
                 std::this_thread::sleep_until(next);
+                const TrackGraph* g = rt_graph_.load(std::memory_order_acquire);
+                if (g != nullptr) {
+                    for (const auto& track : g->nodes) {
+                        for (const auto& slot : track.chain) {
+                            const auto& mailbox = slot.latency_change_mailbox;
+                            if (mailbox == nullptr) continue;
+                            if (mailbox->primary.exchange(false, std::memory_order_acq_rel) &&
+                                latency_changed_cb_)
+                                latency_changed_cb_(slot.instance_id, false);
+                            if (mailbox->monitor.exchange(false, std::memory_order_acq_rel) &&
+                                latency_changed_cb_)
+                                latency_changed_cb_(slot.instance_id, true);
+                        }
+                    }
+                }
                 if (shm_ == nullptr) continue;
                 // strip 位置 = 陣列索引:0 = engine 輸出、其後依 snapshot 的
                 // track_strip / chain_strips 放軌(kind 1)與 plugin(kind 0)
@@ -517,7 +533,6 @@ bool AudioEngine::start(const std::string& device_key,
                 std::uint32_t plugin_variants[kPluginLoadEntries]{};
                 std::size_t count = 1;
                 std::size_t plugin_count = 0;
-                const TrackGraph* g = rt_graph_.load(std::memory_order_acquire);
                 if (g != nullptr) {
                     for (const auto& t : g->nodes) {
                         if (t.track_strip != kNoStrip && t.track_strip < kTelemetryStrips) {
@@ -798,14 +813,7 @@ bool AudioEngine::swap_safety_graph() noexcept {
             slot.shadow_cpu_index = 0xFFFFFFFFu;
         }
     }
-    const auto running_rate = rt_sample_rate_.load(std::memory_order_relaxed);
-    const std::uint64_t plan_rate =
-        running_rate > 0 ? running_rate : (last_sample_rate_ > 0 ? last_sample_rate_ : 48000u);
-    safe->route_plan = route_plan_for_tracks(safe->nodes, plan_rate);
-    if (!safe->route_plan.ok()) {
-        delete safe;
-        return false;
-    }
+    safe->route_plan = plan_route_suspension(active->route_plan);
     TrackGraph* old = rt_graph_.exchange(safe, std::memory_order_acq_rel);
     if (old != nullptr) retired_.push_back({old, GetTickCount64()});
     clear_expired_retired(false);
@@ -824,10 +832,10 @@ void AudioEngine::refresh_latency(RackSlot& slot) noexcept {
 
 void AudioEngine::bind_latency_callback(RackSlot& slot) {
     if (slot.plugin == nullptr) return;
-    const auto instance_id = slot.instance_id;
-    slot.plugin->set_latency_changed_callback([this, instance_id] {
-        // Plugin 可從非 main thread 通知；此處不得碰 tracks_/graph。
-        if (latency_changed_cb_) latency_changed_cb_(instance_id, false);
+    const auto mailbox = slot.latency_change_mailbox;
+    slot.plugin->set_latency_changed_callback([mailbox] {
+        // Plugin 可在 audio callback 內同步通知；RT 只置位，不碰系統 API。
+        if (mailbox != nullptr) mailbox->primary.store(true, std::memory_order_release);
     });
 }
 
@@ -942,9 +950,10 @@ bool AudioEngine::ensure_monitor_shadows(std::string& err) {
                 err = "monitor shadow pre-roll failed for '" + slot.name + "': " + state_err;
                 return false;
             }
-            const auto instance_id = slot.instance_id;
-            shadow->set_latency_changed_callback([this, instance_id] {
-                if (latency_changed_cb_) latency_changed_cb_(instance_id, true);
+            const auto mailbox = slot.latency_change_mailbox;
+            shadow->set_latency_changed_callback([mailbox] {
+                if (mailbox != nullptr)
+                    mailbox->monitor.store(true, std::memory_order_release);
             });
             const auto shadow_latency = shadow->latency_samples();
             pending.push_back({&slot, std::move(shadow), shadow_latency});
@@ -1517,6 +1526,14 @@ const RackSlot* AudioEngine::find_slot(std::uint32_t instance_id) const noexcept
         for (const auto& s : t.chain)
             if (s.instance_id == instance_id) return &s;
     return nullptr;
+}
+
+bool AudioEngine::primary_route_processes(std::uint32_t instance_id) const noexcept {
+    for (const auto& track : last_route_plan_.tracks)
+        for (const auto& slot : track.slots)
+            if (slot.instance_id == instance_id)
+                return slot.primary.action == RouteSlotAction::kProcess;
+    return false;
 }
 
 std::vector<AudioEngine::PluginTabInfo> AudioEngine::plugin_tabs() const {
@@ -2106,8 +2123,7 @@ void AudioEngine::process(const AudioBlock& block) noexcept {
                                 ParamRing* ring, PdcDelayLine* dry_delay,
                                 std::uint32_t cpu_index) {
                 if (path.action == RouteSlotAction::kDry ||
-                    path.action == RouteSlotAction::kReusePrimary || plugin == nullptr ||
-                    ring == nullptr)
+                    path.action == RouteSlotAction::kReusePrimary)
                     return;
                 float*& in_l = path.bus == RouteBus::kPrimary ? cur_l : monitor_l;
                 float*& in_r = path.bus == RouteBus::kPrimary ? cur_r : monitor_r;
@@ -2117,6 +2133,17 @@ void AudioEngine::process(const AudioBlock& block) noexcept {
                                                               : n.buf->monitor_dry[0];
                 float* dry_r = path.bus == RouteBus::kPrimary ? n.buf->dry[1]
                                                               : n.buf->monitor_dry[1];
+                if (path.action == RouteSlotAction::kDelayDry) {
+                    if (dry_delay != nullptr) {
+                        std::memset(dry_l, 0, frames * sizeof(float));
+                        std::memset(dry_r, 0, frames * sizeof(float));
+                        dry_delay->process_add(in_l, in_r, dry_l, dry_r, frames);
+                        in_l = dry_l;
+                        in_r = dry_r;
+                    }
+                    return;
+                }
+                if (plugin == nullptr || ring == nullptr) return;
                 const std::size_t count = ring->pop_all(edits, kMaxParamEditsPerBlock);
                 if (path.action == RouteSlotAction::kDrainParameters) {
                     if (count > 0)
@@ -2177,8 +2204,12 @@ void AudioEngine::process(const AudioBlock& block) noexcept {
                 meter_band(meters_, n.chain_strips[si], cur_l, cur_r, frames);
         }
 
-        if (route_plan.monitor_diverged)
+        if (!route_plan.monitor_diverged) {
+            monitor_l = cur_l;
+            monitor_r = cur_r;
+        } else {
             n.buf->monitor_crossfade.blend(cur_l, cur_r, monitor_l, monitor_r, frames);
+        }
 
         // gain/mute:post-fader,每 sample 套 target;值變時 block 內線性斜坡防爆音
         // (收斂時 inc = 0 = 常數乘;不能只斜坡一個 block — 穩態也要真的乘上 gain)

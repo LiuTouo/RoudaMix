@@ -1184,7 +1184,12 @@
         <button class="settings" onclick={() => copyNotice(n)} data-tooltip="複製此通知的完整技術資訊至剪貼簿。">複製</button>
       {/if}
       {#if n.dismissible}
-        <button class="settings" onclick={() => dismissNotice(n.id)} data-tooltip="關閉此通知。">×</button>
+        <button
+          class="settings"
+          onclick={() => dismissNotice(n.id)}
+          aria-label="關閉此通知"
+          data-tooltip="關閉此通知。"
+        >×</button>
       {/if}
     </span>
   {/each}

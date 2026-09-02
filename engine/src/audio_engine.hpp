@@ -74,7 +74,8 @@ public:
     void set_latency_changed_cb(std::function<void(std::uint32_t, bool)> cb) {
         latency_changed_cb_ = std::move(cb);
     }
-    // VST callback 只排 message；main thread 持 engine mutex 後在此刷新並交易 graph。
+    // VST callback 只置 atomic mailbox；publish thread 再排 message，main thread
+    // 持 engine mutex 後在此刷新並交易 graph。
     void handle_latency_changed(std::uint32_t instance_id, bool monitor_shadow);
     void handle_track_failed(std::uint32_t track_id);  // main thread 專屬(capture 或 render)
 
@@ -159,6 +160,7 @@ public:
     };
     std::vector<PluginTabInfo> plugin_tabs() const;
     const RackSlot* find_slot(std::uint32_t instance_id) const noexcept;
+    bool primary_route_processes(std::uint32_t instance_id) const noexcept;
     // 最近一次成功 start 的裝置/取樣率/緩衝(session serialize 用;stop 後仍保留)
     const std::string& last_device_key() const noexcept { return last_device_key_; }
     std::uint32_t last_sample_rate() const noexcept { return last_sample_rate_; }
