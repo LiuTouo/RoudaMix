@@ -27,8 +27,19 @@ WorkerResult run_worker(const std::vector<std::string>& args, std::uint32_t time
                         std::atomic<bool>* cancel = nullptr);
 
 // add_plugin 前試爆:module 載入 + class instantiate + initialize + setActive。
-// 成功 true;false 時 err 帶 worker stderr 摘要(或超時說明)
+// 成功 true；worker 缺失／spawn 失敗／驗證失敗皆 false，err 帶原因。
 bool verify_module(const std::filesystem::path& module_path, const std::string& class_id,
                    double sample_rate, std::uint32_t block_size, std::string& err);
+
+enum class PreflightFailure {
+    kNone,
+    kWorkerUnavailable,
+    kVerificationFailed,
+};
+
+// 所有會把 module 載入 engine process 的路徑共用此 fail-closed preflight。
+PreflightFailure preflight_module(const std::filesystem::path& module_path,
+                                  const std::string& class_id, double sample_rate,
+                                  std::uint32_t block_size, std::string& err);
 
 }  // namespace rmx::sandbox

@@ -32,6 +32,10 @@ fn probe_dir(directory: &Path, group: &str) {
 }
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--error-codes") {
+        println!("{}", json!(protocol::error_codes()));
+        return;
+    }
     let root = std::env::args()
         .nth(1)
         .map(PathBuf::from)

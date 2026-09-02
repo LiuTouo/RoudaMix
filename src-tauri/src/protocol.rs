@@ -10,6 +10,10 @@ pub const PROTOCOL_VERSION: u32 = 2;
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const PIPE_NAME: &str = r"\\.\pipe\roudamix-engine";
 
+pub fn error_codes() -> Vec<&'static str> {
+    command_contract::error_codes()
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ProtocolError {
     #[error("parse error: {0}")]

@@ -133,6 +133,15 @@ pub fn is_error_code(code: &str) -> bool {
         .is_some_and(|codes| codes.iter().any(|entry| entry["code"] == code))
 }
 
+pub fn error_codes() -> Vec<&'static str> {
+    table()["errorCodes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry["code"].as_str())
+        .collect()
+}
+
 pub fn is_event_kind(kind: &str) -> bool {
     find_kind("events", kind).is_some()
 }

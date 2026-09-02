@@ -97,7 +97,8 @@ public:
     // setComponentState 回 OK 但值不動,不可信)
     bool load_preset(const std::filesystem::path& file,
                      std::vector<std::pair<std::uint32_t, double>>& host_params_inout,
-                     std::string& error, bool& host_values_from_file);
+                     std::string& error, bool& host_values_from_file,
+                     bool& state_rejected);
 
     // ---- editor(plugin 自帶 GUI;view 生命週期在這,視窗由 EditorHost 持有,
     //      見 editor_host.hpp)----

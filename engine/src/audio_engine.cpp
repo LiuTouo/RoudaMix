@@ -351,7 +351,7 @@ std::vector<AudioEngine::RenderDeviceInfo> AudioEngine::list_render_devices() {
     return out;
 }
 
-// M5b/M5c:pump 失敗(main thread 經 callback 轉入;持 g_engine_mutex)
+// M5b/M5c:pump 失敗(main thread 經 callback 轉入 Router 臨界區)
 void AudioEngine::handle_track_failed(std::uint32_t track_id) {
     TrackNode* t = find_track_mut(track_id);
     if (t == nullptr) return;
@@ -1110,7 +1110,6 @@ bool AudioEngine::track_add(TrackKind kind, const std::string& name, std::uint32
     track_id = t.track_id;
     tracks_.push_back(std::move(t));
     swap_graph();
-    revision_.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
@@ -1140,7 +1139,6 @@ bool AudioEngine::track_remove(std::uint32_t track_id, std::string& err) {
         t.dests.erase(std::remove(t.dests.begin(), t.dests.end(), track_id), t.dests.end());
     }
     swap_graph();
-    revision_.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
@@ -1163,7 +1161,6 @@ bool AudioEngine::track_set(std::uint32_t track_id, std::optional<std::string> n
     }
     if (mute) t->mute = *mute;
     swap_graph();
-    revision_.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
@@ -1197,7 +1194,6 @@ bool AudioEngine::track_set_latency_policy(std::uint32_t track_id,
         err = "PDC plan exceeds latency or memory safety limits";
         return false;
     }
-    revision_.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
@@ -1244,7 +1240,6 @@ bool AudioEngine::track_set_source(std::uint32_t track_id, const TrackSource& so
             }
         }
         swap_graph();
-        revision_.fetch_add(1, std::memory_order_relaxed);
         return true;
     }
     if (t->kind == TrackKind::kApp && source.type != TrackSource::kNone) {
@@ -1299,7 +1294,6 @@ bool AudioEngine::track_set_source(std::uint32_t track_id, const TrackSource& so
         code = "bad_command";
         return false;
     }
-    revision_.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
@@ -1413,7 +1407,6 @@ bool AudioEngine::track_set_dests(std::uint32_t track_id, std::vector<std::uint3
         code = "bad_command";
         return false;
     }
-    revision_.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
@@ -1458,7 +1451,6 @@ bool AudioEngine::track_set_output(std::uint32_t track_id, const TrackOutput& ou
             }
         }
         swap_graph();
-        revision_.fetch_add(1, std::memory_order_relaxed);
         return true;
     }
     if (output.type == TrackOutput::kAsioOut) {
@@ -1490,7 +1482,6 @@ bool AudioEngine::track_set_output(std::uint32_t track_id, const TrackOutput& ou
         }
     }
     swap_graph();
-    revision_.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
@@ -1510,7 +1501,6 @@ bool AudioEngine::track_move(std::uint32_t track_id, std::size_t new_index, std:
     const auto pos = (std::min)(new_index, tracks_.size());  // erase 後插入位 [0, N-1];超尾 = 移到尾端
     tracks_.insert(tracks_.begin() + static_cast<std::ptrdiff_t>(pos), std::move(moved));
     swap_graph();
-    revision_.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
@@ -1589,7 +1579,6 @@ bool AudioEngine::add_plugin(std::uint32_t track_id, const std::string& module_p
         err = "PDC plan exceeds latency or memory safety limits";
         return false;
     }
-    revision_.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
@@ -1616,7 +1605,6 @@ bool AudioEngine::add_placeholder_plugin(std::uint32_t track_id, const std::stri
     instance_id = slot.instance_id;
     t->chain.push_back(std::move(slot));
     swap_graph();
-    revision_.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
@@ -1669,11 +1657,12 @@ bool AudioEngine::load_placeholder(std::uint32_t instance_id, const std::string&
         err = "PDC plan exceeds latency or memory safety limits";
         return false;
     }
-    revision_.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
-bool AudioEngine::remove_plugin(std::uint32_t instance_id, std::string& err) {
+bool AudioEngine::remove_plugin(std::uint32_t instance_id, std::string& err,
+                                PluginMutationFailure* failure) {
+    if (failure != nullptr) *failure = PluginMutationFailure::kNone;
     for (auto& t : tracks_) {
         for (auto it = t.chain.begin(); it != t.chain.end(); ++it) {
             if (it->instance_id == instance_id) {
@@ -1682,11 +1671,11 @@ bool AudioEngine::remove_plugin(std::uint32_t instance_id, std::string& err) {
                 if (it->plugin && it->plugin->editor_open()) it->plugin->close_editor();
                 t.chain.erase(it);
                 swap_graph();
-                revision_.fetch_add(1, std::memory_order_relaxed);
                 return true;
             }
         }
     }
+    if (failure != nullptr) *failure = PluginMutationFailure::kNotFound;
     err = "unknown instanceId " + std::to_string(instance_id);
     return false;
 }
@@ -1710,16 +1699,18 @@ bool AudioEngine::move_plugin(std::uint32_t instance_id, std::size_t to_index,
         chain.erase(from);
         chain.insert(chain.begin() + static_cast<std::ptrdiff_t>(to_index), std::move(moved));
         swap_graph();
-        revision_.fetch_add(1, std::memory_order_relaxed);
         return true;
     }
     err = "unknown instanceId " + std::to_string(instance_id);
     return false;
 }
 
-bool AudioEngine::set_bypass(std::uint32_t instance_id, bool bypass, std::string& err) {
+bool AudioEngine::set_bypass(std::uint32_t instance_id, bool bypass, std::string& err,
+                             PluginMutationFailure* failure) {
+    if (failure != nullptr) *failure = PluginMutationFailure::kNone;
     RackSlot* s = find_slot_mut(instance_id);
     if (s == nullptr) {
+        if (failure != nullptr) *failure = PluginMutationFailure::kNotFound;
         err = "unknown instanceId " + std::to_string(instance_id);
         return false;
     }
@@ -1727,6 +1718,7 @@ bool AudioEngine::set_bypass(std::uint32_t instance_id, bool bypass, std::string
     const bool previous = s->bypass;
     s->bypass = bypass;
     if (!prepare_monitor_variants(err)) {
+        if (failure != nullptr) *failure = PluginMutationFailure::kStateFailed;
         s->bypass = previous;
         std::string cleanup_error;
         (void)ensure_monitor_shadows(cleanup_error);
@@ -1734,6 +1726,7 @@ bool AudioEngine::set_bypass(std::uint32_t instance_id, bool bypass, std::string
         return false;
     }
     if (!swap_graph()) {
+        if (failure != nullptr) *failure = PluginMutationFailure::kBadCommand;
         s->bypass = previous;
         std::string cleanup_error;
         (void)ensure_monitor_shadows(cleanup_error);
@@ -1741,14 +1734,16 @@ bool AudioEngine::set_bypass(std::uint32_t instance_id, bool bypass, std::string
         err = "PDC plan exceeds latency or memory safety limits";
         return false;
     }
-    revision_.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
 bool AudioEngine::set_monitor_bypass(std::uint32_t instance_id, bool bypass,
-                                     std::string& err) {
+                                     std::string& err,
+                                     PluginMutationFailure* failure) {
+    if (failure != nullptr) *failure = PluginMutationFailure::kNone;
     RackSlot* s = find_slot_mut(instance_id);
     if (s == nullptr) {
+        if (failure != nullptr) *failure = PluginMutationFailure::kNotFound;
         err = "unknown instanceId " + std::to_string(instance_id);
         return false;
     }
@@ -1756,6 +1751,7 @@ bool AudioEngine::set_monitor_bypass(std::uint32_t instance_id, bool bypass,
     const bool previous = s->monitor_bypass;
     s->monitor_bypass = bypass;
     if (!prepare_monitor_variants(err)) {
+        if (failure != nullptr) *failure = PluginMutationFailure::kStateFailed;
         s->monitor_bypass = previous;
         std::string cleanup_error;
         (void)ensure_monitor_shadows(cleanup_error);
@@ -1763,6 +1759,7 @@ bool AudioEngine::set_monitor_bypass(std::uint32_t instance_id, bool bypass,
         return false;
     }
     if (!swap_graph()) {
+        if (failure != nullptr) *failure = PluginMutationFailure::kBadCommand;
         s->monitor_bypass = previous;
         std::string cleanup_error;
         (void)ensure_monitor_shadows(cleanup_error);
@@ -1770,7 +1767,6 @@ bool AudioEngine::set_monitor_bypass(std::uint32_t instance_id, bool bypass,
         err = "PDC plan exceeds latency or memory safety limits";
         return false;
     }
-    revision_.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
@@ -1802,7 +1798,6 @@ bool AudioEngine::set_param(std::uint32_t instance_id, std::uint32_t param_id, d
         s->monitor_ring->push({param_id, value});
         s->monitor_shadow->set_param_normalized(param_id, value);
     }
-    revision_.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
@@ -1831,9 +1826,11 @@ bool AudioEngine::save_preset(std::uint32_t instance_id, const std::filesystem::
 }
 
 bool AudioEngine::load_preset(std::uint32_t instance_id, const std::filesystem::path& file,
-                              std::string& err) {
+                              std::string& err, PresetLoadFailure* failure) {
+    if (failure != nullptr) *failure = PresetLoadFailure::kPresetIo;
     RackSlot* s = find_slot_mut(instance_id);
     if (s == nullptr) {
+        if (failure != nullptr) *failure = PresetLoadFailure::kNotFound;
         err = "unknown instanceId " + std::to_string(instance_id);
         return false;
     }
@@ -1870,7 +1867,11 @@ bool AudioEngine::load_preset(std::uint32_t instance_id, const std::filesystem::
         }
     }
     bool host_values_from_file = false;
-    bool ok = s->plugin->load_preset(file, s->param_values, err, host_values_from_file);
+    bool state_rejected = false;
+    bool ok = s->plugin->load_preset(file, s->param_values, err,
+                                     host_values_from_file, state_rejected);
+    if (state_rejected && failure != nullptr)
+        *failure = PresetLoadFailure::kPluginStateFailed;
     // 檔案無 RmxP(外部 host 存的 preset)時，以 primary controller 回報重建
     // host 權威參數；shadow 永遠跟隨這份權威值。
     if (ok && !host_values_from_file) {
@@ -1882,9 +1883,13 @@ bool AudioEngine::load_preset(std::uint32_t instance_id, const std::filesystem::
     if (ok && s->monitor_shadow) {
         auto shadow_params = s->param_values;
         bool shadow_values_from_file = false;
+        bool shadow_state_rejected = false;
         std::string shadow_err;
         if (!s->monitor_shadow->load_preset(file, shadow_params, shadow_err,
-                                            shadow_values_from_file)) {
+                                            shadow_values_from_file,
+                                            shadow_state_rejected)) {
+            if (shadow_state_rejected && failure != nullptr)
+                *failure = PresetLoadFailure::kPluginStateFailed;
             err = "monitor shadow preset sync failed: " + shadow_err;
             ok = false;
         } else {
@@ -1949,7 +1954,7 @@ bool AudioEngine::load_preset(std::uint32_t instance_id, const std::filesystem::
             s->monitor_shadow->set_param_normalized(id, value);
         }
     }
-    revision_.fetch_add(1, std::memory_order_relaxed);
+    if (failure != nullptr) *failure = PresetLoadFailure::kNone;
     return true;
 }
 
@@ -1964,7 +1969,6 @@ void AudioEngine::sync_controller_params(std::uint32_t instance_id) {
 bool AudioEngine::ensure_system_outputs() {
     if (!rmx::ensure_system_outputs(tracks_, next_track_id_)) return false;
     swap_graph();
-    revision_.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 

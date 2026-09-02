@@ -92,6 +92,8 @@ add_executable(roudamix-engine
     src/vst3_host.cpp
     src/editor_host.cpp
     src/session.cpp
+    src/session_projection.cpp
+    src/router.cpp
     src/sandbox.cpp
     src/vst_registry.cpp
 )
@@ -168,6 +170,22 @@ if(MSVC)
     target_compile_options(session_test PRIVATE /W4 /utf-8)
 endif()
 add_test(NAME session COMMAND session_test)
+
+# Router 公開 seam：protocol command 輸入、event/reply frames 輸出。
+add_executable(router_test tests/router_test.cpp src/router.cpp src/session_projection.cpp
+    src/session.cpp src/audio_engine.cpp src/protocol.cpp src/command_contract.cpp
+    src/pdc_planner.cpp src/route_planner.cpp src/pdc_delay_line.cpp src/rt_crossfade.cpp
+    src/track_graph.cpp src/app_capture.cpp src/render_sink.cpp src/asio_device.cpp
+    src/pcm_convert.cpp src/telemetry.cpp src/vst3_host.cpp src/editor_host.cpp
+    src/sandbox.cpp src/vst_registry.cpp)
+target_include_directories(router_test PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/generated")
+target_include_directories(router_test SYSTEM PRIVATE third_party)
+target_link_libraries(router_test PRIVATE asio_sdk vst3_sdk user32 ole32 gdi32 gdiplus
+    dwmapi mmdevapi psapi)
+if(MSVC)
+    target_compile_options(router_test PRIVATE /W4 /utf-8)
+endif()
+add_test(NAME router COMMAND router_test "${CMAKE_CURRENT_SOURCE_DIR}/../fixtures/router")
 
 # track graph 純邏輯(system role 補齊/去重、ASIO channel 聯集;無音訊裝置)
 add_executable(track_graph_test tests/track_graph_test.cpp src/track_graph.cpp)

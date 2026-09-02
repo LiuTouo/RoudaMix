@@ -1,0 +1,34 @@
+{
+  "baselineCommit": "fa1eb53bda529dbd2371c2171bb5defe80f824e7",
+  "frames": [
+    {
+      "kind": "snapshot",
+      "payload": {
+        "epoch": 0,
+        "engineVersion": "0.1.0",
+        "capabilities": ["pluginLatencyPdcV1"],
+        "status": {
+          "running": false,
+          "deviceKey": null,
+          "sampleRate": 0.0,
+          "bufferSize": null,
+          "inputLatency": null,
+          "outputLatency": null,
+          "xruns": 0,
+          "trackCount": 0,
+          "pluginFails": 0,
+          "revision": 0,
+          "latencyGeneration": 0,
+          "pluginDelay": {
+            "monitorSamples": null,
+            "streamSamples": null
+          },
+          "tracks": [],
+          "error": null
+        },
+        "tracks": [],
+        "lastScan": []
+      }
+    }
+  ]
+}

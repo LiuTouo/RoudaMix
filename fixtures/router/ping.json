@@ -1,0 +1,19 @@
+{
+  "baselineCommit": "fa1eb53bda529dbd2371c2171bb5defe80f824e7",
+  "request": {
+    "protocolVersion": 2,
+    "id": 41,
+    "kind": "ping",
+    "payload": {}
+  },
+  "frames": [
+    {
+      "id": 41,
+      "ok": true,
+      "epoch": 0,
+      "result": {
+        "engineVersion": "0.1.0"
+      }
+    }
+  ]
+}

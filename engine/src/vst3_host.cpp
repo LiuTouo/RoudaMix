@@ -670,8 +670,10 @@ struct Vst3Plugin::Impl {
 
     bool load_preset(const std::filesystem::path& file,
                      std::vector<std::pair<std::uint32_t, double>>& host_params_inout,
-                     std::string& err, bool& host_values_from_file) {
+                     std::string& err, bool& host_values_from_file,
+                     bool& state_rejected) {
         host_values_from_file = false;
+        state_rejected = false;
         if (!loaded || !component) {
             err = "plugin not loaded";
             return false;
@@ -755,6 +757,7 @@ struct Vst3Plugin::Impl {
 
         MemoryStream comp_in(data.data() + comp_off, static_cast<int32>(comp_size));
         if (component->setState(&comp_in) != kResultOk) {
+            state_rejected = true;
             err = "plugin rejected preset component state";
             return false;
         }
@@ -942,9 +945,12 @@ bool Vst3Plugin::save_preset(const std::filesystem::path& file,
 
 bool Vst3Plugin::load_preset(const std::filesystem::path& file,
                              std::vector<std::pair<std::uint32_t, double>>& host_params_inout,
-                             std::string& error, bool& host_values_from_file) {
+                             std::string& error, bool& host_values_from_file,
+                             bool& state_rejected) {
     host_values_from_file = false;
-    return impl_ && impl_->load_preset(file, host_params_inout, error, host_values_from_file);
+    state_rejected = false;
+    return impl_ && impl_->load_preset(file, host_params_inout, error,
+                                      host_values_from_file, state_rejected);
 }
 
 bool Vst3Plugin::editor_capable() const noexcept {

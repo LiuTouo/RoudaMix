@@ -14,7 +14,7 @@ namespace rmx {
 
 class AudioEngine;
 
-// host → dispatch 的內部指令:POST 到 main window 排隊,handler 鎖 g_engine_mutex
+// host → Router 的內部指令:POST 到 main window 排隊，由 Router 序列化
 // 後走 engine 正規路徑(host 的 wnd_proc 可能在 dispatch 持鎖中被同步重入,
 // host 自身絕不鎖 —— 非遞迴 mutex 會自死鎖)
 constexpr int kHostBypass = 1;       // instance_id 切換 bypass

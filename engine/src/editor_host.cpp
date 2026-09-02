@@ -5,7 +5,7 @@
 // 執行緒模型:全部 main thread(engine 的 message loop 服務)。host 讀 rack
 // 直接讀(rack_ 只在 main thread 變,同執行緒天然序列化);**變更**(bypass /
 // preset)必經 EditorHostCmd POST 到 main window,由 main.cpp 的 handler 鎖
-// g_engine_mutex 走正規路徑 —— host 的 wnd_proc 可能在 dispatch 持鎖中被
+// Router 臨界區走正規路徑 —— host 的 wnd_proc 可能在 dispatch 持鎖中被
 // DestroyWindow 的 sent message 同步重入,host 自身絕不鎖(自死鎖)。
 #include "editor_host.hpp"
 

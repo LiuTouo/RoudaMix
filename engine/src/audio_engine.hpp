@@ -1,5 +1,5 @@
 // Engine 核心:ASIO device + 多軌 track graph + meter accumulate + SHM publish。
-// 控制面(dispatch thread)呼叫 start/stop/track_*;RT callback 只碰 atomic 與
+// 控制面由 Router 呼叫 start/stop/track_*;RT callback 只碰 atomic 與
 // snapshot。M5:單鏈 rack 改為多軌 DAG(見 track_graph.hpp)。
 #pragma once
 
@@ -33,6 +33,20 @@ struct EngineStatusInfo {
     std::uint32_t track_count{};
     std::uint32_t plugin_fails{};  // RT plugin process 失敗累計
     std::string error;        // 最近錯誤(空 = 無)
+};
+
+enum class PluginMutationFailure {
+    kNone,
+    kNotFound,
+    kStateFailed,
+    kBadCommand,
+};
+
+enum class PresetLoadFailure {
+    kNone,
+    kNotFound,
+    kPresetIo,
+    kPluginStateFailed,
 };
 
 class AudioEngine final : public IAudioCallback {
@@ -84,7 +98,7 @@ public:
     void stop() noexcept;
     bool open_control_panel(std::string& err);
 
-    // ---- tracks(控制面;全部假設 g_engine_mutex 已持有)----
+    // ---- tracks(控制面;全部由 Router 的臨界區序列化)----
     // code out:特殊錯誤碼(cycle_detected/device_busy/track_not_found/bad_command),
     // main.cpp 直接當 reply code 用;通用失敗設 bad_command
     bool track_add(TrackKind kind, const std::string& name, std::uint32_t color,
@@ -119,24 +133,27 @@ public:
     // 前置:呼叫端先過 sandbox verify(session 與 dispatch 同規;worker 不在 fail closed)
     bool load_placeholder(std::uint32_t instance_id, const std::string& module_path,
                           const std::string& class_id, std::string& err);
-    bool remove_plugin(std::uint32_t instance_id, std::string& err);
+    bool remove_plugin(std::uint32_t instance_id, std::string& err,
+                       PluginMutationFailure* failure = nullptr);
     bool move_plugin(std::uint32_t instance_id, std::size_t to_index, std::string& err);
-    bool set_bypass(std::uint32_t instance_id, bool bypass, std::string& err);
-    bool set_monitor_bypass(std::uint32_t instance_id, bool bypass, std::string& err);
+    bool set_bypass(std::uint32_t instance_id, bool bypass, std::string& err,
+                    PluginMutationFailure* failure = nullptr);
+    bool set_monitor_bypass(std::uint32_t instance_id, bool bypass, std::string& err,
+                            PluginMutationFailure* failure = nullptr);
     bool set_param(std::uint32_t instance_id, std::uint32_t param_id, double value,
                    std::string& err);
-    // preset(檔案式 .vstpreset;控制面,假設 g_engine_mutex 已持有)。
+    // preset(檔案式 .vstpreset;控制面，由 Router 臨界區序列化)。
     // load 成功後 host 端 param 權威值自 controller 重同步
     bool save_preset(std::uint32_t instance_id, const std::filesystem::path& file,
                      std::string& err);
     bool load_preset(std::uint32_t instance_id, const std::filesystem::path& file,
-                     std::string& err);
+                     std::string& err, PresetLoadFailure* failure = nullptr);
     // 把 host 權威值推給 controller(editor GUI 顯示同步);session 載入後呼,
-    // set_param 只餵 RT ring、GUI 不知道。假設 g_engine_mutex 已持有
+    // set_param 只餵 RT ring、GUI 不知道。由 Router 臨界區序列化。
     void sync_controller_params(std::uint32_t instance_id);
 
     // 系統輸出(monitor/stream)補齊/去重:session 載入後、新 session 建立時呼。
-    // 有變動才 swap_graph + bump revision。回傳是否動了 graph
+    // 有變動才 swap_graph。回傳是否動了 graph；dirty revision 由 Router 推進。
     bool ensure_system_outputs();
     // session 載入路徑:檔案帶的 role 套到剛建好的軌(ensure_system_outputs 之後
     // 會去重/補齊)。未知 id = 無操作
@@ -144,10 +161,6 @@ public:
     // session 載入:全軌清空(含系統輸出軌——track_remove 擋系統軌,這裡是載入
     // 前的整段重建,必須能清)。editor/capture/render 一併收
     void clear_all_tracks();
-
-    // ---- authoritative revision(session dirty 判定用;所有成功 mutation +1,
-    //      含不廣播的 set_param。epoch 只算「廣播型」mutation,不夠表達 params)----
-    std::uint64_t revision() const noexcept { return revision_.load(std::memory_order_relaxed); }
 
     const std::vector<TrackNode>& tracks() const noexcept { return tracks_; }
     // editor host 顯示資料：tab 用 plugin 名，視窗標題用音軌名
@@ -193,12 +206,11 @@ private:
     std::uint64_t plugin_timing_overhead_{};        // control thread 啟動時校準
     std::atomic<int> panel_open_{0};               // 硬體面板開著(>0):期間禁 start(driver 重開 race)
 
-    // tracks:control master + RT snapshot(atomic swap)。tracks_ 只在 main thread
-    // 變(dispatch + editor performEdit 都在 main thread,無鎖即序列化)。
+    // tracks:control master + RT snapshot(atomic swap)。tracks_ 只在 Router
+    // 臨界區內變更；RT 只讀 atomic snapshot。
     std::vector<TrackNode> tracks_;
     std::uint32_t next_track_id_{1};
     std::uint32_t next_instance_id_{1};
-    std::atomic<std::uint64_t> revision_{0};  // 權威狀態版號(含 set_param;dirty 判定)
     std::atomic<std::uint64_t> latency_generation_{0};
     RoutePlan last_route_plan_;
     std::unordered_map<std::uint64_t, std::shared_ptr<PdcDelayLine>> pdc_delay_states_;

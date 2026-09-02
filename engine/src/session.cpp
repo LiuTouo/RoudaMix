@@ -384,25 +384,25 @@ bool load(AudioEngine& engine, const std::filesystem::path& file, nlohmann::json
 
                     std::uint32_t instance_id = 0;
                     bool loaded = false;
-                    if (rmx::sandbox::worker_path().empty()) {
-                        note_missing("sandbox_unavailable",
-                                     "sandbox worker (roudamix-worker.exe) unavailable; "
-                                     "plugin kept as placeholder (fail closed)");
+                    const auto st_now = engine.status();
+                    const double rate =
+                        st_now.running ? static_cast<double>(st_now.sample_rate) : 48000.0;
+                    const std::uint32_t block =
+                        st_now.running && st_now.buffer_size > 0 ? st_now.buffer_size : 512u;
+                    std::string verr;
+                    const auto preflight = rmx::sandbox::preflight_module(
+                        path, class_id, rate, block, verr);
+                    if (preflight != rmx::sandbox::PreflightFailure::kNone) {
+                        note_missing(
+                            preflight == rmx::sandbox::PreflightFailure::kWorkerUnavailable
+                                ? "sandbox_unavailable"
+                                : "plugin_load_failed",
+                            verr);
+                    } else if (!engine.add_plugin(new_id, path, class_id, instance_id,
+                                                  verr)) {
+                        note_missing("plugin_load_failed", verr);
                     } else {
-                        const auto st_now = engine.status();
-                        const double rate =
-                            st_now.running ? static_cast<double>(st_now.sample_rate) : 48000.0;
-                        const std::uint32_t block =
-                            st_now.running && st_now.buffer_size > 0 ? st_now.buffer_size : 512u;
-                        std::string verr;
-                        if (!rmx::sandbox::verify_module(path, class_id, rate, block, verr)) {
-                            note_missing("plugin_load_failed", verr);
-                        } else if (!engine.add_plugin(new_id, path, class_id, instance_id,
-                                                      verr)) {
-                            note_missing("plugin_load_failed", verr);
-                        } else {
-                            loaded = true;
-                        }
+                        loaded = true;
                     }
                     if (loaded) {
                         std::string pl_err;

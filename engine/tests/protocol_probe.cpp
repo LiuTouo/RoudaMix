@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "protocol.hpp"
+#include "command_contract.hpp"
 
 namespace fs = std::filesystem;
 
@@ -52,6 +53,13 @@ void probe_dir(const fs::path& directory, const char* group) {
 }  // namespace
 
 int main(int argc, char** argv) {
+    if (argc > 1 && std::string(argv[1]) == "--error-codes") {
+        auto codes = nlohmann::json::array();
+        for (const auto& entry : rmx::contract::table().at("errorCodes"))
+            codes.push_back(entry.at("code"));
+        std::puts(codes.dump().c_str());
+        return 0;
+    }
     const fs::path root = argc > 1 ? fs::path(argv[1]) : fs::path("fixtures/protocol");
     probe_dir(root / "valid", "valid");
     probe_dir(root / "invalid", "invalid");

@@ -1,0 +1,80 @@
+{
+  "baselineCommit": "fa1eb53bda529dbd2371c2171bb5defe80f824e7",
+  "request": {
+    "protocolVersion": 2,
+    "id": 42,
+    "kind": "track_add",
+    "payload": {
+      "kind": "audio",
+      "name": "Mic",
+      "color": 0
+    }
+  },
+  "frames": [
+    {
+      "kind": "status",
+      "payload": {
+        "running": false,
+        "deviceKey": null,
+        "sampleRate": 0.0,
+        "bufferSize": null,
+        "inputLatency": null,
+        "outputLatency": null,
+        "xruns": 0,
+        "trackCount": 1,
+        "pluginFails": 0,
+        "revision": 1,
+        "latencyGeneration": 1,
+        "pluginDelay": {
+          "monitorSamples": null,
+          "streamSamples": null
+        },
+        "tracks": [
+          {
+            "trackId": 1,
+            "kind": "audio",
+            "systemRole": null,
+            "latencyPolicy": "fullPdc",
+            "name": "Mic",
+            "color": 5088255,
+            "source": null,
+            "dests": [],
+            "output": null,
+            "gain": 1.0,
+            "mute": false,
+            "plugins": [],
+            "metered": true,
+            "error": null
+          }
+        ],
+        "error": null
+      }
+    },
+    {
+      "id": 42,
+      "ok": true,
+      "epoch": 0,
+      "result": {
+        "trackId": 1,
+        "tracks": [
+          {
+            "trackId": 1,
+            "kind": "audio",
+            "systemRole": null,
+            "latencyPolicy": "fullPdc",
+            "name": "Mic",
+            "color": 5088255,
+            "source": null,
+            "dests": [],
+            "output": null,
+            "gain": 1.0,
+            "mute": false,
+            "plugins": [],
+            "metered": true,
+            "error": null
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -21,7 +21,7 @@ constexpr std::size_t kParamRingSize = 256;  // 2 的冪
 constexpr std::size_t kMaxParamEditsPerBlock = 64;
 constexpr std::uint32_t kMaxBlockFrames = 8192;  // RT ping-pong bus 上限(ASIO 遠低於此)
 
-// SPSC:control push(g_engine_mutex 序列化)、RT pop。
+// SPSC:control push(Router 臨界區序列化)、RT pop。
 // 滿 = drop —— 參數權威值在 host 端 map,UI 重送冪等,漏一筆無妨。
 class ParamRing final {
 public:

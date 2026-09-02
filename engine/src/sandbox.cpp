@@ -202,8 +202,9 @@ bool verify_module(const std::filesystem::path& module_path, const std::string& 
     // ponytail:20s 固定上限 —— 惡意 plugin 掛死只浪費一次 add 的 20s;要縮再調
     const WorkerResult r = run_worker(args, 20000);
     if (!r.spawned) {
-        err = {};  // worker 不在:呼叫端 fallback in-process 載入(不擋)
-        return true;
+        err = r.output.empty() ? "sandbox worker unavailable (roudamix-worker.exe missing)"
+                               : r.output;
+        return false;
     }
     if (r.timed_out) {
         err = "plugin load verification timed out (worker killed)";
@@ -225,6 +226,18 @@ bool verify_module(const std::filesystem::path& module_path, const std::string& 
         return false;
     }
     return true;
+}
+
+PreflightFailure preflight_module(const std::filesystem::path& module_path,
+                                  const std::string& class_id, double sample_rate,
+                                  std::uint32_t block_size, std::string& err) {
+    if (worker_path().empty()) {
+        err = "sandbox worker unavailable (roudamix-worker.exe missing)";
+        return PreflightFailure::kWorkerUnavailable;
+    }
+    if (!verify_module(module_path, class_id, sample_rate, block_size, err))
+        return PreflightFailure::kVerificationFailed;
+    return PreflightFailure::kNone;
 }
 
 }  // namespace rmx::sandbox
