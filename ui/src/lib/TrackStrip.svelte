@@ -9,7 +9,13 @@
   import { engineCommand } from "./protocol-commands.generated";
   import { cssColor, parseColor, stripOfTrack } from "./tracks";
   import { MutationQueue, mutKey } from "./mutations";
-  import { laneDropToMasterIndex } from "./laneView";
+  import { reorderLane } from "./laneOrder";
+  import {
+    beginMonitorBypass,
+    finishMonitorBypass,
+    isMonitorBypassPending,
+    type MonitorBypassTransactions,
+  } from "./monitorBypass";
   import { friendlyError } from "./errors";
   import AppPicker from "./AppPicker.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
@@ -72,7 +78,7 @@
   // P2-N:刪除確認(track/plugin);系統輸出軌不可刪(engine 權威)
   let confirmBox = $state<{ title: string; impact: string[]; confirmLabel: string } | null>(null);
   let pendingDelete: (() => void) | null = null;
-  let pendingMonitorIds = $state<Set<number>>(new Set());
+  let monitorBypassTransactions = $state<MonitorBypassTransactions>(new Map());
   let pendingLatencyPolicy = $state(false);
   // P1-C:app 軌程序選擇器(needsRebind / 程序死亡重綁)
   let pickerOpen = $state(false);
@@ -381,20 +387,26 @@
   }
 
   async function monitorBypass(slot: RackSlot) {
-    if (pendingMonitorIds.has(slot.instanceId)) return;
+    const request = beginMonitorBypass(
+      monitorBypassTransactions,
+      slot.instanceId,
+      slot.monitorBypassed ?? false,
+    );
+    if (!request.command) return;
     err = "";
-    pendingMonitorIds = new Set(pendingMonitorIds).add(slot.instanceId);
+    monitorBypassTransactions = request.transactions;
+    let outcome: "confirmed" | "rejected" = "confirmed";
     try {
-      await engineCommand("set_monitor_bypass", {
-        instanceId: slot.instanceId,
-        bypassed: !slot.monitorBypassed,
-      });
+      await engineCommand("set_monitor_bypass", request.command);
     } catch (e) {
+      outcome = "rejected";
       err = friendlyError(String(e)).friendly;
     } finally {
-      const next = new Set(pendingMonitorIds);
-      next.delete(slot.instanceId);
-      pendingMonitorIds = next;
+      monitorBypassTransactions = finishMonitorBypass(
+        monitorBypassTransactions,
+        slot.instanceId,
+        outcome,
+      ).transactions;
     }
   }
 
@@ -573,13 +585,13 @@
       if (i >= lanePeers.length - 1) return;
       pos = i + 2; // 插到下一條之後(erase 補回後 = i+1)
     }
-    const masterIdx = laneDropToMasterIndex(
+    const reordered = reorderLane(
+      tracks.map((t) => t.trackId),
+      lanePeers.map((t) => t.trackId),
+      track.trackId,
       pos,
-      i,
-      (laneIdx) => tracks.findIndex((t) => t.trackId === lanePeers[laneIdx].trackId),
-      lanePeers.length,
-      tracks.length,
     );
+    const masterIdx = reordered.indexOf(track.trackId);
     err = "";
     mq.run(mutKey.track(track.trackId), "move", () =>
       engineCommand("track_move", { trackId: track.trackId, newIndex: masterIdx }),
@@ -921,19 +933,19 @@
                 <button
                   class="mini plugicon monitor-bypass"
                   class:on={s.monitorBypassed}
-                  class:pending={pendingMonitorIds.has(s.instanceId)}
-                  disabled={pendingMonitorIds.has(s.instanceId)}
+                  class:pending={isMonitorBypassPending(monitorBypassTransactions, s.instanceId)}
+                  disabled={isMonitorBypassPending(monitorBypassTransactions, s.instanceId)}
                   onclick={() => void monitorBypass(s)}
                   aria-pressed={s.monitorBypassed ?? false}
                   aria-label={s.monitorBypassed
                     ? `取消 ${s.name} 的 Monitor Bypass`
                     : `啟用 ${s.name} 的 Monitor Bypass`}
-                  data-tooltip={pendingMonitorIds.has(s.instanceId)
+                  data-tooltip={isMonitorBypassPending(monitorBypassTransactions, s.instanceId)
                     ? "正在建立或同步 Monitor Shadow；engine 確認前不改變目前狀態。"
                     : s.monitorBypassed
                     ? "Monitor Bypass 已啟用：Low-Latency Outputs 略過此 plugin；右鍵選單也可取消。"
                     : "只讓 Low-Latency Outputs 略過此 plugin；Stream 的完整處理不受影響，右鍵選單也可切換。"}
-                  >{pendingMonitorIds.has(s.instanceId) ? "…" : "M"}</button
+                  >{isMonitorBypassPending(monitorBypassTransactions, s.instanceId) ? "…" : "M"}</button
                 >
               {/if}
               <button

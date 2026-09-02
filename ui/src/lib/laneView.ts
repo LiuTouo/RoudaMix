@@ -58,21 +58,3 @@ export function dropPosFromX(
   }
   return count;
 }
-
-/** P1-N 刪除確認用:master 絕對索引( lane 相對位置 → tracks 陣列索引)。
- *  帶內拖放語意:pos >= arrLen = 插在帶內最後一條之後;pos > dragIdx = 先移除
- *  造成的左移要補回(與 App 原邏輯相同,抽成純函式可測)。 */
-export function laneDropToMasterIndex(
-  pos: number,
-  dragIdx: number,
-  idToMasterIdx: (laneIdx: number) => number,
-  laneLen: number,
-  masterLen: number,
-): number {
-  let target =
-    pos >= laneLen
-      ? idToMasterIdx(laneLen - 1) + 1
-      : idToMasterIdx(pos);
-  if (pos > dragIdx) target -= 1;
-  return Math.max(0, Math.min(target, masterLen - 1));
-}

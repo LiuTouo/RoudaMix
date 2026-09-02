@@ -11,11 +11,24 @@
   import LatencyDrawer from "./lib/LatencyDrawer.svelte";
   import ContextMenu from "./lib/ContextMenu.svelte";
   import { mountDragGhost, removeDragGhost } from "./lib/ghost";
-  import { isDirty, resolveDirtyChoice, type DirtyChoice } from "./lib/dirty";
+  import {
+    initialRevisionDirty,
+    isRevisionDirty,
+    resolveDirtyChoice,
+    transitionRevisionDirty,
+    type DirtyChoice,
+    type RevisionDirtyState,
+  } from "./lib/revisionDirty";
   import { connView, epochChanged } from "./lib/connPhase";
   import { friendlyError, OverloadDetector } from "./lib/errors";
-  import { visibleRange, spacerWidths, dropPosFromX, laneDropToMasterIndex } from "./lib/laneView";
-  import { matchScanJob } from "./lib/scanFlow";
+  import { visibleRange, spacerWidths, dropPosFromX } from "./lib/laneView";
+  import { reorderLane } from "./lib/laneOrder";
+  import {
+    initialScanJob,
+    isScanJobRunning,
+    transitionScanJob,
+    type ScanJobState,
+  } from "./lib/scanJob";
   import {
     connectStatus,
     onConnection,
@@ -165,18 +178,30 @@
     menu = { x, y, label, items };
   }
   // ---- B:authoritative dirty(engine revision vs 上次存/載基準)----
-  let revision = $state<number | null>(null); // engine 權威版號(status/snapshot/reply 帶回)
-  let cleanRevision = $state<number | null>(null); // 上次成功存/載當下的 revision
+  let revisionDirty = $state<RevisionDirtyState>(initialRevisionDirty());
   let currentSessionPath: string | null = null; // 本次實際載入/儲存的檔案；不可用「最近 Session」替代
-  const dirty = $derived(revision !== null && cleanRevision !== null && revision !== cleanRevision);
+  const dirty = $derived(isRevisionDirty(revisionDirty));
+  function observeEngineRevision(value: unknown): void {
+    if (typeof value !== "number") return;
+    revisionDirty = transitionRevisionDirty(revisionDirty, {
+      type: "engineRevisionObserved",
+      revision: value,
+    });
+  }
+  function confirmRevisionBaseline(value: unknown): void {
+    if (typeof value !== "number") return;
+    revisionDirty = transitionRevisionDirty(revisionDirty, {
+      type: "baselineConfirmed",
+      revision: value,
+    });
+  }
   // ---- E:背景掃描 job(共用 registry,所有軌共用一份清單)----
   let scanModules = $state<ScanModule[]>([]);
   let scanFailed = $state<ScanFailure[]>([]);
-  let scanJobId = $state<number | null>(null);
-  let scanRunning = $state(false);
-  let scanRequestPending = false;
-  let scanProgress = $state<{ done: number; total: number } | null>(null);
-  let scanNotice = $state("");
+  let scanJob = $state<ScanJobState<ScanModule, ScanFailure>>(initialScanJob());
+  const scanRunning = $derived(isScanJobRunning(scanJob));
+  const scanProgress = $derived(scanJob.progress);
+  const scanNotice = $derived(scanJob.error);
   // ---- A:load_session 的 missing diagnostics 摘要(頂欄)----
   let missing = $state<MissingPlugin[]>([]);
   // ---- B:未儲存變更三分支 dialog ----
@@ -253,9 +278,8 @@
           ensuredDefaults = false;
           restoreP = null;
           currentSessionPath = null; // 新 engine 尚未成功恢復任何檔案，不得覆寫上一代 Session
-          scanJobId = null;
-          scanRunning = false;
-          scanRequestPending = false;
+          revisionDirty = transitionRevisionDirty(revisionDirty, { type: "reset" });
+          scanJob = transitionScanJob(scanJob, { type: "reset" }).state;
         }
         conn = c;
         if (c.connected && devices.length === 0) void refreshDevices();
@@ -267,7 +291,7 @@
         status = s.status;
         latencyEnabled = s.capabilities?.includes("pluginLatencyPdcV1") ?? false;
         observeLatencyRuntime(s.status.tracks);
-        if (typeof s.status.revision === "number") revision = s.status.revision;
+        observeEngineRevision(s.status.revision);
         // 全域 plugin registry 重連也對齊(不用重新掃);掃描進行中不覆寫
         if (!scanRunning && Array.isArray(s.lastScan)) {
           scanModules = s.lastScan as ScanModule[];
@@ -281,7 +305,7 @@
         if (kind === "status") {
           status = payload as EngineStatus;
           const st = payload as EngineStatus;
-          if (typeof st.revision === "number") revision = st.revision;
+          observeEngineRevision(st.revision);
           observeLatencyRuntime(st.tracks);
           // stream 狀態的權威對齊:engine 跑著時 UI 選擇跟著實際值(失敗回滾後也正確)
           if (st.running && st.deviceKey) selected = st.deviceKey;
@@ -293,17 +317,25 @@
         // ---- E:掃描 job events(jobId 不符 = 上一代的 late event,忽略)----
         if (kind === "scan_progress") {
           const p = payload as { jobId: number; done: number; total: number };
-          if (acceptScanEvent(p.jobId))
-            scanProgress = { done: p.done, total: p.total };
+          scanJob = transitionScanJob(scanJob, {
+            type: "progress",
+            jobId: p.jobId,
+            done: p.done,
+            total: p.total,
+          }).state;
         }
         if (kind === "scan_done") {
           const p = payload as { jobId: number; plugins: ScanModule[]; failed: ScanFailure[] };
-          if (acceptScanEvent(p.jobId)) {
-            scanModules = p.plugins ?? [];
-            scanFailed = p.failed ?? [];
-            scanRunning = false;
-            scanRequestPending = false;
-            scanProgress = null;
+          const transition = transitionScanJob(scanJob, {
+            type: "completed",
+            jobId: p.jobId,
+            modules: p.plugins ?? [],
+            failures: p.failed ?? [],
+          });
+          scanJob = transition.state;
+          if (transition.accepted && transition.state.result?.outcome === "success") {
+            scanModules = transition.state.result.modules;
+            scanFailed = transition.state.result.failures;
             addNotice(
               "info",
               `VST 清單已更新：${scanModules.length} 個模組${scanFailed.length ? `，${scanFailed.length} 個無法載入` : ""}`,
@@ -314,20 +346,24 @@
         }
         if (kind === "scan_failed") {
           const p = payload as { jobId: number; error: string };
-          if (acceptScanEvent(p.jobId)) {
-            scanNotice = p.error;
-            scanRunning = false;
-            scanRequestPending = false;
-            scanProgress = null;
+          const transition = transitionScanJob(scanJob, {
+            type: "failed",
+            jobId: p.jobId,
+            error: p.error,
+          });
+          scanJob = transition.state;
+          if (transition.accepted) {
             addNotice("error", "VST 掃描失敗，已保留原清單", p.error);
           }
         }
         if (kind === "scan_cancelled") {
           const p = payload as { jobId: number };
-          if (acceptScanEvent(p.jobId)) {
-            scanRunning = false;
-            scanRequestPending = false;
-            scanProgress = null;
+          const transition = transitionScanJob(scanJob, {
+            type: "cancelled",
+            jobId: p.jobId,
+          });
+          scanJob = transition.state;
+          if (transition.accepted) {
             addNotice("info", "VST 掃描已取消，已保留原清單");
           }
         }
@@ -366,7 +402,7 @@
       status = s.status;
       latencyEnabled = s.capabilities?.includes("pluginLatencyPdcV1") ?? false;
       observeLatencyRuntime(s.status.tracks);
-      if (typeof s.status.revision === "number") revision = s.status.revision;
+      observeEngineRevision(s.status.revision);
       if (!scanRunning && Array.isArray(s.lastScan)) scanModules = s.lastScan;
       connProbeErr = null;
       // 每次程式啟動主動跑一次；持久 fingerprint 讓未變更 VST 不重新載入。
@@ -485,7 +521,7 @@
         sampleRate: status?.running ? Math.round(status.sampleRate) : null,
         bufferSize: status?.running ? status.bufferSize : bufSize,
       });
-      if (typeof r.revision === "number") cleanRevision = r.revision;
+      confirmRevisionBaseline(r.revision);
       currentSessionPath = path;
       rememberLastSession(path);
       notice = "";
@@ -571,7 +607,7 @@
     try {
       const r = await engineCommand("ensure_system_outputs", {});
       // 新空白場景的系統輸出 = 基準狀態,不算使用者未存變更
-      if (typeof r.revision === "number") cleanRevision = r.revision;
+      confirmRevisionBaseline(r.revision);
     } catch {
       // 連線競態:失敗就等下一個 status 事件再試
       ensuredDefaults = false;
@@ -775,30 +811,24 @@
 
   // ---- E:背景掃描 job(共用 registry;回覆立即回 jobId,進度走 events)----
 
-  function acceptScanEvent(jobId: number): boolean {
-    const match = matchScanJob(scanJobId, scanRequestPending, jobId);
-    scanJobId = match.jobId;
-    return match.matches;
-  }
-
   async function startScan(): Promise<boolean> {
-    if (scanRunning || scanRequestPending) return false;
-    scanNotice = "";
-    scanJobId = null;
-    scanRunning = true;
-    scanRequestPending = true;
-    scanProgress = null;
+    const started = transitionScanJob(scanJob, { type: "startRequested" });
+    if (!started.accepted) return false;
+    scanJob = started.state;
     try {
       const r = await engineCommand("start_scan", {});
-      if (scanJobId === null) scanJobId = r.jobId as number;
-      scanRequestPending = false;
+      scanJob = transitionScanJob(scanJob, {
+        type: "startConfirmed",
+        jobId: r.jobId as number,
+      }).state;
       return true;
     } catch (e) {
-      scanNotice = String(e);
-      scanRunning = false;
-      scanRequestPending = false;
-      scanJobId = null;
-      addNotice("error", "無法開始 VST 掃描", scanNotice);
+      const message = String(e);
+      scanJob = transitionScanJob(scanJob, {
+        type: "startRejected",
+        error: message,
+      }).state;
+      addNotice("error", "無法開始 VST 掃描", message);
       return false;
     }
   }
@@ -808,8 +838,12 @@
     try {
       await engineCommand("cancel_scan", {});
     } catch (e) {
-      scanNotice = String(e);
-      addNotice("error", "無法取消 VST 掃描", scanNotice);
+      const message = String(e);
+      scanJob = transitionScanJob(scanJob, {
+        type: "cancelRejected",
+        error: message,
+      }).state;
+      addNotice("error", "無法取消 VST 掃描", message);
     }
   }
 
@@ -895,14 +929,13 @@
       const dragIdx = arr.findIndex((t) => t.trackId === drag!.id);
       if (dragIdx >= 0) {
         const pos = lanePos(e.currentTarget as HTMLElement, e.clientX, arr.length);
-        // lane 位置 → master 絕對索引(erase+insert 左移補回;純函式可測)
-        const target = laneDropToMasterIndex(
+        const reordered = reorderLane(
+          tracks.map((t) => t.trackId),
+          arr.map((t) => t.trackId),
+          drag.id,
           pos,
-          dragIdx,
-          (laneIdx) => tracks.findIndex((t) => t.trackId === arr[laneIdx].trackId),
-          arr.length,
-          tracks.length,
         );
+        const target = reordered.indexOf(drag.id);
         engineCommand("track_move", { trackId: drag.id, newIndex: target }).catch(() => {});
       }
       drag = null;
@@ -931,7 +964,7 @@
         sampleRate: status?.running ? Math.round(status.sampleRate) : null,
         bufferSize: status?.running ? status.bufferSize : bufSize,
       });
-      if (typeof r.revision === "number") cleanRevision = r.revision; // 存成功才清 dirty
+      confirmRevisionBaseline(r.revision); // 存成功才清 dirty
       currentSessionPath = path;
       rememberLastSession(path);
       notice = "";
@@ -970,7 +1003,7 @@
 
   // session 載入後套裝置 + 自動啟用(率跟 driver 現行值);跑著時 = 重建到 session 裝置
   function applyLoadedSession(r: Record<string, unknown>) {
-    if (typeof r.revision === "number") cleanRevision = r.revision; // 載成功才清 dirty
+    confirmRevisionBaseline(r.revision); // 載成功才清 dirty
     missing = (r.missing as MissingPlugin[]) ?? [];
     const dk = r.deviceKey as string | null;
     if (dk && devices.some((d) => d.deviceKey === dk)) {
