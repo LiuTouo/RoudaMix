@@ -12,6 +12,8 @@
 #include <vector>
 
 #include "vst3_host.hpp"
+#include "pdc_delay_line.hpp"
+#include "route_planner.hpp"
 
 namespace rmx {
 
@@ -57,13 +59,27 @@ struct RackSlot {
     // module 消失/壞檔/worker 不在 → 保留原位置與 metadata(params/bypass),
     // 不參與 DSP(等同 bypass);可 retry 載回同一 instanceId。
     enum class Availability : std::uint8_t { kOk, kMissing, kLoadFailed };
+    using RuntimeState = RouteRuntimeState;
     std::uint32_t instance_id{};
     std::string name;  // UI 顯示(class name;placeholder 時 = session 存的名字)
     std::string module_path;
     std::string class_id;
     bool bypass{};
+    bool monitor_bypass{};  // 只略過 Low-Latency Outputs；Session v3 持久化
+    std::uint64_t latency_samples{};  // processor runtime 宣告；samples 為權威
+    bool latency_known{};             // placeholder/未載入 = false
+    std::uint64_t monitor_latency_samples{};
+    bool monitor_latency_known{};
+    RuntimeState primary_state{RuntimeState::kActive};
+    RuntimeState monitor_state{RuntimeState::kActive};
+    std::uint32_t primary_cpu_index{0xFFFFFFFFu};
+    std::uint32_t shadow_cpu_index{0xFFFFFFFFu};
+    std::shared_ptr<PdcDelayLine> primary_dry_delay;
+    std::shared_ptr<PdcDelayLine> shadow_dry_delay;
     std::shared_ptr<Vst3Plugin> plugin;                    // 鏈 snapshot 間共用;placeholder = null
     std::shared_ptr<ParamRing> ring{std::make_shared<ParamRing>()};
+    std::shared_ptr<Vst3Plugin> monitor_shadow;            // low-latency 分岔後的獨立 processor
+    std::shared_ptr<ParamRing> monitor_ring{std::make_shared<ParamRing>()};
     // host 端參數權威值(control 讀寫;VST3 host 設值不反映到 controller)
     std::vector<std::pair<std::uint32_t, double>> param_values;
     Availability availability{Availability::kOk};
@@ -73,6 +89,16 @@ struct RackSlot {
         return plugin == nullptr && availability != Availability::kOk;
     }
 };
+
+inline const char* runtime_state_str(RackSlot::RuntimeState state) noexcept {
+    switch (state) {
+        case RackSlot::RuntimeState::kPreparing: return "preparing";
+        case RackSlot::RuntimeState::kDegraded: return "degraded";
+        case RackSlot::RuntimeState::kSuspended: return "suspended";
+        case RackSlot::RuntimeState::kActive: return "active";
+    }
+    return "active";
+}
 
 // JSON 字串(protocol/session 共用;"ok"|"missing"|"loadFailed")
 inline const char* availability_str(RackSlot::Availability a) noexcept {

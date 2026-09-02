@@ -11,6 +11,9 @@
 #include <vector>
 
 #include "rack.hpp"
+#include "pdc_delay_line.hpp"
+#include "route_planner.hpp"
+#include "rt_crossfade.hpp"
 
 namespace rmx {
 
@@ -68,8 +71,14 @@ struct TrackOutput {
 struct TrackRt {
     float in[2][kMaxBlockFrames]{};
     float alt[2][kMaxBlockFrames]{};
+    float monitor_in[2][kMaxBlockFrames]{};
+    float monitor_alt[2][kMaxBlockFrames]{};
+    float dry[2][kMaxBlockFrames]{};
+    float monitor_dry[2][kMaxBlockFrames]{};
     float gain_state{1.0F};
+    float monitor_gain_state{1.0F};
     std::uint64_t sine_phase{};
+    RtCrossfade monitor_crossfade;
 };
 
 constexpr std::uint32_t kNoStrip = 0xFFFFFFFFu;  // 超出 telemetry 預算 = 沒有錶
@@ -79,6 +88,7 @@ struct TrackNode {
     std::uint32_t track_id{};
     TrackKind kind{TrackKind::kAudio};
     SystemRole system_role{SystemRole::kNone};  // 系統輸出角色(monitor/stream 軌不可刪)
+    OutputLatencyPolicy latency_policy{OutputLatencyPolicy::kFullPdc};
     std::string name;
     std::uint32_t color{};  // 0xRRGGBB
     std::vector<RackSlot> chain;  // plugin/ring shared_ptr 與 master 共用
@@ -93,6 +103,7 @@ struct TrackNode {
     std::int32_t out_l{-1}, out_r{-1};
     std::uint32_t track_strip{kNoStrip};       // telemetry strip(軌)
     std::vector<std::uint32_t> chain_strips;   // 平行於 chain(plugin 錶)
+    std::vector<std::shared_ptr<PdcDelayLine>> dest_pdc;  // 平行於 dests；primary only
     std::shared_ptr<TrackRt> buf;
     std::shared_ptr<AppCapture> capture;  // M5b:app 軌的 loopback pump(master 與 snapshot 共用)
     std::shared_ptr<RenderSink> render;   // M5c:串流軌的 wasapi render pump
@@ -103,6 +114,7 @@ struct TrackGraph {
     std::vector<TrackNode> nodes;       // master 順序 = UI 欄內順序
     std::vector<std::uint32_t> order;   // 拓撲序的 node index(RT 照跑);有環時 = master 序 fallback
     std::vector<std::uint32_t> id_index;  // trackId → node index(kNoStrip = 無此 id;RT dest sum 查表)
+    RoutePlan route_plan;                 // control thread 規劃；RT 只讀
 };
 
 // 拓撲排序(Kahn,對 dests 數邊)。有環時回傳 fallback = master 序(防禦:

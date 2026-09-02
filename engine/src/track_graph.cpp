@@ -103,6 +103,7 @@ bool ensure_system_outputs(std::vector<TrackNode>& tracks, std::uint32_t& next_t
                 holder = i;
             } else {
                 tracks[i].system_role = SystemRole::kNone;  // 重複 role:留第一個
+                tracks[i].latency_policy = OutputLatencyPolicy::kFullPdc;
                 changed = true;
             }
             ++seen;
@@ -112,6 +113,9 @@ bool ensure_system_outputs(std::vector<TrackNode>& tracks, std::uint32_t& next_t
             if (tracks[i].kind != TrackKind::kOutput || tracks[i].system_role != SystemRole::kNone)
                 continue;
             tracks[i].system_role = role;
+            tracks[i].latency_policy =
+                role == SystemRole::kMonitor ? OutputLatencyPolicy::kLowLatency
+                                              : OutputLatencyPolicy::kFullPdc;
             holder = i;
             changed = true;
             break;
@@ -121,6 +125,8 @@ bool ensure_system_outputs(std::vector<TrackNode>& tracks, std::uint32_t& next_t
         TrackNode t;
         t.kind = TrackKind::kOutput;
         t.system_role = role;
+        t.latency_policy = role == SystemRole::kMonitor ? OutputLatencyPolicy::kLowLatency
+                                                        : OutputLatencyPolicy::kFullPdc;
         t.track_id = next_track_id++;
         t.name = role == SystemRole::kMonitor ? "監聽" : "串流";
         static constexpr std::uint32_t kPalette[] = {0x4da3ff, 0x3ddc84, 0xffb454, 0xff5c5c,

@@ -6,6 +6,8 @@
 # 皆失效或擋掉 tauri.localhost 導覽,故改用 Edge headless + stub(不驗原生橋;
 # 原生橋由 m5a-engine-tracks.ps1 對真 engine 全套驗證)。
 # Any failure = throw (nonzero exit); all pass = SMOKE PASSED.
+param([switch]$SaveOnly)
+
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $protocolContractJson = Get-Content -Raw (Join-Path $root 'contracts\command_contract.json')
@@ -104,7 +106,9 @@ window.__engine = {
   status: function () {
     return { running: true, deviceKey: 'dev1', sampleRate: 48000, bufferSize: 512,
       inputLatency: 10, outputLatency: 12, xruns: 0, trackCount: this.tracks.length,
-      pluginFails: 0, tracks: JSON.parse(JSON.stringify(this.tracks)), error: null };
+      pluginFails: 0, latencyGeneration: 1,
+      pluginDelay: { monitorSamples: 0, streamSamples: 0 },
+      tracks: JSON.parse(JSON.stringify(this.tracks)), error: null };
   },
   emit: function () {
     // 對齊真 bridge:engine-event 的 payload = { kind, payload }
@@ -118,8 +122,15 @@ window.__engine = {
     __validateEngineCommand(kind, p);
     this.commands.push(kind);
     switch (kind) {
-      case 'engine_command': return 'NEVER';
-      case 'get_snapshot': return { snapshot: { epoch: 1, engineVersion: 'stub', status: this.status(), tracks: this.tracks } };
+      case 'get_snapshot': return { snapshot: { epoch: 1, engineVersion: 'stub',
+        capabilities: ['pluginLatencyPdcV1'], status: this.status(), tracks: this.tracks,
+        lastScan: [{ path: 'C:/VST3/LoudMax.vst3', classes: [{ uid: 'uid1', name: 'LoudMax', vendor: 'v', version: '1', subcategories: 'Fx' }] }] } };
+      case 'get_latency_report': return { report: { generation: 1, ok: true, error: 'none',
+        bufferBytes: 0,
+        outputs: this.tracks.filter(t => t.kind === 'output').map(t => ({ trackId: t.trackId,
+          totalPluginDelaySamples: 0, compensationDelaySamples: 0,
+          synchronized: t.latencyPolicy !== 'lowLatency' })),
+        edges: [], tracks: JSON.parse(JSON.stringify(this.tracks)) } };
       case 'list_devices': return { devices: this.devices };
       case 'track_add': {
         const t = { trackId: this.nextTrackId++, kind: p.kind, name: p.name || p.kind + ' ' + (this.nextTrackId - 1),
@@ -157,16 +168,41 @@ window.__engine = {
         this.tracks.splice(Math.min(p.newIndex, this.tracks.length), 0, t);
         this.emit(); return { tracks: this.tracks };
       }
-      case 'scan_plugins': {
-        return { plugins: [{ path: 'C:/VST3/LoudMax.vst3', classes: [{ uid: 'uid1', name: 'LoudMax', vendor: 'v', version: '1', subcategories: 'Fx' }] }] };
+      case 'ensure_system_outputs': {
+        const roles = new Set(this.tracks.map(t => t.systemRole).filter(Boolean));
+        for (const role of ['monitor', 'stream']) {
+          if (roles.has(role)) continue;
+          this.tracks.push({ trackId: this.nextTrackId++, kind: 'output', systemRole: role,
+            latencyPolicy: role === 'monitor' ? 'lowLatency' : 'fullPdc',
+            name: role === 'monitor' ? '監聽' : '串流', color: 0x4da3ff,
+            source: null, dests: [], output: null, gain: 1, mute: false, plugins: [] });
+        }
+        this.emit(); return { tracks: this.tracks, revision: 0 };
+      }
+      case 'save_session': return { savedPath: p.path, revision: 0 };
+      case 'start_scan': {
+        const jobId = 1;
+        setTimeout(() => {
+          const payload = { jobId, plugins: [{ path: 'C:/VST3/LoudMax.vst3', classes: [{ uid: 'uid1', name: 'LoudMax', vendor: 'v', version: '1', subcategories: 'Fx' }] }], failed: [] };
+          const wrapped = { event: 'engine-event', payload: { kind: 'scan_done', payload } };
+          for (const fn of this.listeners['engine-event'] || []) try { fn(wrapped); } catch (e) {}
+        }, 10);
+        return { jobId, reused: false };
       }
       case 'add_plugin': {
         const t = this.tracks.find(t => t.trackId === p.trackId);
-        t.plugins.push({ instanceId: this.nextInst++, name: 'LoudMax', pluginPath: p.path, classId: p.classId, bypassed: false, params: [] });
+        t.plugins.push({ instanceId: this.nextInst++, name: 'LoudMax', pluginPath: p.path,
+          classId: p.classId, bypassed: false, monitorBypassed: false,
+          latencySamples: 0, effectiveLatencySamples: 0, monitorLatencySamples: null,
+          runtimeState: 'active', monitorState: 'active', availability: 'ok', params: [] });
         this.emit(); return { instanceId: this.nextInst - 1, trackId: p.trackId, tracks: this.tracks };
       }
       case 'set_bypass': {
         for (const t of this.tracks) for (const pl of t.plugins) if (pl.instanceId === p.instanceId) pl.bypassed = p.bypassed;
+        this.emit(); return { tracks: this.tracks };
+      }
+      case 'set_monitor_bypass': {
+        for (const t of this.tracks) for (const pl of t.plugins) if (pl.instanceId === p.instanceId) pl.monitorBypassed = p.bypassed;
         this.emit(); return { tracks: this.tracks };
       }
       case 'move_plugin': {
@@ -192,9 +228,30 @@ window.__TAURI_INTERNALS__ = {
       return Promise.resolve(r);
     }
     if (cmd === 'connect_status') return Promise.resolve({ connected: true, epoch: 1, engineVersion: 'stub' });
+    if (cmd === 'get_settings') return Promise.resolve({ settings: { startupMode: 'blank',
+      sessionDir: null, startupFile: null, lastSessionPath: null,
+      lastWorkingDevice: null, lastWorkingBuffer: null, closeBehavior: 'exit',
+      startMinimizedOnAutostart: false }, warnings: [] });
+    if (cmd === 'set_settings') return Promise.resolve({ settings: args.patch || {}, warnings: [] });
+    if (cmd === 'plugin:dialog|save') return Promise.resolve('C:/Temp/ui-save-smoke.rmsession');
     if (cmd === 'plugin:event|listen') {
       const ev = args.event; const id = Math.random();
       (window.__engine.listeners[ev] = window.__engine.listeners[ev] || []).push(args.handler);
+      if (ev === 'meters') {
+        clearInterval(window.__meterTimer);
+        let sequence = 0;
+        window.__meterTimer = setInterval(() => {
+          args.handler({ event: ev, payload: { sequence: ++sequence, xruns: 0,
+            callbackLoad: 0.2, sampleRate: 48000, bufferSize: 512,
+            inputLatency: 10, outputLatency: 12, strips: [], spectrum: null,
+            pluginLoads: [{ instanceId: 1, variant: 0, processLoad: 0.05 }] } });
+        }, 33);
+      }
+      if (ev === 'engine-connection') {
+        setTimeout(() => {
+          try { args.handler({ event: ev, payload: { connected: true, phase: 'ready', epoch: 1, engineVersion: 'stub' } }); } catch (e) {}
+        }, 0);
+      }
       // 對齊真 bridge:連線建立時推一次 snapshot
       if (ev === 'engine-snapshot') {
         setTimeout(() => {
@@ -242,6 +299,24 @@ console.log('__engine_status__ stub installed');
     Assert ($names.length -eq 2) 'two output track names'
     Write-Host "defaults: $strips output tracks ($($names -join ', '))"
 
+    # --- 4a. capability 啟用：Latency Drawer 可單擊開關，且不攔截後續控制 ---
+    $drawer = EvalJs "(async () => { const b = [...document.querySelectorAll('header button')].find(x => x.textContent.includes('plug M')); if (!b) return { button: false }; b.click(); await new Promise(r => setTimeout(r, 100)); const opened = !!document.querySelector('.latency-drawer'); document.querySelector('.latency-drawer .dialog-close')?.click(); await new Promise(r => setTimeout(r, 50)); return { button: true, opened, closed: !document.querySelector('.latency-drawer') }; })()" 5000
+    Assert ($drawer.button -and $drawer.opened -and $drawer.closed) "latency drawer opens and closes without blocking UI"
+    Write-Host "latency drawer: open/close and report refresh OK"
+
+    # --- 4b. 全域 Ctrl+S:save dialog → save_session，且只送一次 ---
+    $saveCount = EvalJs "(async () => { const before = window.__engine.commands.filter(x => x === 'save_session').length; window.dispatchEvent(new KeyboardEvent('keydown', { key: 's', ctrlKey: true, bubbles: true })); await new Promise(r => setTimeout(r, 250)); return window.__engine.commands.filter(x => x === 'save_session').length - before; })()" 5000
+    Assert ($saveCount -eq 1) "Ctrl+S sends exactly one save_session command (got $saveCount)"
+    Write-Host "global save: Ctrl+S save_session=$saveCount"
+    $buttonSaveCount = EvalJs "(async () => { const before = window.__engine.commands.filter(x => x === 'save_session').length; [...document.querySelectorAll('header button')].find(x => x.textContent.trim() === '設定').click(); await new Promise(r => setTimeout(r, 50)); [...document.querySelectorAll('.settingsdlg button')].find(x => x.textContent.trim() === '儲存 Session').click(); await new Promise(r => setTimeout(r, 250)); return window.__engine.commands.filter(x => x === 'save_session').length - before; })()" 5000
+    Assert ($buttonSaveCount -eq 1) "settings save button sends exactly one save_session command (got $buttonSaveCount)"
+    [void](EvalJs "document.querySelector('.settingsdlg').close()" 5000)
+    Write-Host "global save: settings button save_session=$buttonSaveCount"
+    if ($SaveOnly) {
+        Write-Host 'GLOBAL SAVE SMOKE PASSED'
+        return
+    }
+
     # --- 5. + Audio / + FX 新增 ---
     [void](EvalJs "(() => { const b = [...document.querySelector('.colhead').querySelectorAll('button')].find(x => !x.disabled); b.click(); return b.textContent; })()" 5000)
     Start-Sleep -Milliseconds 500
@@ -257,15 +332,18 @@ console.log('__engine_status__ stub installed');
     Write-Host "add: audio + fx via UI (total $($counts.all))"
 
     # --- 6. audio 軌:來源選 asioIn pair ---
-    [void](EvalJs @"
+    $sourcePick = EvalJs @"
 (() => {
-  const s = document.querySelector('.strip select');
-  if (!s || s.options.length < 3) return false;
+  const id = window.__engine.tracks.find(t => t.kind === 'audio').trackId;
+  const s = document.querySelector('.strip[data-track-id="' + id + '"] select');
+  if (!s || s.options.length < 3) return { found: !!s, options: s ? s.options.length : 0, disabled: s ? s.disabled : null };
   s.value = s.options[2].value; // 3/4(第二組 pair,channel 2)
   s.dispatchEvent(new Event('change', { bubbles: true }));
-  return true;
+  return { found: true, options: s.options.length, disabled: s.disabled, value: s.value };
 })()
-"@ 5000)
+"@ 5000
+    Assert ($sourcePick.found) "audio source selector exists"
+    Assert ($sourcePick.options -ge 3) "audio source selector has ASIO pairs (options=$($sourcePick.options), disabled=$($sourcePick.disabled))"
     Start-Sleep -Milliseconds 600
     Write-Host "engine tracks: $(EvalJs 'JSON.stringify(window.__engine.tracks.map(t => ({id: t.trackId, kind: t.kind, src: t.source})))' 5000)"
     $src = EvalJs "window.__engine.tracks.find(t => t.kind === 'audio').source" 5000
@@ -295,8 +373,7 @@ console.log('__engine_status__ stub installed');
     Write-Host "routing: audio dests = $($dests.length) tracks (dialog picker)"
 
     # --- 8. VST:掃描 → 置中 dialog 列表 → 加第一個 → 電源 bypass ---
-    [void](EvalJs "(() => { const d = document.querySelector('.strip details.vst'); d.open = true; return true; })()" 5000)
-    [void](EvalJs "(() => { const b = document.querySelector('.strip details.vst button.add'); b.click(); return true; })()" 5000)
+    [void](EvalJs "(() => { const b = document.querySelectorAll('.lanes')[0].querySelector('.strip .vst button.add'); b.click(); return true; })()" 5000)
     $dlg = $false
     for ($i = 0; $i -lt 20; $i++) {
         Start-Sleep -Milliseconds 400
@@ -323,7 +400,7 @@ console.log('__engine_status__ stub installed');
 
     # --- 8b. 第二顆插件 → 拖曳換序(move_plugin;▲▼ 已移除)---
     # 第一次 add 成功後 dialog 自動關 → 再點掃描重開
-    [void](EvalJs "(() => { document.querySelector('.strip details.vst button.add').click(); return true; })()" 5000)
+    [void](EvalJs "(() => { document.querySelectorAll('.lanes')[0].querySelector('.strip .vst button.add').click(); return true; })()" 5000)
     $dlg2 = $false
     for ($i = 0; $i -lt 20; $i++) {
         Start-Sleep -Milliseconds 400
@@ -351,8 +428,12 @@ console.log('__engine_status__ stub installed');
     $chain = EvalJs "window.__engine.tracks.find(t => t.kind === 'audio').plugins.map(p => p.instanceId)" 5000
     Assert ($chain[0] -eq 2) "plugin drag reorder (chain: $($chain -join ','))"
     $pbtns = EvalJs "document.querySelectorAll('.strip .plug')[0].querySelectorAll('button').length" 5000
-    Assert ($pbtns -eq 2) "plug row has only power+x buttons (got $pbtns)"
-    Write-Host "vst: drag reorder chain=[$($chain -join ',')]  row buttons=$pbtns (power+x)"
+    Assert ($pbtns -eq 3) "latency-enabled plug row has power+Monitor Bypass+x buttons (got $pbtns)"
+    [void](EvalJs "(() => { document.querySelectorAll('.strip .plug')[0].querySelector('.monitor-bypass').click(); return true; })()" 5000)
+    Start-Sleep -Milliseconds 300
+    $monitorBypassed = EvalJs "window.__engine.tracks.find(t => t.kind === 'audio').plugins[0].monitorBypassed" 5000
+    Assert ($monitorBypassed -eq $true) "Monitor Bypass button wired"
+    Write-Host "vst: drag reorder chain=[$($chain -join ',')]  row buttons=$pbtns + Monitor Bypass"
 
     # --- 9. 色盤 + 顏色條 + meter canvas + 推桿 ---
     $per = EvalJs "(() => ({ strips: document.querySelectorAll('.strip').length, colors: document.querySelectorAll('.strip input[type=color]').length, bars: document.querySelectorAll('.strip .colorbar').length, meters: document.querySelectorAll('.strip canvas').length, ranges: document.querySelectorAll('.strip input[type=range]').length }))()" 5000
@@ -387,7 +468,7 @@ console.log('__engine_status__ stub installed');
 "@ 5000
     Assert ($vert.wm -eq 'vertical-lr') "range vertical writing-mode (got $($vert.wm))"
     Assert ($vert.h -gt $vert.w) "range taller than wide (got $($vert.h)x$($vert.w))"
-    Assert ($vert.headBtns -eq 1) "head has only x button (got $($vert.headBtns))"
+    Assert ($vert.headBtns -eq 2) "head has semantic name + x buttons (got $($vert.headBtns))"
     Assert ($vert.draggable -eq $true) 'strip draggable for reorder'
     # ctrl+click = 重置 1.0(此時 gain 已被上段設 0.5)
     [void](EvalJs "(() => { const r = document.querySelector('.strip input[type=range]'); r.dispatchEvent(new MouseEvent('click', { ctrlKey: true, bubbles: true })); return true; })()" 5000)

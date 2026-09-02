@@ -135,7 +135,9 @@ void MeterAccumulator::compute_spectrum(float* out_db) noexcept {
 
 void MeterAccumulator::publish(TelemetryBlockShm& block, std::uint64_t xruns_total,
                                 const std::uint32_t* instance_ids, const std::uint8_t* kinds,
-                                std::size_t id_count, bool running) noexcept {
+                                std::size_t id_count, const std::uint32_t* plugin_ids,
+                                const std::uint32_t* plugin_variants,
+                                std::size_t plugin_count, bool running) noexcept {
     TelemetryBlockShm next{};
     next.magic = kTelemetryMagic;
     next.abi_version = kTelemetryAbiVersion;
@@ -147,20 +149,36 @@ void MeterAccumulator::publish(TelemetryBlockShm& block, std::uint64_t xruns_tot
     // callback load(P1-J):RT 端 __rdtsc 差累積(RT 開銷 = 一次 relaxed add),
     // 這裡以兩次 publish 之間的 TSC 差為分母 = audio thread 平均 CPU 佔比。
     // invariant TSC(現代 Windows x86 保證);比值不需絕對頻率校準。
+    const std::uint64_t tsc_now = __rdtsc();
+    const std::uint64_t tsc_delta = last_tsc_ != 0 && tsc_now > last_tsc_
+                                        ? tsc_now - last_tsc_
+                                        : 0;
     {
-        const std::uint64_t tsc_now = __rdtsc();
         const std::uint64_t busy_now = busy_cycles_.load(std::memory_order_relaxed);
         float load = 0.0F;
-        if (last_tsc_ != 0 && tsc_now > last_tsc_) {
+        if (tsc_delta > 0) {
             load = static_cast<float>(
                 static_cast<double>(busy_now - last_busy_snapshot_) /
-                static_cast<double>(tsc_now - last_tsc_));
+                static_cast<double>(tsc_delta));
             if (load < 0.0F) load = 0.0F;
             if (load > 2.0F) load = 2.0F;  // 量測雜訊夾限
         }
         next.callback_load = load;
         last_tsc_ = tsc_now;
         last_busy_snapshot_ = busy_now;
+    }
+    next.plugin_load_count = static_cast<std::uint32_t>(
+        plugin_count < kPluginLoadEntries ? plugin_count : kPluginLoadEntries);
+    for (std::size_t i = 0; i < next.plugin_load_count; ++i) {
+        const auto cycles_now = plugin_cycles_[i].load(std::memory_order_relaxed);
+        float load = 0.0F;
+        if (tsc_delta > 0)
+            load = static_cast<float>(static_cast<double>(cycles_now - last_plugin_snapshot_[i]) /
+                                      static_cast<double>(tsc_delta));
+        if (load < 0.0F) load = 0.0F;
+        if (load > 2.0F) load = 2.0F;
+        next.plugin_loads[i] = {plugin_ids[i], plugin_variants[i], load, 0.0F};
+        last_plugin_snapshot_[i] = cycles_now;
     }
     next.strip_count = static_cast<std::uint32_t>(id_count < kTelemetryStrips
                                                       ? id_count
@@ -203,6 +221,9 @@ void MeterAccumulator::publish(TelemetryBlockShm& block, std::uint64_t xruns_tot
     std::memcpy(block.strips, next.strips, sizeof(block.strips));
     std::memcpy(&block.spectrum_count, &next.spectrum_count,
                 sizeof(next.spectrum_count) + sizeof(next.spectrum_db));
+    std::memcpy(&block.plugin_load_count, &next.plugin_load_count,
+                sizeof(next.plugin_load_count) + sizeof(next.plugin_load_reserved) +
+                    sizeof(next.plugin_loads));
     std::atomic_thread_fence(std::memory_order_release);
     block.sequence = seq + 2;  // even
 }

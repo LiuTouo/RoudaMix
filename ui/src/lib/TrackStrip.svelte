@@ -1,12 +1,12 @@
 <script lang="ts">
   // 軌條:輸入/輸出軌共用。由上而下 = 名稱列 → 來源/輸出裝置 → 目的地多選 →
-  // VST 展開列表(電源=bypass、GUI 鈕、上→下=訊號序)→ 推桿+靜音 →
+  // VST 機架(電源=bypass、單擊名稱開 editor、上→下=訊號序)→ 推桿+靜音 →
   // 錶 → 底部顏色條。engine 溝通自含(ipc 直呼),App 只餵狀態。
   import MeterCanvas from "./MeterCanvas.svelte";
   import { powerOff, powerOn } from "./icons";
   import { mountDragGhost, removeDragGhost } from "./ghost";
   import { open as openFile } from "@tauri-apps/plugin-dialog";
-  import { engineCommand } from "./ipc";
+  import { engineCommand } from "./protocol-commands.generated";
   import { cssColor, parseColor, stripOfTrack } from "./tracks";
   import { MutationQueue, mutKey } from "./mutations";
   import { laneDropToMasterIndex } from "./laneView";
@@ -31,6 +31,7 @@
     selectedDeviceKey,
     strips,
     metered = true,
+    latencyEnabled = false,
     // 掃描 job 由 App 統一跑(共用 registry,所有軌同一份清單;進度/取消也在 App)
     scanModules = [],
     scanFailed = [],
@@ -49,6 +50,7 @@
     selectedDeviceKey: string;
     strips: MeterStrip[] | undefined;
     metered?: boolean;
+    latencyEnabled?: boolean;
     scanModules?: ScanModule[];
     scanFailed?: ScanFailure[];
     scanRunning?: boolean;
@@ -70,6 +72,8 @@
   // P2-N:刪除確認(track/plugin);系統輸出軌不可刪(engine 權威)
   let confirmBox = $state<{ title: string; impact: string[]; confirmLabel: string } | null>(null);
   let pendingDelete: (() => void) | null = null;
+  let pendingMonitorIds = $state<Set<number>>(new Set());
+  let pendingLatencyPolicy = $state(false);
   // P1-C:app 軌程序選擇器(needsRebind / 程序死亡重綁)
   let pickerOpen = $state(false);
 
@@ -376,6 +380,42 @@
     );
   }
 
+  async function monitorBypass(slot: RackSlot) {
+    if (pendingMonitorIds.has(slot.instanceId)) return;
+    err = "";
+    pendingMonitorIds = new Set(pendingMonitorIds).add(slot.instanceId);
+    try {
+      await engineCommand("set_monitor_bypass", {
+        instanceId: slot.instanceId,
+        bypassed: !slot.monitorBypassed,
+      });
+    } catch (e) {
+      err = friendlyError(String(e)).friendly;
+    } finally {
+      const next = new Set(pendingMonitorIds);
+      next.delete(slot.instanceId);
+      pendingMonitorIds = next;
+    }
+  }
+
+  async function setLatencyPolicy(
+    policy: "fullPdc" | "lowLatency",
+    select: HTMLSelectElement,
+  ) {
+    if (pendingLatencyPolicy) return;
+    err = "";
+    const previous = track.latencyPolicy ?? "fullPdc";
+    pendingLatencyPolicy = true;
+    try {
+      await engineCommand("track_set_latency_policy", { trackId: track.trackId, policy });
+    } catch (e) {
+      select.value = previous;
+      err = friendlyError(String(e)).friendly;
+    } finally {
+      pendingLatencyPolicy = false;
+    }
+  }
+
   // 開啟即忘:關閉由 plugin 原生視窗自己做(engine 端冪等)
   async function openEditor(slot: RackSlot) {
     err = "";
@@ -584,11 +624,16 @@
   function plugMenu(e: MouseEvent, slot: RackSlot) {
     const chain = track.plugins;
     const i = chain.findIndex((s) => s.instanceId === slot.instanceId);
-    openMenu(e.clientX, e.clientY, `Plugin「${slot.name}」排序`, [
+    openMenu(e.clientX, e.clientY, `Plugin「${slot.name}」操作`, [
+      { label: "編輯", disabled: isPh(slot), run: () => void openEditor(slot) },
       { label: "上移", disabled: i <= 0, run: () => plugMove(slot, "up") },
       { label: "下移", disabled: i >= chain.length - 1, run: () => plugMove(slot, "down") },
       { label: "移到最前", disabled: i <= 0, run: () => plugMove(slot, "first") },
       { label: "移到最後", disabled: i >= chain.length - 1, run: () => plugMove(slot, "last") },
+      // 右鍵選單也提供與 row 控制相同的 Monitor Bypass action。
+      ...(latencyEnabled
+        ? [{ label: slot.monitorBypassed ? "取消 Monitor Bypass" : "Monitor Bypass", run: () => monitorBypass(slot) }]
+        : []),
     ]);
   }
 </script>
@@ -646,6 +691,13 @@
       >
     {/if}
     <span class="badge">{track.kind}</span>
+    {#if latencyEnabled && isOutput && track.latencyPolicy === "lowLatency"}
+      <span
+        class="badge latency-low"
+        data-tooltip="Low-Latency Output 不加入 Compensation Delay，因此不保證平行輸入路徑同步。"
+        >LL</span
+      >
+    {/if}
     <span style="flex:1"></span>
     {#if track.systemRole}
       <!-- 系統輸出:每 session 恰好一條 monitor/stream,不可刪(engine 也擋) -->
@@ -750,6 +802,22 @@
           {/each}
         </optgroup>
       </select>
+      {#if latencyEnabled}
+        <select
+          class="latency-policy"
+          value={track.latencyPolicy ?? "fullPdc"}
+          disabled={pendingLatencyPolicy}
+          onchange={(e) => void setLatencyPolicy(
+            e.currentTarget.value as "fullPdc" | "lowLatency",
+            e.currentTarget,
+          )}
+          aria-label="輸出軌 {track.name} 的延遲政策"
+          data-tooltip="Full PDC 會對齊匯流分支；Low Latency 不加入 Compensation Delay，且不保證平行路徑同步。"
+        >
+          <option value="fullPdc">Full PDC</option>
+          <option value="lowLatency">Low Latency</option>
+        </select>
+      {/if}
     {/if}
   </div>
 
@@ -765,7 +833,7 @@
   <div class="vstcol">
   <div class="vst" bind:this={vstBox} style={boxH !== null ? `flex:0 0 auto; height:${boxH}px` : ""}>
     <div class="vsthead">
-      <span>插入 VST ({track.plugins.length})</span>
+      <span>VST 機架 ({track.plugins.length})</span>
     </div>
     <div class="vstlist">
       {#each track.plugins as s, i (s.instanceId)}
@@ -787,7 +855,7 @@
             e.preventDefault();
             plugMenu(e, s);
           }}
-          data-tooltip={isPh(s) ? undefined : "拖曳調整 plugin chain 順序；按右鍵可移至鏈首或鏈尾。"}
+          data-tooltip={isPh(s) ? undefined : "拖曳調整 plugin chain 順序；按右鍵開啟操作選單。"}
         >
           {#if isPh(s)}
             <!-- missing/broken:原鏈位保留,不參與 DSP;提供重試/重新定位/移除 -->
@@ -823,11 +891,18 @@
               >
             </div>
           {:else}
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
             <span
               class="plugname"
-              data-tooltip="{s.name} — 雙擊開啟 plugin 操作介面。"
-              ondblclick={() => openEditor(s)}>{s.name}</span
+              role="button"
+              tabindex="0"
+              data-tooltip="{s.name} — 單擊開啟 plugin 操作介面；按右鍵可開啟操作選單。"
+              onclick={() => openEditor(s)}
+              onkeydown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  void openEditor(s);
+                }
+              }}>{s.name}</span
             >
             <div class="plugactions">
               <button
@@ -842,14 +917,25 @@
               >
                 <img class="picon" src={s.bypassed ? powerOff : powerOn} alt="" draggable="false" />
               </button>
-              <!-- P2-M:開啟 GUI 有明確按鈕(不靠雙擊名稱);常態不佔名稱寬度,
-                   hover/聚焦該列才出現(鍵盤 focus-within 同樣可達) -->
-              <button
-                class="mini plugicon gui"
-                onclick={() => openEditor(s)}
-                aria-label="開啟 {s.name} 的操作介面"
-                data-tooltip="開啟此 plugin 提供的原生操作介面（GUI）。">GUI</button
-              >
+              {#if latencyEnabled}
+                <button
+                  class="mini plugicon monitor-bypass"
+                  class:on={s.monitorBypassed}
+                  class:pending={pendingMonitorIds.has(s.instanceId)}
+                  disabled={pendingMonitorIds.has(s.instanceId)}
+                  onclick={() => void monitorBypass(s)}
+                  aria-pressed={s.monitorBypassed ?? false}
+                  aria-label={s.monitorBypassed
+                    ? `取消 ${s.name} 的 Monitor Bypass`
+                    : `啟用 ${s.name} 的 Monitor Bypass`}
+                  data-tooltip={pendingMonitorIds.has(s.instanceId)
+                    ? "正在建立或同步 Monitor Shadow；engine 確認前不改變目前狀態。"
+                    : s.monitorBypassed
+                    ? "Monitor Bypass 已啟用：Low-Latency Outputs 略過此 plugin；右鍵選單也可取消。"
+                    : "只讓 Low-Latency Outputs 略過此 plugin；Stream 的完整處理不受影響，右鍵選單也可切換。"}
+                  >{pendingMonitorIds.has(s.instanceId) ? "…" : "M"}</button
+                >
+              {/if}
               <button
                 class="mini plugicon danger del"
                 onclick={() => removePlugin(s.instanceId)}
@@ -1319,16 +1405,6 @@
     outline: 1px solid var(--accent);
     outline-offset: -1px;
   }
-  /* P2-M:GUI 鈕 hover/focus 該列才顯示 —— 常態不擠名稱寬度(雙擊名稱同效) */
-  .plug .mini.gui {
-    display: none;
-  }
-  .plug:hover .mini.gui,
-  .plug:focus-within .mini.gui {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-  }
   .picon {
     width: 12px;
     height: 12px;
@@ -1348,6 +1424,9 @@
   }
   .plugname:hover {
     color: var(--accent);
+  }
+  .plug:not(.placeholder) .plugname {
+    cursor: pointer;
   }
   /* P1-C:needsRebind 黯淡提示(軌道保留、安全靜音) */
   .strip.unbound {

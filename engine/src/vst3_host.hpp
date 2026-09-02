@@ -46,6 +46,13 @@ struct Vst3ParamEdit {
     double value{};
 };
 
+// Runtime shadow 複製用的記憶體 state；不含 host 權威參數表，呼叫端在 restore
+// 後必須再重放參數。與 .vstpreset 容器分離，避免即時 graph mutation 做檔案 I/O。
+struct Vst3RuntimeState {
+    std::vector<std::uint8_t> component;
+    std::vector<std::uint8_t> controller;
+};
+
 // 單一 plugin instance。載入/初始化/參數在控制面;process 只在 audio thread。
 class Vst3Plugin {
 public:
@@ -64,7 +71,7 @@ public:
     bool initialize(double sample_rate, int32_t max_frames) noexcept;
     void terminate() noexcept;
 
-    // in 為立體聲;out 可與 in 同 buffer(呼叫端保證非 alias 或允許就地)
+    // Host seam 一律立體聲；mono-only plugin 由內部下混輸入並將輸出複製回 L/R。
     bool process(const float* in_l, const float* in_r, float* out_l, float* out_r,
                  int32_t frames, const Vst3ParamEdit* edits, size_t edit_count) noexcept;
 
@@ -72,6 +79,9 @@ public:
     double param_value(uint32_t id) const noexcept;
     // 控制面寫 controller(preset 載入後同步 editor GUI 顯示);冪等
     void set_param_normalized(uint32_t id, double value) noexcept;
+
+    bool capture_runtime_state(Vst3RuntimeState& state, std::string& error);
+    bool restore_runtime_state(const Vst3RuntimeState& state, std::string& error);
 
     // ---- preset(.vstpreset 檔案式 state 存取;控制面呼叫)----
     // 寫 VST3 容器:'VST3' header + 'Comp'(component state)+ 'Cntc'(controller
@@ -93,6 +103,7 @@ public:
     //      見 editor_host.hpp)----
     // performEdit(editor 內改參數)→ cb(paramId, normalized);attach 前設定
     void set_param_callback(std::function<void(uint32_t, double)> cb) noexcept;
+    void set_latency_changed_callback(std::function<void()> cb) noexcept;
     bool editor_capable() const noexcept;  // loaded && 有 controller
     // createView → setFrame → attached(parent);成功回 true,out_w/out_h =
     // clamp 後 editor 原生尺寸(80..4096 / 60..4096)。

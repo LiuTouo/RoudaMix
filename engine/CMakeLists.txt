@@ -81,6 +81,10 @@ add_executable(roudamix-engine
     src/pcm_convert.cpp
     src/asio_device.cpp
     src/telemetry.cpp
+    src/pdc_planner.cpp
+    src/route_planner.cpp
+    src/pdc_delay_line.cpp
+    src/rt_crossfade.cpp
     src/track_graph.cpp
     src/audio_engine.cpp
     src/app_capture.cpp
@@ -154,7 +158,7 @@ add_test(NAME vst3_host COMMAND vst3_host_test)
 
 # session 檔案序列化/載入(無 plugin 環境;真 plugin roundtrip 走 m5a-engine-tracks.ps1)
 add_executable(session_test tests/session_test.cpp src/session.cpp src/audio_engine.cpp
-    src/track_graph.cpp src/app_capture.cpp src/render_sink.cpp
+    src/pdc_planner.cpp src/route_planner.cpp src/pdc_delay_line.cpp src/rt_crossfade.cpp src/track_graph.cpp src/app_capture.cpp src/render_sink.cpp
     src/asio_device.cpp src/pcm_convert.cpp src/telemetry.cpp src/vst3_host.cpp
     src/sandbox.cpp)
 target_include_directories(session_test PRIVATE src)
@@ -173,6 +177,84 @@ if(MSVC)
     target_compile_options(track_graph_test PRIVATE /W4 /utf-8)
 endif()
 add_test(NAME track_graph COMMAND track_graph_test)
+
+# Plugin Delay Compensation planner:純 DAG/資源規劃，不依賴 audio device/VST。
+add_executable(pdc_planner_test tests/pdc_planner_test.cpp src/pdc_planner.cpp)
+target_include_directories(pdc_planner_test PRIVATE src)
+if(MSVC)
+    target_compile_options(pdc_planner_test PRIVATE /W4 /utf-8)
+endif()
+add_test(NAME pdc_planner COMMAND pdc_planner_test)
+
+# RoutePlan:slot/bus/shadow/dry-delay 決策；純 value，不依賴 audio device/VST。
+add_executable(route_planner_test tests/route_planner_test.cpp
+    src/route_planner.cpp src/pdc_planner.cpp)
+target_include_directories(route_planner_test PRIVATE src)
+if(MSVC)
+    target_compile_options(route_planner_test PRIVATE /W4 /utf-8)
+endif()
+add_test(NAME route_planner COMMAND route_planner_test)
+
+add_executable(pdc_delay_line_test tests/pdc_delay_line_test.cpp src/pdc_delay_line.cpp)
+target_include_directories(pdc_delay_line_test PRIVATE src)
+if(MSVC)
+    target_compile_options(pdc_delay_line_test PRIVATE /W4 /utf-8)
+endif()
+add_test(NAME pdc_delay_line COMMAND pdc_delay_line_test)
+
+add_executable(rt_crossfade_test tests/rt_crossfade_test.cpp src/rt_crossfade.cpp)
+target_include_directories(rt_crossfade_test PRIVATE src)
+if(MSVC)
+    target_compile_options(rt_crossfade_test PRIVATE /W4 /utf-8)
+endif()
+add_test(NAME rt_crossfade COMMAND rt_crossfade_test)
+
+add_executable(pdc_audio_path_test tests/pdc_audio_path_test.cpp
+    src/route_planner.cpp src/pdc_planner.cpp src/pdc_delay_line.cpp)
+target_include_directories(pdc_audio_path_test PRIVATE src)
+if(MSVC)
+    target_compile_options(pdc_audio_path_test PRIVATE /W4 /utf-8)
+endif()
+add_test(NAME pdc_audio_path COMMAND pdc_audio_path_test)
+
+add_executable(telemetry_test tests/telemetry_test.cpp src/telemetry.cpp)
+target_include_directories(telemetry_test PRIVATE src)
+if(MSVC)
+    target_compile_options(telemetry_test PRIVATE /W4 /utf-8)
+endif()
+add_test(NAME telemetry COMMAND telemetry_test)
+
+# Deterministic test-only VST3：可切 latency、送 kLatencyChanged、耗 CPU、process fail。
+add_library(rmx_latency_fixture MODULE
+    tests/latency_fixture_vst3.cpp
+    ${VST3_SDK_DIR}/base/source/fobject.cpp
+    ${VST3_SDK_DIR}/base/source/fstring.cpp
+    ${VST3_SDK_DIR}/base/source/updatehandler.cpp
+    ${VST3_SDK_DIR}/base/thread/source/flock.cpp
+    ${VST3_SDK_DIR}/public.sdk/source/common/pluginview.cpp
+    ${VST3_SDK_DIR}/public.sdk/source/main/dllmain.cpp
+    ${VST3_SDK_DIR}/public.sdk/source/main/pluginfactory.cpp
+    ${VST3_SDK_DIR}/public.sdk/source/vst/vstaudioeffect.cpp
+    ${VST3_SDK_DIR}/public.sdk/source/vst/vstbus.cpp
+    ${VST3_SDK_DIR}/public.sdk/source/vst/vstcomponent.cpp
+    ${VST3_SDK_DIR}/public.sdk/source/vst/vstcomponentbase.cpp
+    ${VST3_SDK_DIR}/public.sdk/source/vst/vsteditcontroller.cpp
+    ${VST3_SDK_DIR}/public.sdk/source/vst/vstparameters.cpp)
+target_include_directories(rmx_latency_fixture SYSTEM PRIVATE ${VST3_SDK_DIR})
+target_link_libraries(rmx_latency_fixture PRIVATE vst3_sdk)
+set_target_properties(rmx_latency_fixture PROPERTIES PREFIX "" SUFFIX ".vst3")
+if(MSVC)
+    target_compile_options(rmx_latency_fixture PRIVATE /W0 /utf-8 /Zc:char8_t-)
+endif()
+
+add_executable(latency_fixture_test tests/latency_fixture_test.cpp src/vst3_host.cpp)
+target_include_directories(latency_fixture_test PRIVATE src)
+target_link_libraries(latency_fixture_test PRIVATE vst3_sdk user32)
+add_dependencies(latency_fixture_test rmx_latency_fixture)
+if(MSVC)
+    target_compile_options(latency_fixture_test PRIVATE /W4 /utf-8)
+endif()
+add_test(NAME latency_fixture COMMAND latency_fixture_test $<TARGET_FILE:rmx_latency_fixture>)
 
 # VST registry 純檔案邏輯：fingerprint、增量命中、去重、原子持久化。
 add_executable(vst_registry_test tests/vst_registry_test.cpp src/vst_registry.cpp)

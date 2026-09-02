@@ -1,4 +1,4 @@
-// session 單測(無 plugin 環境:軌道結構 roundtrip / 壞 slot 略過 / v1 拒載)。
+// session 單測(無 plugin 環境:v3 roundtrip / v2 migration / 壞 slot / v1 拒載)。
 // 真 plugin 的 save→load roundtrip 走 scripts/m5a-engine-tracks.ps1(pipe 層)。
 // CHECK 而非 assert:Release/NDEBUG 下 assert 是 no-op,測試會空轉(M3 實測踩過)。
 #include <cstdio>
@@ -44,9 +44,18 @@ int main() {
     // 1. 空 engine serialize:結構 + version
     {
         const nlohmann::json j = rmx::session::serialize(e);
-        CHECK(j["roudamixSession"] == 2);
+        CHECK(j["roudamixSession"] == 3);
         CHECK(j["tracks"].is_array() && j["tracks"].empty());
         CHECK(j["deviceKey"].is_null() && j["sampleRate"].is_null());
+
+        rmx::AudioEngine policies;
+        CHECK(policies.ensure_system_outputs());
+        const auto pj = rmx::session::serialize(policies);
+        CHECK(pj["tracks"].size() == 2);
+        CHECK(pj["tracks"][0]["systemRole"] == "monitor");
+        CHECK(pj["tracks"][0]["latencyPolicy"] == "lowLatency");
+        CHECK(pj["tracks"][1]["systemRole"] == "stream");
+        CHECK(pj["tracks"][1]["latencyPolicy"] == "fullPdc");
     }
 
     // 2. 軌道結構 roundtrip:audio(sine)→fx→output 監聽,dests 鏈 + gain/mute
@@ -95,7 +104,7 @@ int main() {
     {
         const auto j = nlohmann::json::parse(read_text(file), nullptr, false);
         CHECK(!j.is_discarded());
-        CHECK(j["roudamixSession"] == 2);
+        CHECK(j["roudamixSession"] == 3);
         CHECK(j["tracks"].is_array() && j["tracks"].size() == 3);
     }
 
@@ -140,10 +149,10 @@ int main() {
         const char* expect_code = has_worker ? "plugin_load_failed" : "sandbox_unavailable";
         const auto f2 = tmp / "miss.rmsession";
         write_text(f2,
-                   R"({"roudamixSession":2,"tracks":[{"trackId":7,"kind":"audio","name":"Mic",)"
+                   R"({"roudamixSession":3,"tracks":[{"trackId":7,"kind":"audio","name":"Mic",)"
                    R"("color":255,"source":{"type":"sine","freq":440},"dests":[],"output":null,)"
                    R"("gain":1,"mute":false,"plugins":[{"pluginPath":"C:\\nope\\x.vst3",)"
-                   R"("classId":"ABCD","name":"XComp","bypassed":true,)"
+                   R"("classId":"ABCD","name":"XComp","bypassed":true,"monitorBypassed":true,)"
                    R"("params":[{"paramId":1,"normalized":0.75}]}]}]})");
         nlohmann::json applied;
         std::string err;
@@ -158,6 +167,7 @@ int main() {
         CHECK(slot.module_path == "C:\\nope\\x.vst3");
         CHECK(slot.class_id == "ABCD");
         CHECK(slot.bypass);
+        CHECK(slot.monitor_bypass);
         CHECK(slot.param_values.size() == 1 && slot.param_values[0].first == 1 &&
               slot.param_values[0].second == 0.75);
         CHECK(slot.load_error.empty() == false);
@@ -190,6 +200,7 @@ int main() {
         const auto j = nlohmann::json::parse(read_text(file), nullptr, false);
         CHECK(!j.is_discarded());
         CHECK(j["tracks"][0]["plugins"][0]["availability"] == "loadFailed");
+        CHECK(j["tracks"][0]["plugins"][0]["monitorBypassed"] == true);
         nlohmann::json applied;
         CHECK(rmx::session::load(e, file, applied, err));
         CHECK(e.tracks().size() == 3);  // Mic + monitor + stream(role 已寫進檔)
@@ -199,6 +210,7 @@ int main() {
         CHECK(slot.availability == rmx::RackSlot::Availability::kLoadFailed);
         CHECK(slot.param_values.size() == 1 && slot.param_values[0].second == 0.75);
         CHECK(slot.bypass);
+        CHECK(slot.monitor_bypass);
         CHECK(applied["missing"].size() == 1);
         CHECK(applied["missing"][0]["code"] == "plugin_load_failed");
     }
@@ -222,8 +234,10 @@ int main() {
         CHECK(e.tracks().size() == 3);  // 不多建:兩條 output 軌剛好指派完
         CHECK(e.tracks()[0].name == "Out1" &&
               e.tracks()[0].system_role == rmx::SystemRole::kMonitor);
+        CHECK(e.tracks()[0].latency_policy == rmx::OutputLatencyPolicy::kLowLatency);
         CHECK(e.tracks()[1].name == "Out2" &&
               e.tracks()[1].system_role == rmx::SystemRole::kStream);
+        CHECK(e.tracks()[1].latency_policy == rmx::OutputLatencyPolicy::kFullPdc);
         CHECK(e.tracks()[2].system_role == rmx::SystemRole::kNone);
 
         // 7b. 重複 role:留第一個,第二個降級;缺 stream = 指派無 role 的 output 軌
@@ -259,6 +273,21 @@ int main() {
         int with_role = 0;
         for (const auto& t : j["tracks"]) if (!t["systemRole"].is_null()) ++with_role;
         CHECK(with_role == 2);
+
+        // 7d. v3 明確 policy 覆蓋 role default。
+        const auto f5 = tmp / "policy-v3.rmsession";
+        write_text(f5,
+                   R"({"roudamixSession":3,"tracks":[)"
+                   R"({"trackId":1,"kind":"output","name":"M","color":1,"source":null,)"
+                   R"("dests":[],"output":null,"gain":1,"mute":false,"plugins":[],)"
+                   R"("systemRole":"monitor","latencyPolicy":"fullPdc"},)"
+                   R"({"trackId":2,"kind":"output","name":"Aux","color":2,"source":null,)"
+                   R"("dests":[],"output":null,"gain":1,"mute":false,"plugins":[],)"
+                   R"("systemRole":"stream","latencyPolicy":"lowLatency"}]})");
+        CHECK(rmx::session::load(e, f5, applied, err));
+        CHECK(e.tracks().size() == 2);
+        CHECK(e.tracks()[0].latency_policy == rmx::OutputLatencyPolicy::kFullPdc);
+        CHECK(e.tracks()[1].latency_policy == rmx::OutputLatencyPolicy::kLowLatency);
     }
 
     // 8. 系統輸出不可刪(engine 端權威;UI 只是第一道防線)

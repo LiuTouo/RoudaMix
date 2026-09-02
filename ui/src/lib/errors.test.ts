@@ -23,6 +23,15 @@ test("friendlyError:每個 engine 錯誤碼都有映射", () => {
   }
 });
 
+test("plugin_load_failed 不把 host 不相容誤報為檔案損壞", () => {
+  const f = friendlyError(
+    "plugin_load_failed: init failed: plugin rejected stereo main-bus arrangement",
+  );
+  assert.doesNotMatch(f.friendly, /損毀|損壞/);
+  assert.match(f.friendly, /載入或初始化失敗/);
+  assert.match(f.raw, /stereo main-bus/);
+});
+
 test("friendlyError:未知/無 code 字串原樣", () => {
   assert.equal(friendlyError("某個隨機錯誤").friendly, "某個隨機錯誤");
   const f = friendlyError("unknown_code: hi");

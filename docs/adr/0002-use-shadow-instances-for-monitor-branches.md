@@ -1,0 +1,3 @@
+# Use shadow instances for monitor branches
+
+當 Monitor Bypass 使 Monitor 與 Stream 的 plugin chain 分岔時，RoudaMix 將在 control thread 按需建立獨立的 shadow plugin instances，完成完整 component/controller state 與 host 權威參數複製後，先靜默 pre-roll 500 ms，再以 20 ms crossfade 交換 audio graph；不需要時即釋放。Primary instance 是唯一使用者可編輯的狀態權威，shadow 單向鏡像其後續參數、preset 與 bypass；每個 instance 以自己的實際 Plugin Latency 計算所屬路徑。Shadow 載入、同步或 latency 安全檢查失敗時，只有 Low-Latency Outputs 對該 plugin 改走 dry 並標示 degraded，Stream 仍使用 primary；primary 超限時才讓所有輸出改走 dry。收到有效變更或使用者重試後，系統自動重新 pre-roll、交易式重建並恢復，降級期間只發一次通知。這讓使用者可略過 chain 中任意 plugin，而不犧牲 Stream Output 的完整處理；代價是切換延遲、額外 CPU、記憶體及同步責任，但可避免讓同一個有狀態的 VST instance 錯誤處理兩條不同音訊路徑。

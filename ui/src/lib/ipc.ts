@@ -26,6 +26,14 @@ export function onMeters(cb: (m: MetersFrame) => void) {
   return listen<MetersFrame>("meters", (e) => cb(e.payload));
 }
 
+export function onTelemetryAbiMismatch(
+  cb: (payload: { expected: number; found: number }) => void,
+) {
+  return listen<{ expected: number; found: number }>("telemetry-abi-mismatch", (e) =>
+    cb(e.payload),
+  );
+}
+
 // ---------- 應用層設定(bridge settings.json;P1-E typed schema) ----------
 
 export type AppSettings = {

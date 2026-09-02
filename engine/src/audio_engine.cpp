@@ -13,6 +13,8 @@
 #include <cstdio>
 #include <cstring>
 #include <intrin.h>  // __rdtsc(RT load 量測;兩次 = ~數十 cycle,無鎖/配置/系統呼叫)
+#include <limits>
+#include <unordered_set>
 
 #include "app_capture.hpp"
 #include "render_sink.hpp"
@@ -20,6 +22,17 @@
 namespace rmx {
 
 namespace {
+
+inline std::uint64_t plugin_tsc_begin() noexcept {
+    _mm_lfence();
+    return __rdtsc();
+}
+inline std::uint64_t plugin_tsc_end() noexcept {
+    unsigned aux = 0;
+    const auto value = __rdtscp(&aux);
+    _mm_lfence();
+    return value;
+}
 inline std::uint32_t f32_bits(float v) noexcept {
     std::uint32_t b;
     std::memcpy(&b, &v, sizeof(b));
@@ -47,9 +60,102 @@ inline void meter_band(MeterAccumulator& m, std::size_t strip, const float* l,
 inline void bus_add(float* dst, const float* src, std::uint32_t n) noexcept {
     for (std::uint32_t i = 0; i < n; ++i) dst[i] += src[i];
 }
+
+RoutePlan route_plan_for_tracks(const std::vector<TrackNode>& tracks,
+                                std::uint64_t sample_rate) {
+    std::vector<RouteTrackSpec> specs;
+    specs.reserve(tracks.size());
+    for (const auto& track : tracks) {
+        RouteTrackSpec spec;
+        spec.track_id = track.track_id;
+        spec.muted = track.mute;
+        spec.is_output = track.kind == TrackKind::kOutput;
+        spec.latency_policy = track.latency_policy;
+        spec.dests = track.dests;
+        spec.slots.reserve(track.chain.size());
+        for (const auto& slot : track.chain) {
+            spec.slots.push_back({
+                slot.instance_id,
+                slot.bypass,
+                slot.plugin != nullptr,
+                slot.latency_known,
+                slot.latency_samples,
+                slot.primary_state,
+                slot.monitor_bypass,
+                slot.monitor_shadow != nullptr,
+                slot.monitor_latency_known,
+                slot.monitor_latency_samples,
+                slot.monitor_state,
+            });
+        }
+        specs.push_back(std::move(spec));
+    }
+    return plan_routes(
+        specs,
+        {sample_rate * 2u, 256u * 1024u * 1024u, 2u, sizeof(float), kMaxBlockFrames});
+}
+
+bool monitor_route_changed(const RouteTrackPlan& previous,
+                           const RouteTrackPlan& next,
+                           const TrackNode& previous_node,
+                           const TrackNode& next_node) {
+    if (previous.monitor_required != next.monitor_required ||
+        previous.monitor_diverged != next.monitor_diverged ||
+        previous.slots.size() != next.slots.size() ||
+        previous_node.chain.size() != next_node.chain.size())
+        return true;
+    for (std::size_t i = 0; i < next.slots.size(); ++i) {
+        if (previous.slots[i].instance_id != next.slots[i].instance_id ||
+            previous.slots[i].monitor != next.slots[i].monitor ||
+            previous_node.chain[i].monitor_shadow != next_node.chain[i].monitor_shadow)
+            return true;
+    }
+    return false;
+}
+
+bool pre_roll_shadow(Vst3Plugin& shadow,
+                     const std::vector<std::pair<std::uint32_t, double>>& params,
+                     std::uint32_t sample_rate, std::uint32_t block_frames,
+                     std::string& err) {
+    if (sample_rate == 0 || block_frames == 0 || block_frames > kMaxBlockFrames) {
+        err = "invalid monitor shadow pre-roll format";
+        return false;
+    }
+    std::vector<float> silence_l(block_frames, 0.0F), silence_r(block_frames, 0.0F);
+    std::vector<float> out_l(block_frames, 0.0F), out_r(block_frames, 0.0F);
+    std::vector<Vst3ParamEdit> edits;
+    edits.reserve(params.size());
+    for (const auto& [id, value] : params) edits.push_back({id, value});
+    const std::uint64_t total = static_cast<std::uint64_t>(sample_rate) / 2u;
+    std::uint64_t rendered = 0;
+    std::size_t edit_offset = 0;
+    while (rendered < total) {
+        const auto frames = static_cast<std::uint32_t>(
+            (std::min)(static_cast<std::uint64_t>(block_frames), total - rendered));
+        const auto count = (std::min)(kMaxParamEditsPerBlock, edits.size() - edit_offset);
+        std::fill_n(out_l.data(), frames, 0.0F);
+        std::fill_n(out_r.data(), frames, 0.0F);
+        if (!shadow.process(silence_l.data(), silence_r.data(), out_l.data(), out_r.data(),
+                            static_cast<std::int32_t>(frames),
+                            count > 0 ? edits.data() + edit_offset : nullptr, count)) {
+            err = "monitor shadow rejected 500 ms pre-roll";
+            return false;
+        }
+        edit_offset += count;
+        rendered += frames;
+    }
+    return true;
+}
 }  // namespace
 
-AudioEngine::AudioEngine() = default;
+AudioEngine::AudioEngine() {
+    plugin_timing_overhead_ = (std::numeric_limits<std::uint64_t>::max)();
+    for (int i = 0; i < 64; ++i) {
+        const auto begin = plugin_tsc_begin();
+        const auto elapsed = plugin_tsc_end() - begin;
+        plugin_timing_overhead_ = (std::min)(plugin_timing_overhead_, elapsed);
+    }
+}
 
 AudioEngine::~AudioEngine() {
     exiting_.store(true, std::memory_order_release);
@@ -307,7 +413,10 @@ bool AudioEngine::start(const std::string& device_key,
             e->stop_renders();
             for (auto& t : e->tracks_)
                 for (auto& s : t.chain)
-                    if (s.plugin) s.plugin->terminate();
+                    if (s.plugin) {
+                        s.plugin->terminate();
+                        if (s.monitor_shadow) s.monitor_shadow->terminate();
+                    }
             e->device_.close();
         }
     } rollback{this};
@@ -339,9 +448,28 @@ bool AudioEngine::start(const std::string& device_key,
                 err = "plugin '" + slot.name + "' init failed: " + slot.plugin->last_error();
                 return false;  // rollback guard 收 capture/render/plugin/device
             }
+            refresh_latency(slot);
+            if (slot.monitor_shadow) {
+                slot.monitor_shadow->terminate();
+                if (!slot.monitor_shadow->initialize(static_cast<double>(rate),
+                                                     device_.block_size())) {
+                    err = "monitor shadow '" + slot.name + "' init failed: " +
+                          slot.monitor_shadow->last_error();
+                    return false;
+                }
+                if (!pre_roll_shadow(*slot.monitor_shadow, slot.param_values, rate,
+                                     device_.block_size(), err))
+                    return false;
+                slot.monitor_latency_samples = slot.monitor_shadow->latency_samples();
+                slot.monitor_latency_known = true;
+            }
         }
     }
-    swap_graph();
+    rt_sample_rate_.store(rate, std::memory_order_relaxed);
+    if (!swap_graph()) {
+        err = "PDC plan exceeds latency or memory safety limits";
+        return false;
+    }
 
     const std::uint64_t callbacks_before = device_.callbacks();
     if (!device_.start(err)) {
@@ -385,7 +513,10 @@ bool AudioEngine::start(const std::string& device_key,
                 // track_strip / chain_strips 放軌(kind 1)與 plugin(kind 0)
                 std::uint32_t ids[kTelemetryStrips] = {0xFFFFFFFFu};
                 std::uint8_t kinds[kTelemetryStrips] = {2};
+                std::uint32_t plugin_ids[kPluginLoadEntries]{};
+                std::uint32_t plugin_variants[kPluginLoadEntries]{};
                 std::size_t count = 1;
+                std::size_t plugin_count = 0;
                 const TrackGraph* g = rt_graph_.load(std::memory_order_acquire);
                 if (g != nullptr) {
                     for (const auto& t : g->nodes) {
@@ -402,10 +533,24 @@ bool AudioEngine::start(const std::string& device_key,
                                 kinds[s] = 0;
                                 count = (std::max)(count, static_cast<std::size_t>(s) + 1);
                             }
+                            const auto& slot = t.chain[i];
+                            if (slot.primary_cpu_index < kPluginLoadEntries) {
+                                plugin_ids[slot.primary_cpu_index] = slot.instance_id;
+                                plugin_variants[slot.primary_cpu_index] = 0;
+                                plugin_count = (std::max)(plugin_count,
+                                    static_cast<std::size_t>(slot.primary_cpu_index) + 1);
+                            }
+                            if (slot.shadow_cpu_index < kPluginLoadEntries) {
+                                plugin_ids[slot.shadow_cpu_index] = slot.instance_id;
+                                plugin_variants[slot.shadow_cpu_index] = 1;
+                                plugin_count = (std::max)(plugin_count,
+                                    static_cast<std::size_t>(slot.shadow_cpu_index) + 1);
+                            }
                         }
                     }
                 }
-                meters_.publish(*shm_, device_.xruns(), ids, kinds, count, device_.running());
+                meters_.publish(*shm_, device_.xruns(), ids, kinds, count, plugin_ids,
+                                plugin_variants, plugin_count, device_.running());
             }
         });
     }
@@ -418,7 +563,10 @@ void AudioEngine::stop() noexcept {
     retire_graph();
     for (auto& t : tracks_)
         for (auto& slot : t.chain)
-            if (slot.plugin) slot.plugin->terminate();
+            if (slot.plugin) {
+                slot.plugin->terminate();
+                if (slot.monitor_shadow) slot.monitor_shadow->terminate();
+            }
     stop_captures();
     stop_renders();
     clear_expired_retired(/*force=*/true);
@@ -426,9 +574,9 @@ void AudioEngine::stop() noexcept {
 
 // ---- track graph swap(同舊 rack 的 grace 模式)----
 
-void AudioEngine::swap_graph() noexcept {
+bool AudioEngine::swap_graph() noexcept {
     // 深拷貝結構殼:chain 內 plugin/ring shared_ptr、RT buffer shared_ptr 共用
-    auto* fresh = new TrackGraph{tracks_, {}, {}};
+    auto* fresh = new TrackGraph{tracks_, {}, {}, {}};
     fresh->order = graph_topo_order(tracks_);
     if (fresh->order.empty()) {
         fresh->order.clear();
@@ -466,10 +614,386 @@ void AudioEngine::swap_graph() noexcept {
         }
         t.track_strip = strips[ti].track_strip;
         t.chain_strips = strips[ti].chain_strips;
+        for (auto& slot : t.chain) {
+            slot.primary_cpu_index = 0xFFFFFFFFu;
+            slot.shadow_cpu_index = 0xFFFFFFFFu;
+        }
     }
+    const auto running_rate = rt_sample_rate_.load(std::memory_order_relaxed);
+    const std::uint64_t plan_rate =
+        running_rate > 0 ? running_rate : (last_sample_rate_ > 0 ? last_sample_rate_ : 48000u);
+    fresh->route_plan = route_plan_for_tracks(fresh->nodes, plan_rate);
+    if (!fresh->route_plan.ok()) {
+        // Candidate plan 不合法即不 commit；caller 負責回滾剛才的 control
+        // mutation。既有 RT graph 與 last-known-good plan 完全不動。
+        delete fresh;
+        return false;
+    }
+
+    std::uint32_t next_cpu = 0;
+    for (std::size_t ti = 0; ti < fresh->nodes.size(); ++ti) {
+        auto& track = fresh->nodes[ti];
+        const auto& track_plan = fresh->route_plan.tracks[ti];
+        for (std::size_t si = 0; si < track.chain.size(); ++si) {
+            auto& slot = track.chain[si];
+            const auto& slot_plan = track_plan.slots[si];
+            if (slot_plan.primary.action == RouteSlotAction::kProcess &&
+                next_cpu < kPluginLoadEntries)
+                slot.primary_cpu_index = next_cpu++;
+            if (slot_plan.monitor.action == RouteSlotAction::kProcess &&
+                next_cpu < kPluginLoadEntries)
+                slot.shadow_cpu_index = next_cpu++;
+        }
+    }
+
+    const TrackGraph* active_graph = rt_graph_.load(std::memory_order_acquire);
+    for (std::size_t ti = 0; ti < fresh->nodes.size(); ++ti) {
+        auto& track = fresh->nodes[ti];
+        const auto& track_plan = fresh->route_plan.tracks[ti];
+        if (!track_plan.monitor_diverged || track.buf == nullptr) continue;
+        bool monitor_path_changed = active_graph == nullptr;
+        if (active_graph != nullptr && track.track_id < active_graph->id_index.size()) {
+            const auto old_index = active_graph->id_index[track.track_id];
+            if (old_index == kNoStrip || old_index >= active_graph->route_plan.tracks.size()) {
+                monitor_path_changed = true;
+            } else {
+                monitor_path_changed = monitor_route_changed(
+                    active_graph->route_plan.tracks[old_index], track_plan,
+                    active_graph->nodes[old_index], track);
+            }
+        }
+        if (monitor_path_changed && running_rate > 0)
+            track.buf->monitor_crossfade.request(static_cast<std::uint32_t>(plan_rate / 50u));
+    }
+    std::unordered_set<std::uint64_t> active_dry_keys;
+    struct PendingDryDelay {
+        std::uint64_t key{};
+        std::shared_ptr<PdcDelayLine> line;
+        std::uint64_t target{};
+        bool reused{};
+    };
+    std::vector<PendingDryDelay> pending_dry_delays;
+    bool dry_resources_ready = true;
+    auto dry_delay = [&](std::uint32_t instance_id, std::uint32_t variant,
+                         std::uint64_t samples) -> std::shared_ptr<PdcDelayLine> {
+        if (samples == 0) return nullptr;
+        const std::uint64_t key = (static_cast<std::uint64_t>(instance_id) << 1u) | variant;
+        active_dry_keys.insert(key);
+        const auto found = dry_delay_states_.find(key);
+        if (found != dry_delay_states_.end() &&
+            found->second->max_delay_samples() >= samples) {
+            pending_dry_delays.push_back({key, found->second, samples, true});
+            return found->second;
+        }
+        auto line = std::make_shared<PdcDelayLine>();
+        if (!line->prepare(samples, kMaxBlockFrames) || !line->set_delay(samples, 0)) {
+            dry_resources_ready = false;
+            return nullptr;
+        }
+        pending_dry_delays.push_back({key, line, samples, false});
+        return line;
+    };
+    for (std::size_t ti = 0; ti < fresh->nodes.size(); ++ti) {
+        auto& track = fresh->nodes[ti];
+        const auto& track_plan = fresh->route_plan.tracks[ti];
+        for (std::size_t si = 0; si < track.chain.size(); ++si) {
+            auto& slot = track.chain[si];
+            const auto& slot_plan = track_plan.slots[si];
+            slot.primary_dry_delay = dry_delay(
+                slot.instance_id, 0, slot_plan.primary.dry_delay_samples);
+            slot.shadow_dry_delay = dry_delay(
+                slot.instance_id, 1, slot_plan.monitor.dry_delay_samples);
+        }
+    }
+    if (!dry_resources_ready) {
+        delete fresh;
+        return false;
+    }
+    for (auto& t : fresh->nodes) t.dest_pdc.assign(t.dests.size(), nullptr);
+    struct PendingPdcLine {
+        std::uint64_t key{};
+        std::uint64_t target{};
+        std::shared_ptr<PdcDelayLine> line;
+        bool reused{};
+    };
+    std::vector<PendingPdcLine> pending_lines;
+    bool resources_ready = true;
+    for (const auto& edge : fresh->route_plan.latency.edge_delays) {
+        if (edge.from_track_id >= fresh->id_index.size()) continue;
+        const auto from_index = fresh->id_index[edge.from_track_id];
+        if (from_index == kNoStrip || from_index >= fresh->nodes.size()) continue;
+        auto& from = fresh->nodes[from_index];
+        const auto dest = std::find(from.dests.begin(), from.dests.end(), edge.to_track_id);
+        if (dest == from.dests.end()) continue;
+        const auto route = static_cast<std::size_t>(dest - from.dests.begin());
+        const std::uint64_t key = (static_cast<std::uint64_t>(edge.from_track_id) << 32u) |
+                                  edge.to_track_id;
+        auto found = pdc_delay_states_.find(key);
+        std::shared_ptr<PdcDelayLine> delay;
+        bool reused = false;
+        if (found != pdc_delay_states_.end() &&
+            found->second->max_delay_samples() >= plan_rate * 2u) {
+            delay = found->second;
+            reused = true;
+        } else {
+            delay = std::make_shared<PdcDelayLine>();
+            if (!delay->prepare(plan_rate * 2u, kMaxBlockFrames) ||
+                !delay->set_delay(edge.delay_samples, 0u)) {
+                resources_ready = false;
+                break;
+            }
+        }
+        from.dest_pdc[route] = delay;
+        pending_lines.push_back({key, edge.delay_samples, std::move(delay), reused});
+    }
+    if (!resources_ready) {
+        delete fresh;
+        return false;
+    }
+    for (const auto& pending : pending_dry_delays)
+        dry_delay_states_[pending.key] = pending.line;
+    for (auto it = dry_delay_states_.begin(); it != dry_delay_states_.end();) {
+        if (!active_dry_keys.contains(it->first))
+            it = dry_delay_states_.erase(it);
+        else
+            ++it;
+    }
+    std::unordered_set<std::uint64_t> active_pdc_keys;
+    for (auto& pending : pending_lines) {
+        active_pdc_keys.insert(pending.key);
+        pdc_delay_states_[pending.key] = pending.line;
+    }
+    for (auto it = pdc_delay_states_.begin(); it != pdc_delay_states_.end();) {
+        if (!active_pdc_keys.contains(it->first))
+            it = pdc_delay_states_.erase(it);
+        else
+            ++it;
+    }
+    last_route_plan_ = fresh->route_plan;
+    latency_generation_.fetch_add(1, std::memory_order_relaxed);
     TrackGraph* old = rt_graph_.exchange(fresh, std::memory_order_acq_rel);
+    // Commit 後才發布共享 delay 的 target，candidate 失敗時現行 graph 不會
+    // 提前看到新 latency。Audio thread 仍只在下一個 block boundary 套用。
+    const auto transition_samples =
+        running_rate > 0 ? static_cast<std::uint32_t>(plan_rate / 50u) : 0u;
+    for (auto& pending : pending_lines)
+        if (pending.reused)
+            (void)pending.line->set_delay(pending.target, transition_samples);
+    for (auto& pending : pending_dry_delays)
+        if (pending.reused)
+            (void)pending.line->set_delay(pending.target, transition_samples);
     if (old != nullptr) retired_.push_back({old, GetTickCount64()});
     clear_expired_retired(false);
+    return true;
+}
+
+bool AudioEngine::swap_safety_graph() noexcept {
+    const TrackGraph* active = rt_graph_.load(std::memory_order_acquire);
+    if (active == nullptr) return true;
+    auto* safe = new TrackGraph(*active);
+    for (auto& track : safe->nodes) {
+        for (auto& slot : track.chain) {
+            slot.bypass = true;
+            slot.primary_cpu_index = 0xFFFFFFFFu;
+            slot.shadow_cpu_index = 0xFFFFFFFFu;
+        }
+    }
+    const auto running_rate = rt_sample_rate_.load(std::memory_order_relaxed);
+    const std::uint64_t plan_rate =
+        running_rate > 0 ? running_rate : (last_sample_rate_ > 0 ? last_sample_rate_ : 48000u);
+    safe->route_plan = route_plan_for_tracks(safe->nodes, plan_rate);
+    if (!safe->route_plan.ok()) {
+        delete safe;
+        return false;
+    }
+    TrackGraph* old = rt_graph_.exchange(safe, std::memory_order_acq_rel);
+    if (old != nullptr) retired_.push_back({old, GetTickCount64()});
+    clear_expired_retired(false);
+    return true;
+}
+
+void AudioEngine::refresh_latency(RackSlot& slot) noexcept {
+    if (slot.plugin == nullptr) {
+        slot.latency_samples = 0;
+        slot.latency_known = false;
+        return;
+    }
+    slot.latency_samples = slot.plugin->latency_samples();
+    slot.latency_known = true;
+}
+
+void AudioEngine::bind_latency_callback(RackSlot& slot) {
+    if (slot.plugin == nullptr) return;
+    const auto instance_id = slot.instance_id;
+    slot.plugin->set_latency_changed_callback([this, instance_id] {
+        // Plugin 可從非 main thread 通知；此處不得碰 tracks_/graph。
+        if (latency_changed_cb_) latency_changed_cb_(instance_id, false);
+    });
+}
+
+void AudioEngine::handle_latency_changed(std::uint32_t instance_id, bool monitor_shadow) {
+    RackSlot* slot = find_slot_mut(instance_id);
+    if (slot == nullptr) return;
+    if (monitor_shadow) {
+        if (slot->monitor_shadow == nullptr) return;
+        const auto previous_latency = slot->monitor_latency_samples;
+        const auto previous_known = slot->monitor_latency_known;
+        const auto previous_state = slot->monitor_state;
+        slot->monitor_latency_samples = slot->monitor_shadow->latency_samples();
+        slot->monitor_latency_known = true;
+        slot->monitor_state = RackSlot::RuntimeState::kActive;
+        std::string prepare_error;
+        if (!prepare_monitor_variants(prepare_error))
+            slot->monitor_state = RackSlot::RuntimeState::kDegraded;
+        if (!swap_graph()) {
+            // Shadow-only 超限只讓 low-latency variant 走 dry；primary Stream 保留。
+            slot->monitor_state = RackSlot::RuntimeState::kDegraded;
+            if (!swap_graph()) {
+                slot->monitor_latency_samples = previous_latency;
+                slot->monitor_latency_known = previous_known;
+                slot->monitor_state = previous_state;
+                (void)swap_graph();
+            }
+        }
+        return;
+    }
+    if (slot->plugin == nullptr) return;
+    const auto previous_latency = slot->latency_samples;
+    const auto previous_known = slot->latency_known;
+    const auto previous_state = slot->primary_state;
+    slot->latency_samples = slot->plugin->latency_samples();
+    slot->latency_known = true;
+    slot->primary_state = RackSlot::RuntimeState::kActive;
+    std::string prepare_error;
+    if (!prepare_monitor_variants(prepare_error))
+        slot->primary_state = RackSlot::RuntimeState::kSuspended;
+    if (!swap_graph()) {
+        // Runtime primary 超限不是使用者 transaction：保留觀察值但 suspend
+        // 該 instance，讓所有輸出走 dry，其他 plugin/graph 繼續工作。
+        slot->primary_state = RackSlot::RuntimeState::kSuspended;
+        if (!swap_graph()) {
+            slot->latency_samples = previous_latency;
+            slot->latency_known = previous_known;
+            slot->primary_state = previous_state;
+            (void)swap_graph();
+        }
+    }
+}
+
+bool AudioEngine::ensure_monitor_shadows(std::string& err) {
+    const auto rate = rt_sample_rate_.load(std::memory_order_relaxed);
+    const std::uint64_t plan_rate =
+        rate > 0 ? rate : (last_sample_rate_ > 0 ? last_sample_rate_ : 48000u);
+    const auto plan = route_plan_for_tracks(tracks_, plan_rate);
+    if (!plan.ok()) {
+        err = "PDC plan exceeds latency or memory safety limits";
+        return false;
+    }
+    struct PendingShadow {
+        RackSlot* slot{};
+        std::shared_ptr<Vst3Plugin> plugin;
+        std::uint64_t latency{};
+    };
+    std::vector<PendingShadow> pending;
+    std::vector<RackSlot*> releases;
+    for (std::size_t ti = 0; ti < tracks_.size(); ++ti) {
+        auto& track = tracks_[ti];
+        const auto& track_plan = plan.tracks[ti];
+        for (std::size_t si = 0; si < track.chain.size(); ++si) {
+            auto& slot = track.chain[si];
+            const auto disposition = track_plan.slots[si].shadow;
+            if (disposition == ShadowDisposition::kRelease) {
+                releases.push_back(&slot);
+                continue;
+            }
+            if (disposition != ShadowDisposition::kCreate || slot.plugin == nullptr)
+                continue;
+            auto shadow = std::make_shared<Vst3Plugin>(slot.module_path, slot.class_id);
+            if (!shadow->loaded()) {
+                err = "monitor shadow load failed for '" + slot.name + "': " +
+                      shadow->last_error();
+                return false;
+            }
+            Vst3RuntimeState state;
+            std::string state_err;
+            if (!slot.plugin->capture_runtime_state(state, state_err)) {
+                err = "monitor shadow state capture failed for '" + slot.name + "': " + state_err;
+                return false;
+            }
+            if (!shadow->restore_runtime_state(state, state_err)) {
+                err = "monitor shadow state restore failed for '" + slot.name + "': " + state_err;
+                return false;
+            }
+            if (device_.running() &&
+                !shadow->initialize(
+                    static_cast<double>(rt_sample_rate_.load(std::memory_order_relaxed)),
+                    device_.block_size())) {
+                err = "monitor shadow init failed for '" + slot.name + "': " +
+                      shadow->last_error();
+                return false;
+            }
+            for (const auto& [id, value] : slot.param_values) {
+                shadow->set_param_normalized(id, value);
+            }
+            if (device_.running() &&
+                !pre_roll_shadow(*shadow, slot.param_values,
+                                 rt_sample_rate_.load(std::memory_order_relaxed),
+                                 device_.block_size(), state_err)) {
+                err = "monitor shadow pre-roll failed for '" + slot.name + "': " + state_err;
+                return false;
+            }
+            const auto instance_id = slot.instance_id;
+            shadow->set_latency_changed_callback([this, instance_id] {
+                if (latency_changed_cb_) latency_changed_cb_(instance_id, true);
+            });
+            const auto shadow_latency = shadow->latency_samples();
+            pending.push_back({&slot, std::move(shadow), shadow_latency});
+        }
+    }
+    // 所有 shadow 都成功後才一次 commit；中途任何失敗不修改 master graph。
+    for (auto* slot : releases) {
+        slot->monitor_shadow.reset();
+        slot->monitor_latency_samples = 0;
+        slot->monitor_latency_known = false;
+        slot->monitor_state = RackSlot::RuntimeState::kActive;
+    }
+    for (auto& item : pending) {
+        item.slot->monitor_shadow = std::move(item.plugin);
+        item.slot->monitor_latency_samples = item.latency;
+        item.slot->monitor_latency_known = true;
+        item.slot->monitor_state = RackSlot::RuntimeState::kActive;
+        for (const auto& [id, value] : item.slot->param_values)
+            item.slot->monitor_ring->push({id, value});
+    }
+    return true;
+}
+
+bool AudioEngine::prepare_monitor_variants(std::string& err) {
+    const auto rate = rt_sample_rate_.load(std::memory_order_relaxed);
+    const std::uint64_t plan_rate =
+        rate > 0 ? rate : (last_sample_rate_ > 0 ? last_sample_rate_ : 48000u);
+    const auto plan = route_plan_for_tracks(tracks_, plan_rate);
+    const bool missing = plan.ok() && std::any_of(
+        plan.tracks.begin(), plan.tracks.end(), [](const RouteTrackPlan& track) {
+            return std::any_of(track.slots.begin(), track.slots.end(),
+                               [](const RouteSlotPlan& slot) {
+                                   return slot.shadow == ShadowDisposition::kCreate;
+                               });
+        });
+    if (device_.running() && missing) {
+        // 只在 RT snapshot 暫時 bypass；master/user intent 不變，失敗時不用
+        // 回填整份 bypass vector，也不會污染 Session dirty 狀態。
+        if (!swap_safety_graph()) {
+            err = "cannot prepare monitor shadow safety graph";
+            return false;
+        }
+        Sleep(60);
+    }
+    if (!ensure_monitor_shadows(err)) {
+        if (device_.running()) (void)swap_graph();
+        return false;
+    }
+    return true;
 }
 
 void AudioEngine::retire_graph() noexcept {
@@ -634,6 +1158,40 @@ bool AudioEngine::track_set(std::uint32_t track_id, std::optional<std::string> n
     return true;
 }
 
+bool AudioEngine::track_set_latency_policy(std::uint32_t track_id,
+                                           OutputLatencyPolicy policy,
+                                           std::string& err) {
+    TrackNode* t = find_track_mut(track_id);
+    if (t == nullptr) {
+        err = "unknown trackId " + std::to_string(track_id);
+        return false;
+    }
+    if (t->kind != TrackKind::kOutput) {
+        err = "latency policy applies only to output tracks";
+        return false;
+    }
+    if (t->latency_policy == policy) return true;
+    const auto previous = t->latency_policy;
+    t->latency_policy = policy;
+    if (!prepare_monitor_variants(err)) {
+        t->latency_policy = previous;
+        std::string cleanup_error;
+        (void)ensure_monitor_shadows(cleanup_error);
+        (void)swap_graph();
+        return false;
+    }
+    if (!swap_graph()) {
+        t->latency_policy = previous;
+        std::string cleanup_error;
+        (void)ensure_monitor_shadows(cleanup_error);
+        (void)swap_graph();
+        err = "PDC plan exceeds latency or memory safety limits";
+        return false;
+    }
+    revision_.fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
+
 bool AudioEngine::track_set_source(std::uint32_t track_id, const TrackSource& source,
                                    std::string& err, std::string& code) {
     TrackNode* t = find_track_mut(track_id);
@@ -726,7 +1284,12 @@ bool AudioEngine::track_set_source(std::uint32_t track_id, const TrackSource& so
             return false;
         }
     }
-    swap_graph();
+    if (!swap_graph()) {
+        t->source = prev;
+        err = "PDC plan exceeds latency or memory safety limits";
+        code = "bad_command";
+        return false;
+    }
     revision_.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
@@ -825,7 +1388,22 @@ bool AudioEngine::track_set_dests(std::uint32_t track_id, std::vector<std::uint3
         code = "cycle_detected";
         return false;
     }
-    swap_graph();
+    if (!prepare_monitor_variants(err)) {
+        t->dests = old;
+        std::string cleanup_error;
+        (void)ensure_monitor_shadows(cleanup_error);
+        (void)swap_graph();
+        code = "plugin_state_failed";
+        return false;
+    }
+    if (!swap_graph()) {
+        t->dests = old;
+        std::string cleanup_error;
+        (void)ensure_monitor_shadows(cleanup_error);
+        err = "PDC plan exceeds latency or memory safety limits";
+        code = "bad_command";
+        return false;
+    }
     revision_.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
@@ -976,11 +1554,24 @@ bool AudioEngine::add_plugin(std::uint32_t track_id, const std::string& module_p
     slot.module_path = module_path;
     slot.class_id = slot.plugin->class_uid();
     slot.name = slot.plugin->name();
+    refresh_latency(slot);
+    bind_latency_callback(slot);
     for (const auto& p : slot.plugin->params())
         slot.param_values.push_back({p.id, p.default_normalized});
     instance_id = slot.instance_id;
     t->chain.push_back(std::move(slot));
-    swap_graph();
+    if (!prepare_monitor_variants(err)) {
+        t->chain.pop_back();
+        (void)swap_graph();
+        return false;
+    }
+    if (!swap_graph()) {
+        t->chain.pop_back();
+        std::string cleanup_error;
+        (void)ensure_monitor_shadows(cleanup_error);
+        err = "PDC plan exceeds latency or memory safety limits";
+        return false;
+    }
     revision_.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
@@ -1023,6 +1614,7 @@ bool AudioEngine::load_placeholder(std::uint32_t instance_id, const std::string&
         err = "instance is not a placeholder";
         return false;
     }
+    const RackSlot previous = *s;
     // 原位置/instanceId/params/bypass 全保留:只把 plugin 補上、狀態轉 ok
     auto plugin = std::make_shared<Vst3Plugin>(module_path, class_id);
     if (!plugin->loaded()) {
@@ -1041,12 +1633,25 @@ bool AudioEngine::load_placeholder(std::uint32_t instance_id, const std::string&
     s->name = s->plugin->name();
     s->availability = RackSlot::Availability::kOk;
     s->load_error.clear();
+    refresh_latency(*s);
+    bind_latency_callback(*s);
+    if (!prepare_monitor_variants(err)) {
+        *s = previous;
+        (void)swap_graph();
+        return false;
+    }
     // session 帶回來的 host 權威值推 RT + controller(同 load_preset 三路同步)
     for (const auto& [id, v] : s->param_values) {
         s->ring->push({id, v});
         s->plugin->set_param_normalized(id, v);
     }
-    swap_graph();
+    if (!swap_graph()) {
+        *s = previous;
+        std::string cleanup_error;
+        (void)ensure_monitor_shadows(cleanup_error);
+        err = "PDC plan exceeds latency or memory safety limits";
+        return false;
+    }
     revision_.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
@@ -1101,8 +1706,53 @@ bool AudioEngine::set_bypass(std::uint32_t instance_id, bool bypass, std::string
         err = "unknown instanceId " + std::to_string(instance_id);
         return false;
     }
+    if (s->bypass == bypass) return true;
+    const bool previous = s->bypass;
     s->bypass = bypass;
-    swap_graph();
+    if (!prepare_monitor_variants(err)) {
+        s->bypass = previous;
+        std::string cleanup_error;
+        (void)ensure_monitor_shadows(cleanup_error);
+        (void)swap_graph();
+        return false;
+    }
+    if (!swap_graph()) {
+        s->bypass = previous;
+        std::string cleanup_error;
+        (void)ensure_monitor_shadows(cleanup_error);
+        (void)swap_graph();
+        err = "PDC plan exceeds latency or memory safety limits";
+        return false;
+    }
+    revision_.fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
+
+bool AudioEngine::set_monitor_bypass(std::uint32_t instance_id, bool bypass,
+                                     std::string& err) {
+    RackSlot* s = find_slot_mut(instance_id);
+    if (s == nullptr) {
+        err = "unknown instanceId " + std::to_string(instance_id);
+        return false;
+    }
+    if (s->monitor_bypass == bypass) return true;
+    const bool previous = s->monitor_bypass;
+    s->monitor_bypass = bypass;
+    if (!prepare_monitor_variants(err)) {
+        s->monitor_bypass = previous;
+        std::string cleanup_error;
+        (void)ensure_monitor_shadows(cleanup_error);
+        (void)swap_graph();
+        return false;
+    }
+    if (!swap_graph()) {
+        s->monitor_bypass = previous;
+        std::string cleanup_error;
+        (void)ensure_monitor_shadows(cleanup_error);
+        (void)swap_graph();  // running 時先前的全 bypass 過渡 graph 必須還原
+        err = "PDC plan exceeds latency or memory safety limits";
+        return false;
+    }
     revision_.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
@@ -1131,6 +1781,10 @@ bool AudioEngine::set_param(std::uint32_t instance_id, std::uint32_t param_id, d
         return false;
     }
     s->ring->push({param_id, value});  // 滿 = drop;權威值已更新,UI 重送冪等
+    if (s->monitor_shadow) {
+        s->monitor_ring->push({param_id, value});
+        s->monitor_shadow->set_param_normalized(param_id, value);
+    }
     revision_.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
@@ -1172,27 +1826,111 @@ bool AudioEngine::load_preset(std::uint32_t instance_id, const std::filesystem::
     }
     // setState 與 RT process 不得併發:同 save_preset,先掛 bypass
     const bool orig_bypass = s->bypass;
+    const auto original_params = s->param_values;
+    const auto original_primary_latency = s->latency_samples;
+    const auto original_monitor_latency = s->monitor_latency_samples;
+    const auto original_primary_known = s->latency_known;
+    const auto original_monitor_known = s->monitor_latency_known;
+    const auto original_primary_state = s->primary_state;
+    const auto original_monitor_state = s->monitor_state;
     s->bypass = true;
-    swap_graph();
+    (void)swap_graph();
     Sleep(60);
-    bool host_values_from_file = false;
-    const bool ok = s->plugin->load_preset(file, s->param_values, err, host_values_from_file);
-    s->bypass = orig_bypass;
-    swap_graph();
-    if (!ok) return false;
-    // 檔案無 RmxP(外部 host 存的 preset)且 controller 同步成功:拿 controller
-    // 值重同步 host 權威表。兩者皆無 = 保持現值(component 已套用,UI 值不明)
-    if (!host_values_from_file) {
-        for (auto& [id, v] : s->param_values) {
-            const double fresh = s->plugin->param_value(id);
-            if (std::isfinite(fresh)) v = fresh;
+    Vst3RuntimeState original_primary;
+    Vst3RuntimeState original_shadow;
+    if (!s->plugin->capture_runtime_state(original_primary, err)) {
+        s->bypass = orig_bypass;
+        (void)swap_graph();
+        return false;
+    }
+    if (s->monitor_shadow) {
+        std::string capture_error;
+        if (!s->monitor_shadow->capture_runtime_state(original_shadow, capture_error)) {
+            s->bypass = orig_bypass;
+            (void)swap_graph();
+            err = "monitor shadow state capture failed: " + capture_error;
+            return false;
         }
     }
-    // 三路同步:load_preset 只更新了 host 權威表/component state —— RT(ring)與
-    // controller(editor GUI 顯示)都沒吃到,kHs Gain 實測數值不回來。這裡補推
-    for (auto& [id, v] : s->param_values) {
-        s->ring->push({id, v});                    // RT 下一個 block 套用
-        s->plugin->set_param_normalized(id, v);    // controller → editor GUI
+    bool host_values_from_file = false;
+    bool ok = s->plugin->load_preset(file, s->param_values, err, host_values_from_file);
+    // 檔案無 RmxP(外部 host 存的 preset)時，以 primary controller 回報重建
+    // host 權威參數；shadow 永遠跟隨這份權威值。
+    if (ok && !host_values_from_file) {
+        for (auto& [id, value] : s->param_values) {
+            const double fresh = s->plugin->param_value(id);
+            if (std::isfinite(fresh)) value = fresh;
+        }
+    }
+    if (ok && s->monitor_shadow) {
+        auto shadow_params = s->param_values;
+        bool shadow_values_from_file = false;
+        std::string shadow_err;
+        if (!s->monitor_shadow->load_preset(file, shadow_params, shadow_err,
+                                            shadow_values_from_file)) {
+            err = "monitor shadow preset sync failed: " + shadow_err;
+            ok = false;
+        } else {
+            s->monitor_latency_samples = s->monitor_shadow->latency_samples();
+            s->monitor_latency_known = true;
+            s->monitor_state = RackSlot::RuntimeState::kActive;
+            for (const auto& [id, value] : s->param_values)
+                s->monitor_shadow->set_param_normalized(id, value);
+            if (device_.running() &&
+                !pre_roll_shadow(*s->monitor_shadow, s->param_values,
+                                 rt_sample_rate_.load(std::memory_order_relaxed),
+                                 device_.block_size(), shadow_err)) {
+                err = "monitor shadow preset pre-roll failed: " + shadow_err;
+                ok = false;
+            }
+        }
+    }
+    s->bypass = orig_bypass;
+    if (ok) {
+        refresh_latency(*s);
+        s->primary_state = RackSlot::RuntimeState::kActive;
+        if (!prepare_monitor_variants(err)) ok = false;
+    }
+    if (ok) {
+        ok = swap_graph();
+        if (!ok) err = "PDC plan exceeds latency or memory safety limits";
+    }
+    if (!ok) {
+        std::string rollback_error;
+        const bool primary_restored =
+            s->plugin->restore_runtime_state(original_primary, rollback_error);
+        bool shadow_restored = true;
+        if (s->monitor_shadow)
+            shadow_restored =
+                s->monitor_shadow->restore_runtime_state(original_shadow, rollback_error);
+        s->param_values = original_params;
+        s->latency_samples = original_primary_latency;
+        s->monitor_latency_samples = original_monitor_latency;
+        s->latency_known = original_primary_known;
+        s->monitor_latency_known = original_monitor_known;
+        s->primary_state = original_primary_state;
+        s->monitor_state = original_monitor_state;
+        for (const auto& [id, value] : s->param_values) {
+            s->plugin->set_param_normalized(id, value);
+            s->ring->push({id, value});
+            if (s->monitor_shadow) {
+                s->monitor_shadow->set_param_normalized(id, value);
+                s->monitor_ring->push({id, value});
+            }
+        }
+        (void)swap_graph();
+        if (!primary_restored || !shadow_restored)
+            err += "; rollback failed: " + rollback_error;
+        return false;
+    }
+    // commit 後三路同步：host 權威表、RT ring、controller/editor。
+    for (const auto& [id, value] : s->param_values) {
+        s->ring->push({id, value});
+        s->plugin->set_param_normalized(id, value);
+        if (s->monitor_shadow) {
+            s->monitor_ring->push({id, value});
+            s->monitor_shadow->set_param_normalized(id, value);
+        }
     }
     revision_.fetch_add(1, std::memory_order_relaxed);
     return true;
@@ -1215,7 +1953,11 @@ bool AudioEngine::ensure_system_outputs() {
 
 void AudioEngine::set_track_system_role(std::uint32_t track_id, SystemRole role) {
     TrackNode* t = find_track_mut(track_id);
-    if (t != nullptr) t->system_role = role;
+    if (t != nullptr) {
+        t->system_role = role;
+        t->latency_policy = role == SystemRole::kMonitor ? OutputLatencyPolicy::kLowLatency
+                                                         : OutputLatencyPolicy::kFullPdc;
+    }
 }
 
 void AudioEngine::clear_all_tracks() {
@@ -1273,6 +2015,8 @@ void AudioEngine::process(const AudioBlock& block) noexcept {
         if (t.buf != nullptr) {
             std::memset(t.buf->in[0], 0, frames * sizeof(float));
             std::memset(t.buf->in[1], 0, frames * sizeof(float));
+            std::memset(t.buf->monitor_in[0], 0, frames * sizeof(float));
+            std::memset(t.buf->monitor_in[1], 0, frames * sizeof(float));
         }
     }
 
@@ -1285,10 +2029,15 @@ void AudioEngine::process(const AudioBlock& block) noexcept {
     for (const auto idx : g->order) {
         const TrackNode& n = g->nodes[idx];
         if (n.buf == nullptr) continue;
+        const RouteTrackPlan& route_plan = g->route_plan.tracks[idx];
         float* cur_l = n.buf->in[0];
         float* cur_r = n.buf->in[1];
         float* alt_l = n.buf->alt[0];
         float* alt_r = n.buf->alt[1];
+        float* monitor_l = n.buf->monitor_in[0];
+        float* monitor_r = n.buf->monitor_in[1];
+        float* monitor_alt_l = n.buf->monitor_alt[0];
+        float* monitor_alt_r = n.buf->monitor_alt[1];
 
         // 來源(kNone = FX/output 軌:bus 已含上游 sum)
         switch (n.source.type) {
@@ -1343,29 +2092,97 @@ void AudioEngine::process(const AudioBlock& block) noexcept {
             case TrackSource::kNone:
                 break;
         }
+        if (n.source.type != TrackSource::kNone) {
+            std::memcpy(monitor_l, cur_l, frames * sizeof(float));
+            std::memcpy(monitor_r, cur_r, frames * sizeof(float));
+        }
 
-        // VST 鏈 ping-pong(每 slot 就地)
+        // RoutePlan 是唯一 slot 決策來源；同一迴圈依序執行 primary 與需要的
+        // monitor variant，避免兩條分支各自重編 bypass/suspension 規則。
         for (std::size_t si = 0; si < n.chain.size(); ++si) {
             const RackSlot& slot = n.chain[si];
-            Vst3Plugin* plugin = slot.plugin.get();
-            if (!slot.bypass && plugin != nullptr) {
-                const std::size_t cnt = slot.ring->pop_all(edits, kMaxParamEditsPerBlock);
-                if (plugin->process(cur_l, cur_r, alt_l, alt_r,
-                                    static_cast<std::int32_t>(frames), edits, cnt)) {
-                    std::swap(cur_l, alt_l);
-                    std::swap(cur_r, alt_r);
+            const RouteSlotPlan& slot_plan = route_plan.slots[si];
+            auto run_path = [&](const RoutePathPlan& path, Vst3Plugin* plugin,
+                                ParamRing* ring, PdcDelayLine* dry_delay,
+                                std::uint32_t cpu_index) {
+                if (path.action == RouteSlotAction::kDry ||
+                    path.action == RouteSlotAction::kReusePrimary || plugin == nullptr ||
+                    ring == nullptr)
+                    return;
+                float*& in_l = path.bus == RouteBus::kPrimary ? cur_l : monitor_l;
+                float*& in_r = path.bus == RouteBus::kPrimary ? cur_r : monitor_r;
+                float*& out_l = path.bus == RouteBus::kPrimary ? alt_l : monitor_alt_l;
+                float*& out_r = path.bus == RouteBus::kPrimary ? alt_r : monitor_alt_r;
+                float* dry_l = path.bus == RouteBus::kPrimary ? n.buf->dry[0]
+                                                              : n.buf->monitor_dry[0];
+                float* dry_r = path.bus == RouteBus::kPrimary ? n.buf->dry[1]
+                                                              : n.buf->monitor_dry[1];
+                const std::size_t count = ring->pop_all(edits, kMaxParamEditsPerBlock);
+                if (path.action == RouteSlotAction::kDrainParameters) {
+                    if (count > 0)
+                        (void)plugin->process(in_l, in_r, out_l, out_r,
+                                              static_cast<std::int32_t>(frames), edits,
+                                              count);
+                    return;
+                }
+
+                float* failed_l = in_l;
+                float* failed_r = in_r;
+                if (dry_delay != nullptr) {
+                    std::memset(dry_l, 0, frames * sizeof(float));
+                    std::memset(dry_r, 0, frames * sizeof(float));
+                    dry_delay->process_add(in_l, in_r, dry_l, dry_r, frames);
+                    failed_l = dry_l;
+                    failed_r = dry_r;
+                }
+                bool processed = false;
+                if (cpu_index < kPluginLoadEntries) {
+                    const auto plugin_t0 = plugin_tsc_begin();
+                    processed = plugin->process(in_l, in_r, out_l, out_r,
+                                                static_cast<std::int32_t>(frames), edits,
+                                                count);
+                    const auto elapsed = plugin_tsc_end() - plugin_t0;
+                    meters_.add_plugin_cycles(
+                        cpu_index, elapsed > plugin_timing_overhead_
+                                       ? elapsed - plugin_timing_overhead_
+                                       : 0);
                 } else {
-                    // plugin 拒絕本 block:維持原樣(bypass 效果)、計失敗
+                    processed = plugin->process(in_l, in_r, out_l, out_r,
+                                                static_cast<std::int32_t>(frames), edits,
+                                                count);
+                }
+                if (processed) {
+                    std::swap(in_l, out_l);
+                    std::swap(in_r, out_r);
+                } else {
+                    in_l = failed_l;
+                    in_r = failed_r;
                     rt_plugin_fails_.fetch_add(1, std::memory_order_relaxed);
                 }
+            };
+
+            run_path(slot_plan.primary, slot.plugin.get(), slot.ring.get(),
+                     slot.primary_dry_delay.get(), slot.primary_cpu_index);
+            if (slot_plan.monitor.action == RouteSlotAction::kReusePrimary) {
+                if (slot_plan.monitor.bus == RouteBus::kPrimary) {
+                    monitor_l = cur_l;
+                    monitor_r = cur_r;
+                }
+            } else {
+                run_path(slot_plan.monitor, slot.monitor_shadow.get(),
+                         slot.monitor_ring.get(), slot.shadow_dry_delay.get(),
+                         slot.shadow_cpu_index);
             }
             if (si < n.chain_strips.size() && n.chain_strips[si] != kNoStrip)
                 meter_band(meters_, n.chain_strips[si], cur_l, cur_r, frames);
         }
 
+        if (route_plan.monitor_diverged)
+            n.buf->monitor_crossfade.blend(cur_l, cur_r, monitor_l, monitor_r, frames);
+
         // gain/mute:post-fader,每 sample 套 target;值變時 block 內線性斜坡防爆音
         // (收斂時 inc = 0 = 常數乘;不能只斜坡一個 block — 穩態也要真的乘上 gain)
-        const float target = n.mute ? 0.0F : n.gain;
+        const float target = route_plan.muted ? 0.0F : n.gain;
         const float g0 = n.buf->gain_state;
         const float inc = (target - g0) / static_cast<float>(frames);
         float gv = g0;
@@ -1376,33 +2193,67 @@ void AudioEngine::process(const AudioBlock& block) noexcept {
         }
         n.buf->gain_state = target;
 
+        if (route_plan.monitor_diverged) {
+            const float mg0 = n.buf->monitor_gain_state;
+            const float minc = (target - mg0) / static_cast<float>(frames);
+            float mgv = mg0;
+            for (std::uint32_t i = 0; i < frames; ++i) {
+                mgv += minc;
+                monitor_l[i] *= mgv;
+                monitor_r[i] *= mgv;
+            }
+            n.buf->monitor_gain_state = target;
+        } else {
+            n.buf->monitor_gain_state = target;
+        }
+
         if (n.track_strip != kNoStrip) meter_band(meters_, n.track_strip, cur_l, cur_r, frames);
 
         // 目的地多選 = 加總
-        for (const auto d : n.dests) {
+        for (std::size_t route = 0; route < route_plan.sends.size(); ++route) {
+            const auto& send = route_plan.sends[route];
+            const auto d = send.to_track_id;
             if (d >= g->id_index.size()) continue;
             const auto di = g->id_index[d];
             if (di == kNoStrip || di >= g->nodes.size()) continue;
             const auto& dst = g->nodes[di];
             if (dst.buf == nullptr) continue;
-            bus_add(dst.buf->in[0], cur_l, frames);
-            bus_add(dst.buf->in[1], cur_r, frames);
+            const float* primary_l = send.primary_bus == RouteBus::kPrimary ? cur_l : monitor_l;
+            const float* primary_r = send.primary_bus == RouteBus::kPrimary ? cur_r : monitor_r;
+            const float* sent_monitor_l =
+                send.monitor_bus == RouteBus::kPrimary ? cur_l : monitor_l;
+            const float* sent_monitor_r =
+                send.monitor_bus == RouteBus::kPrimary ? cur_r : monitor_r;
+            if (route < n.dest_pdc.size() && n.dest_pdc[route] != nullptr)
+                n.dest_pdc[route]->process_add(primary_l, primary_r, dst.buf->in[0],
+                                               dst.buf->in[1], frames);
+            else {
+                bus_add(dst.buf->in[0], primary_l, frames);
+                bus_add(dst.buf->in[1], primary_r, frames);
+            }
+            bus_add(dst.buf->monitor_in[0], sent_monitor_l, frames);
+            bus_add(dst.buf->monitor_in[1], sent_monitor_r, frames);
         }
+
+        const float* sink_l =
+            route_plan.output_bus == RouteBus::kMonitor ? monitor_l : cur_l;
+        const float* sink_r =
+            route_plan.output_bus == RouteBus::kMonitor ? monitor_r : cur_r;
 
         // Sink(ASIO out scratch 已清零,直接 +=)
         if (n.output.type == TrackOutput::kAsioOut) {
             if (n.out_l >= 0 && static_cast<std::size_t>(n.out_l) < block.outputs.size()) {
-                bus_add(block.outputs[static_cast<std::size_t>(n.out_l)], cur_l, frames);
+                bus_add(block.outputs[static_cast<std::size_t>(n.out_l)], sink_l, frames);
                 if (n.out_r >= 0 && static_cast<std::size_t>(n.out_r) < block.outputs.size())
-                    bus_add(block.outputs[static_cast<std::size_t>(n.out_r)], cur_r, frames);
+                    bus_add(block.outputs[static_cast<std::size_t>(n.out_r)], sink_r, frames);
             }
             // strip 0(engine 輸出/頻譜)= 拓撲序最後一條有 ASIO out 的軌
-            engine_l = cur_l;
-            engine_r = cur_r;
+            engine_l = sink_l;
+            engine_r = sink_r;
         }
         // M5c:串流軌寫 render FIFO(滿 = 少寫;pump 端 drift 把 fill 拉回)
         if (n.output.type == TrackOutput::kWasapiRender && n.render != nullptr)
-            n.render->write(cur_l, cur_r, frames);
+            n.render->write(sink_l, sink_r, frames);
     }
 
     if (engine_l != nullptr) {

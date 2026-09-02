@@ -10,6 +10,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include <windows.h>
@@ -70,6 +71,11 @@ public:
     void set_capture_failed_cb(std::function<void(std::uint32_t)> cb) {
         capture_failed_cb_ = std::move(cb);
     }
+    void set_latency_changed_cb(std::function<void(std::uint32_t, bool)> cb) {
+        latency_changed_cb_ = std::move(cb);
+    }
+    // VST callback 只排 message；main thread 持 engine mutex 後在此刷新並交易 graph。
+    void handle_latency_changed(std::uint32_t instance_id, bool monitor_shadow);
     void handle_track_failed(std::uint32_t track_id);  // main thread 專屬(capture 或 render)
 
     bool start(const std::string& device_key, std::optional<std::uint32_t> sample_rate,
@@ -86,6 +92,8 @@ public:
     bool track_set(std::uint32_t track_id, std::optional<std::string> name,
                    std::optional<std::uint32_t> color, std::optional<float> gain,
                    std::optional<bool> mute, std::string& err);
+    bool track_set_latency_policy(std::uint32_t track_id, OutputLatencyPolicy policy,
+                                  std::string& err);
     bool track_set_source(std::uint32_t track_id, const TrackSource& source,
                           std::string& err, std::string& code);
     bool track_set_dests(std::uint32_t track_id, std::vector<std::uint32_t> dests,
@@ -113,6 +121,7 @@ public:
     bool remove_plugin(std::uint32_t instance_id, std::string& err);
     bool move_plugin(std::uint32_t instance_id, std::size_t to_index, std::string& err);
     bool set_bypass(std::uint32_t instance_id, bool bypass, std::string& err);
+    bool set_monitor_bypass(std::uint32_t instance_id, bool bypass, std::string& err);
     bool set_param(std::uint32_t instance_id, std::uint32_t param_id, double value,
                    std::string& err);
     // preset(檔案式 .vstpreset;控制面,假設 g_engine_mutex 已持有)。
@@ -156,9 +165,17 @@ public:
     std::uint32_t last_buffer_size() const noexcept { return last_buffer_size_; }
 
     [[nodiscard]] EngineStatusInfo status() const;
+    [[nodiscard]] PdcPlanResult latency_plan() const { return last_route_plan_.latency; }
+    [[nodiscard]] std::uint64_t latency_generation() const noexcept {
+        return latency_generation_.load(std::memory_order_relaxed);
+    }
 
 private:
     void process(const AudioBlock& block) noexcept override;  // RT
+    void bind_latency_callback(RackSlot& slot);
+    static void refresh_latency(RackSlot& slot) noexcept;
+    bool ensure_monitor_shadows(std::string& err);
+    bool prepare_monitor_variants(std::string& err);
 
     AsioDevice device_;
     MeterAccumulator meters_;
@@ -171,6 +188,7 @@ private:
     // RT 狀態
     std::atomic<std::uint32_t> rt_sample_rate_{};  // Hz
     std::atomic<std::uint32_t> rt_plugin_fails_{};  // RT plugin process 失敗數
+    std::uint64_t plugin_timing_overhead_{};        // control thread 啟動時校準
     std::atomic<int> panel_open_{0};               // 硬體面板開著(>0):期間禁 start(driver 重開 race)
 
     // tracks:control master + RT snapshot(atomic swap)。tracks_ 只在 main thread
@@ -179,6 +197,10 @@ private:
     std::uint32_t next_track_id_{1};
     std::uint32_t next_instance_id_{1};
     std::atomic<std::uint64_t> revision_{0};  // 權威狀態版號(含 set_param;dirty 判定)
+    std::atomic<std::uint64_t> latency_generation_{0};
+    RoutePlan last_route_plan_;
+    std::unordered_map<std::uint64_t, std::shared_ptr<PdcDelayLine>> pdc_delay_states_;
+    std::unordered_map<std::uint64_t, std::shared_ptr<PdcDelayLine>> dry_delay_states_;
     std::string last_device_key_;     // 空 = 從未成功 start
     std::uint32_t last_sample_rate_{};
     std::uint32_t last_buffer_size_{};
@@ -189,7 +211,8 @@ private:
     };
     std::vector<Retired> retired_;
 
-    void swap_graph() noexcept;             // master 拷貝成新 graph、atomic 換、舊 graph 退役
+    bool swap_graph() noexcept;  // candidate 合法才 atomic commit
+    bool swap_safety_graph() noexcept;  // 複製目前 RT routing，只暫停 plugin process
     void retire_graph() noexcept;           // graph 退場(RT 改讀 nullptr)
     void clear_expired_retired(bool force) noexcept;  // grace > 500ms 才刪
     // 跑著時軌道動了 ASIO pair:以最新 source/output 聯集重建裝置 buffer
@@ -209,6 +232,7 @@ private:
     void stop_render(TrackNode& t) noexcept;
     void stop_renders() noexcept;
     std::function<void(std::uint32_t)> capture_failed_cb_;
+    std::function<void(std::uint32_t, bool)> latency_changed_cb_;
 };
 
 }  // namespace rmx

@@ -5,6 +5,32 @@
   font-weight: 400;
   font-display: swap;
 }
+
+.latency-drawer {
+  position: fixed;
+  inset: 48px 0 0 auto;
+  z-index: 80;
+  width: min(620px, 92vw);
+  overflow: auto;
+  padding: 14px;
+  border-left: 1px solid var(--line, #353b45);
+  background: var(--panel, #171a1f);
+  box-shadow: -12px 0 28px #0008;
+}
+.drawer-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.drawer-head strong { flex: 1; }
+.latency-output-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; }
+.latency-output { display: grid; gap: 4px; padding: 10px; border: 1px solid var(--line, #353b45); border-radius: 6px; }
+.latency-output small { color: var(--dim, #9aa3af); }
+.drawer-sort { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 12px; color: var(--text-dim); }
+.drawer-sort select { min-width: 150px; }
+.latency-table { margin-top: 12px; border: 1px solid var(--line, #353b45); border-radius: 6px; overflow: hidden; }
+.latency-row { display: grid; grid-template-columns: minmax(180px, 1fr) 90px 100px 110px; gap: 8px; padding: 7px 9px; border-top: 1px solid var(--line, #353b45); }
+.latency-row:first-child { border-top: 0; }
+.latency-header { color: var(--dim, #9aa3af); font-size: 12px; }
+.latency-path { display: block; color: var(--text-dim); }
+.monitor-bypass.on { color: #75d7ff; border-color: #3b94b8; }
+.monitor-bypass.pending { color: var(--warn); border-color: var(--warn); }
 @font-face {
   font-family: "IBM Plex Sans TC";
   src: url("/fonts/IBMPlexSansTC-SemiBold.ttf") format("truetype");

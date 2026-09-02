@@ -1,4 +1,4 @@
-// DTO 鏡像 — 契約權威:contracts/protocol.schema.json $defs(protocol v2 / telemetry v3)
+// DTO 鏡像 — 契約權威:contracts/protocol.schema.json $defs(protocol v2 / telemetry v4)
 
 export interface ConnectionStatus {
   connected: boolean;
@@ -47,6 +47,7 @@ export interface Track {
   trackId: number;
   kind: "audio" | "app" | "fx" | "output";
   systemRole?: "monitor" | "stream" | null; // 系統輸出(不可刪;每 session 恰好各一)
+  latencyPolicy?: "fullPdc" | "lowLatency";
   name: string;
   color: number; // 0xRRGGBB
   source: TrackSource | null;
@@ -71,6 +72,8 @@ export interface EngineStatus {
   trackCount: number;
   pluginFails: number;
   revision?: number; // 權威 dirty 版號(所有成功 mutation +1,含 set_param)
+  latencyGeneration?: number;
+  pluginDelay?: { monitorSamples: number | null; streamSamples: number | null };
   tracks: Track[];
   error: string | null;
 }
@@ -81,6 +84,12 @@ export interface RackSlot {
   pluginPath: string;
   classId: string;
   bypassed: boolean;
+  monitorBypassed?: boolean;
+  latencySamples?: number | null;
+  effectiveLatencySamples?: number | null;
+  monitorLatencySamples?: number | null;
+  runtimeState?: "active" | "preparing" | "degraded" | "suspended";
+  monitorState?: "active" | "preparing" | "degraded" | "suspended";
   params: ParamValue[];
   availability?: "ok" | "missing" | "loadFailed"; // != ok = placeholder(不參與 DSP)
   loadError?: string | null;
@@ -130,6 +139,30 @@ export interface Snapshot {
   status: EngineStatus;
   tracks: Track[];
   lastScan: ScanModule[] | null;
+  capabilities?: string[];
+}
+
+export interface LatencyReportOutput {
+  trackId: number;
+  totalPluginDelaySamples: number;
+  compensationDelaySamples: number;
+  synchronized: boolean;
+}
+
+export interface LatencyReportEdge {
+  fromTrackId: number;
+  toTrackId: number;
+  compensationDelaySamples: number;
+}
+
+export interface LatencyReport {
+  generation: number;
+  ok: boolean;
+  error: string;
+  bufferBytes: number;
+  outputs: LatencyReportOutput[];
+  edges: LatencyReportEdge[];
+  tracks: Track[];
 }
 
 export interface DeviceInfo {
@@ -147,7 +180,7 @@ export interface DeviceInfo {
   outputNames: string[];
 }
 
-// telemetry SHM(contracts/telemetry_abi.md v3)
+// telemetry SHM(contracts/telemetry_abi.md v4)
 export interface MeterStrip {
   instanceId: number;
   kind: number; // 0 = plugin、1 = track、2 = engine 輸出
@@ -167,5 +200,10 @@ export interface MetersFrame {
   inputLatency: number;
   outputLatency: number;
   strips: MeterStrip[];
+  pluginLoads?: Array<{
+    instanceId: number;
+    variant: 0 | 1;
+    processLoad: number;
+  }>;
   spectrum: number[] | null; // 線性 0..Nyquist,dB(-120 floor);null = 無頻譜
 }

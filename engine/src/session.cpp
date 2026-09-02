@@ -10,7 +10,7 @@
 namespace rmx::session {
 
 namespace {
-constexpr int kSessionVersion = 2;
+constexpr int kSessionVersion = 3;
 
 // availability ↔ JSON:字串實作共用 rack.hpp availability_str;舊檔無此欄 = ok
 using rmx::availability_str;
@@ -114,6 +114,7 @@ nlohmann::json serialize(const AudioEngine& engine) {
                 {"classId", s.class_id},
                 {"name", s.name},
                 {"bypassed", s.bypass},
+                {"monitorBypassed", s.monitor_bypass},
                 {"params", params},
                 // placeholder 資訊:存了才不會「重新儲存把遺失 plugin 丟掉」
                 {"availability", availability_str(s.availability)},
@@ -126,6 +127,7 @@ nlohmann::json serialize(const AudioEngine& engine) {
             {"trackId", t.track_id},
             {"kind", track_kind_str(t.kind)},
             {"systemRole", role != nullptr ? nlohmann::json(role) : nlohmann::json(nullptr)},
+            {"latencyPolicy", output_latency_policy_str(t.latency_policy)},
             {"name", t.name},
             {"color", t.color},
             {"source", source_to_json(t.source)},
@@ -234,9 +236,13 @@ bool load(AudioEngine& engine, const std::filesystem::path& file, nlohmann::json
 
     const nlohmann::json j = nlohmann::json::parse(text, nullptr, /*allow_exceptions=*/false);
     if (j.is_discarded() || !j.is_object() || !j.contains("roudamixSession") ||
-        !j["roudamixSession"].is_number_integer() ||
-        j["roudamixSession"].get<int>() != kSessionVersion) {
-        err = "not a RoudaMix session v2 file (roudamixSession != 2; v1 不支援,請重建)";
+        !j["roudamixSession"].is_number_integer()) {
+        err = "not a RoudaMix session file";
+        return false;
+    }
+    const int file_version = j["roudamixSession"].get<int>();
+    if (file_version != 2 && file_version != kSessionVersion) {
+        err = "unsupported RoudaMix session version (expected v2 or v3)";
         return false;
     }
 
@@ -275,6 +281,14 @@ bool load(AudioEngine& engine, const std::filesystem::path& file, nlohmann::json
                 else if (rs == "stream") role = rmx::SystemRole::kStream;
                 engine.set_track_system_role(new_id, role);
             }
+            if (file_version >= 3 && st.contains("latencyPolicy") &&
+                st["latencyPolicy"].is_string()) {
+                const auto ps = st["latencyPolicy"].get<std::string>();
+                const auto policy = ps == "lowLatency" ? OutputLatencyPolicy::kLowLatency
+                                                        : OutputLatencyPolicy::kFullPdc;
+                std::string policy_err;
+                (void)engine.track_set_latency_policy(new_id, policy, policy_err);
+            }
 
             std::string op_err, op_code;
             if (st.contains("source"))
@@ -306,6 +320,11 @@ bool load(AudioEngine& engine, const std::filesystem::path& file, nlohmann::json
                     const bool bypassed =
                         sp.contains("bypassed") && sp["bypassed"].is_boolean()
                             ? sp["bypassed"].get<bool>()
+                            : false;
+                    const bool monitor_bypassed =
+                        file_version >= 3 && sp.contains("monitorBypassed") &&
+                        sp["monitorBypassed"].is_boolean()
+                            ? sp["monitorBypassed"].get<bool>()
                             : false;
                     // params 先收好:載入成功要重放;失敗也要跟 placeholder 一起留
                     std::vector<std::pair<std::uint32_t, double>> params;
@@ -357,6 +376,8 @@ bool load(AudioEngine& engine, const std::filesystem::path& file, nlohmann::json
                         (void)engine.add_placeholder_plugin(new_id, path, class_id, plug_name,
                                                             bypassed, stored, stored_err, params,
                                                             instance_id, ph_err);
+                        if (monitor_bypassed)
+                            (void)engine.set_monitor_bypass(instance_id, true, ph_err);
                         ++chain_index;
                         continue;
                     }
@@ -386,6 +407,8 @@ bool load(AudioEngine& engine, const std::filesystem::path& file, nlohmann::json
                     if (loaded) {
                         std::string pl_err;
                         if (bypassed) (void)engine.set_bypass(instance_id, true, pl_err);
+                        if (monitor_bypassed)
+                            (void)engine.set_monitor_bypass(instance_id, true, pl_err);
                         for (const auto& [pid, v] : params) {
                             std::string perr;
                             (void)engine.set_param(instance_id, pid, v, perr);
@@ -403,6 +426,8 @@ bool load(AudioEngine& engine, const std::filesystem::path& file, nlohmann::json
                                 ? missing.back()["message"].get<std::string>()
                                 : std::string("load failed"),
                             params, ph_id, ph_err);
+                        if (monitor_bypassed)
+                            (void)engine.set_monitor_bypass(ph_id, true, ph_err);
                     }
                     ++chain_index;
                 }

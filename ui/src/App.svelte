@@ -8,6 +8,7 @@
   } from "@tauri-apps/plugin-autostart";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import TrackStrip from "./lib/TrackStrip.svelte";
+  import LatencyDrawer from "./lib/LatencyDrawer.svelte";
   import ContextMenu from "./lib/ContextMenu.svelte";
   import { mountDragGhost, removeDragGhost } from "./lib/ghost";
   import { isDirty, resolveDirtyChoice, type DirtyChoice } from "./lib/dirty";
@@ -21,7 +22,7 @@
     onSnapshot,
     onEngineEvent,
     onMeters,
-    engineCommand,
+    onTelemetryAbiMismatch,
     getSettings,
     setSettings,
     listSessions,
@@ -31,6 +32,7 @@
     respawnEngine,
     type AppSettings,
   } from "./lib/ipc";
+  import { engineCommand } from "./lib/protocol-commands.generated";
   import type {
     ConnectionStatus,
     DeviceInfo,
@@ -46,6 +48,8 @@
   let connProbeErr = $state<string | null>(null); // 主動 get_snapshot 的錯誤(version mismatch 等)
   let snap = $state<unknown>(null);
   let status = $state<EngineStatus | null>(null);
+  let latencyEnabled = $state(false);
+  let latencyDrawerOpen = $state(false);
   let meters = $state<MetersFrame | null>(null);
   let devices = $state<DeviceInfo[]>([]);
   let selected = $state("");
@@ -69,14 +73,51 @@
     kind: "error" | "info";
     msg: string;
     raw?: string; // 技術細節(可複製)
+    dismissible: boolean;
+    autoDismissMs?: number;
   }
   let notices = $state<Notice[]>([]);
   let nextNoticeId = 1;
-  function addNotice(kind: Notice["kind"], msg: string, raw?: string): void {
-    notices = [...notices.slice(-4), { id: nextNoticeId++, kind, msg, raw }];
+  const latencyRuntimeStates = new Map<string, string>();
+  function addNotice(
+    kind: Notice["kind"],
+    msg: string,
+    raw?: string,
+    autoDismissMs = 0,
+  ): void {
+    const id = nextNoticeId++;
+    notices = [
+      ...notices.slice(-4),
+      { id, kind, msg, raw, dismissible: autoDismissMs <= 0, autoDismissMs },
+    ];
+    if (autoDismissMs > 0) setTimeout(() => dismissNotice(id), autoDismissMs);
   }
   function dismissNotice(id: number): void {
     notices = notices.filter((n) => n.id !== id);
+  }
+  function observeLatencyRuntime(tracks: Track[]): void {
+    if (!latencyEnabled) return;
+    for (const track of tracks) {
+      for (const plugin of track.plugins) {
+        for (const [variant, state] of [
+          ["primary", plugin.runtimeState ?? "active"],
+          ["monitor", plugin.monitorState ?? "active"],
+        ] as const) {
+          const key = `${plugin.instanceId}:${variant}`;
+          const previous = latencyRuntimeStates.get(key);
+          latencyRuntimeStates.set(key, state);
+          if (state === previous) continue;
+          const role = variant === "monitor" ? "Monitor Shadow" : "Primary";
+          if (state === "suspended" || state === "degraded")
+            addNotice(
+              "error",
+              `${plugin.name} 的 ${role} 已${state === "suspended" ? "暫停" : "降級"}，受影響路徑改送 dry audio。`,
+            );
+          else if (state === "active" && previous && previous !== "active")
+            addNotice("info", `${plugin.name} 的 ${role} 已恢復。`, undefined, 3000);
+        }
+      }
+    }
   }
   /** P1-O:可複製診斷(WebView2 secure context 下 clipboard 可用;失敗 = 提示) */
   async function copyText(t: string): Promise<boolean> {
@@ -224,11 +265,14 @@
       await onSnapshot((s) => {
         snap = s;
         status = s.status;
+        latencyEnabled = s.capabilities?.includes("pluginLatencyPdcV1") ?? false;
+        observeLatencyRuntime(s.status.tracks);
         if (typeof s.status.revision === "number") revision = s.status.revision;
         // 全域 plugin registry 重連也對齊(不用重新掃);掃描進行中不覆寫
         if (!scanRunning && Array.isArray(s.lastScan)) {
           scanModules = s.lastScan as ScanModule[];
         }
+        if (devices.length === 0) void refreshDevices();
         void ensureDefaults(); // 首次連上空場景也要補系統輸出(snapshot 不走 status 事件)
       }),
     );
@@ -238,6 +282,7 @@
           status = payload as EngineStatus;
           const st = payload as EngineStatus;
           if (typeof st.revision === "number") revision = st.revision;
+          observeLatencyRuntime(st.tracks);
           // stream 狀態的權威對齊:engine 跑著時 UI 選擇跟著實際值(失敗回滾後也正確)
           if (st.running && st.deviceKey) selected = st.deviceKey;
           void ensureDefaults();
@@ -262,6 +307,8 @@
             addNotice(
               "info",
               `VST 清單已更新：${scanModules.length} 個模組${scanFailed.length ? `，${scanFailed.length} 個無法載入` : ""}`,
+              undefined,
+              3000,
             );
           }
         }
@@ -292,6 +339,15 @@
         feedLoad(); // J:負載警示 debounce(持續過載才通知)
       }),
     );
+      sub(
+      await onTelemetryAbiMismatch(({ expected, found }) => {
+        addNotice(
+          "error",
+          "Plugin Process Load 暫時不可用；Plugin Latency 與 PDC 仍正常。",
+          `Telemetry ABI 不相容：UI 需要 v${expected}，engine 提供 v${found}`,
+        );
+      }),
+    );
     // 主視窗關閉一律攔下：首次詢問關閉行為；縮至系統匣不觸發 dirty 詢問，
     // 真正退出才沿用未儲存 Session 保護。
       sub(
@@ -306,8 +362,10 @@
     // 主動權威同步:連線已久/事件早發過的場合,snapshot 事件不會再來
     try {
       const r = await engineCommand("get_snapshot", {});
-      const s = r.snapshot as { status: EngineStatus; lastScan: ScanModule[] | null };
+      const s = r.snapshot as { status: EngineStatus; lastScan: ScanModule[] | null; capabilities?: string[] };
       status = s.status;
+      latencyEnabled = s.capabilities?.includes("pluginLatencyPdcV1") ?? false;
+      observeLatencyRuntime(s.status.tracks);
       if (typeof s.status.revision === "number") revision = s.status.revision;
       if (!scanRunning && Array.isArray(s.lastScan)) scanModules = s.lastScan;
       connProbeErr = null;
@@ -552,9 +610,17 @@
     }
   }
 
-  /** P1-D:依偏好序嘗試啟動。成功才把該裝置/Buffer 存成 lastWorking(失敗選擇
+  let autoStartP: Promise<void> | null = null;
+  /** P1-D:single-flight —— onConnection/onSnapshot 啟動競態會併發進來,第二個
+   *  跑者在 start() 的 busy 守衛上全數空轉,把每台都記成「失敗」誤報(audio 在
+   *  跑卻跳「沒有任何 ASIO 裝置能成功啟動」)。併發呼叫共享同一個 in-flight。 */
+  function autoStart(): Promise<void> {
+    return (autoStartP ??= runAutoStart().finally(() => (autoStartP = null)));
+  }
+
+  /** 依偏好序嘗試啟動。成功才把該裝置/Buffer 存成 lastWorking(失敗選擇
    *  不成偏好);全部失敗 = audioStale + 診斷(實際試了哪些、各失敗原因)。 */
-  async function autoStart(): Promise<void> {
+  async function runAutoStart(): Promise<void> {
     await settingsReady();
     const prefer = appSettings?.lastWorkingDevice ?? null;
     const preferBuf = appSettings?.lastWorkingBuffer ?? null;
@@ -574,6 +640,7 @@
     }
     const failures: string[] = [];
     for (const d of order) {
+      if (status?.running) return; // engine 已有 stream(attach/併發贏家)= 停止嘗試,不算失敗
       if (!prefDev || d !== prefDev) applyDeviceDefaults(d);
       const ok = await start(d.deviceKey, true);
       if (ok) {
@@ -1051,6 +1118,9 @@
   function samplesToMs(n: number | null, rate: number): string {
     return n == null || rate <= 0 ? "—" : String(parseFloat(((n / rate) * 1000).toFixed(2)));
   }
+  function pluginSamplesToMs(n: number | null, rate: number): string {
+    return n == null || rate <= 0 ? "—" : ((n / rate) * 1000).toFixed(1);
+  }
 </script>
 
 <header class="bar">
@@ -1113,7 +1183,9 @@
       {#if n.raw}
         <button class="settings" onclick={() => copyNotice(n)} data-tooltip="複製此通知的完整技術資訊至剪貼簿。">複製</button>
       {/if}
-      <button class="settings" onclick={() => dismissNotice(n.id)} data-tooltip="關閉此通知。">×</button>
+      {#if n.dismissible}
+        <button class="settings" onclick={() => dismissNotice(n.id)} data-tooltip="關閉此通知。">×</button>
+      {/if}
     </span>
   {/each}
   <span style="flex:1"></span>
@@ -1138,6 +1210,16 @@
       class="dim mono"
       data-tooltip="目前由音訊驅動程式提供的取樣率與緩衝大小；取樣率請於硬體控制面板調整。"
       >{selDev.currentSampleRate} Hz · buf {bufSize ?? selDev.preferredBufferSize}</span
+    >
+  {/if}
+  {#if latencyEnabled}
+    <button
+      class="settings mono"
+      onclick={() => (latencyDrawerOpen = !latencyDrawerOpen)}
+      aria-expanded={latencyDrawerOpen}
+      aria-label="開啟 Plugin 延遲與 Process Load 明細"
+      data-tooltip="Monitor／Stream 的最大有效 Plugin Path Latency；點擊開啟逐 instance 與 PDC 明細。"
+      >plug M {pluginSamplesToMs(status?.pluginDelay?.monitorSamples ?? null, status?.sampleRate ?? 0)} / S {pluginSamplesToMs(status?.pluginDelay?.streamSamples ?? null, status?.sampleRate ?? 0)} ms</button
     >
   {/if}
   {#if status?.pluginFails}
@@ -1182,6 +1264,7 @@
             selectedDeviceKey={selected}
             strips={meters?.strips}
             metered={t.metered !== false}
+            {latencyEnabled}
             scanModules={scanModules}
             scanFailed={scanFailed}
             scanRunning={scanRunning}
@@ -1249,6 +1332,7 @@
             selectedDeviceKey={selected}
             strips={meters?.strips}
             metered={t.metered !== false}
+            {latencyEnabled}
             scanModules={scanModules}
             scanFailed={scanFailed}
             scanRunning={scanRunning}
@@ -1268,6 +1352,15 @@
     </section>
   </section>
 </main>
+
+{#if latencyEnabled}
+  <LatencyDrawer
+    open={latencyDrawerOpen}
+    {status}
+    {meters}
+    onClose={() => (latencyDrawerOpen = false)}
+  />
+{/if}
 
 <!-- P2-M:右鍵選單(全域一份) -->
 <ContextMenu {menu} onClose={() => (menu = null)} />

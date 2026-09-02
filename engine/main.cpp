@@ -5,6 +5,7 @@
 // 由 main 執行,跨 thread pipe 寫用 g_write_mutex 序列化)。
 #include <windows.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <filesystem>
@@ -40,6 +41,7 @@ std::mutex g_engine_mutex;  // dispatch 序列化(engine 控制面非 RT)
 constexpr UINT WM_APP_TASK = WM_APP + 1;      // LPARAM = Task*(main 處理後 delete)
 constexpr UINT WM_APP_QUIT = WM_APP + 2;      // shutdown_engine:main loop 退出
 constexpr UINT WM_APP_CAPTURE_ERR = WM_APP + 4;  // WPARAM = track_id(app capture 偵錯)
+constexpr UINT WM_APP_LATENCY_CHANGED = WM_APP + 5;
 constexpr wchar_t kMainWndClass[] = L"RmxEngineMain";
 HWND g_main_hwnd = nullptr;
 std::mutex g_write_mutex;  // pipe thread 與 main 都會寫:幀序列化
@@ -129,6 +131,17 @@ nlohmann::json tracks_json() {
                 {"pluginPath", s.module_path},
                 {"classId", s.class_id},
                 {"bypassed", s.bypass},
+                {"monitorBypassed", s.monitor_bypass},
+                {"latencySamples", s.latency_known ? nlohmann::json(s.latency_samples)
+                                                    : nlohmann::json(nullptr)},
+                {"effectiveLatencySamples",
+                 s.latency_known ? nlohmann::json(s.bypass ? 0u : s.latency_samples)
+                                 : nlohmann::json(nullptr)},
+                {"monitorLatencySamples",
+                 s.monitor_latency_known ? nlohmann::json(s.monitor_latency_samples)
+                                         : nlohmann::json(nullptr)},
+                {"runtimeState", rmx::runtime_state_str(s.primary_state)},
+                {"monitorState", rmx::runtime_state_str(s.monitor_state)},
                 {"params", params},
                 // placeholder(missing/broken)標記:UI 黯淡顯示 + 重試/移除
                 {"availability", rmx::availability_str(s.availability)},
@@ -143,6 +156,7 @@ nlohmann::json tracks_json() {
             {"trackId", t.track_id},
             {"kind", rmx::track_kind_str(t.kind)},
             {"systemRole", role != nullptr ? nlohmann::json(role) : nlohmann::json(nullptr)},
+            {"latencyPolicy", rmx::output_latency_policy_str(t.latency_policy)},
             {"name", t.name},
             {"color", t.color},
             {"source", source_json(t.source)},
@@ -161,6 +175,21 @@ nlohmann::json tracks_json() {
 
 nlohmann::json status_json() {
     const auto s = g_engine.status();
+    nlohmann::json monitor_delay = nullptr;
+    nlohmann::json stream_delay = nullptr;
+    if (s.running) {
+        const auto plan = g_engine.latency_plan();
+        for (const auto& output : plan.outputs) {
+            const auto found = std::find_if(
+                g_engine.tracks().begin(), g_engine.tracks().end(),
+                [&](const rmx::TrackNode& t) { return t.track_id == output.track_id; });
+            if (found == g_engine.tracks().end()) continue;
+            if (found->system_role == rmx::SystemRole::kMonitor)
+                monitor_delay = output.total_plugin_delay_samples;
+            else if (found->system_role == rmx::SystemRole::kStream)
+                stream_delay = output.total_plugin_delay_samples;
+        }
+    }
     nlohmann::json j{
         {"running", s.running},
         {"deviceKey", s.running ? nlohmann::json(s.device_key) : nlohmann::json(nullptr)},
@@ -175,6 +204,8 @@ nlohmann::json status_json() {
         {"trackCount", s.track_count},
         {"pluginFails", s.plugin_fails},
         {"revision", g_engine.revision()},  // 權威 dirty 版號(含 set_param)
+        {"latencyGeneration", g_engine.latency_generation()},
+        {"pluginDelay", {{"monitorSamples", monitor_delay}, {"streamSamples", stream_delay}}},
         {"tracks", tracks_json()},
         {"error", s.error.empty() ? nlohmann::json(nullptr) : nlohmann::json(s.error)},
     };
@@ -183,9 +214,56 @@ nlohmann::json status_json() {
 
 nlohmann::json snapshot_payload() {
     auto snap = rmx::make_snapshot_json(g_epoch.load(), status_json(), tracks_json());
+    snap["capabilities"] = nlohmann::json::array();
+    snap["capabilities"].push_back("pluginLatencyPdcV1");
     std::lock_guard<std::mutex> lock(g_scan_mutex);
     snap["lastScan"] = g_last_scan;  // 全域 plugin registry(重連後 UI 不用重掃)
     return snap;
+}
+
+const char* pdc_error_str(rmx::PdcPlanError error) {
+    switch (error) {
+        case rmx::PdcPlanError::kNone: return "none";
+        case rmx::PdcPlanError::kDuplicateTrackId: return "duplicateTrackId";
+        case rmx::PdcPlanError::kUnknownDestination: return "unknownDestination";
+        case rmx::PdcPlanError::kUnknownOutput: return "unknownOutput";
+        case rmx::PdcPlanError::kCycle: return "cycle";
+        case rmx::PdcPlanError::kPathLimitExceeded: return "pathLimitExceeded";
+        case rmx::PdcPlanError::kMemoryLimitExceeded: return "memoryLimitExceeded";
+        case rmx::PdcPlanError::kArithmeticOverflow: return "arithmeticOverflow";
+    }
+    return "unknown";
+}
+
+const char* plugin_mutation_error_code(const std::string& error) {
+    if (error.rfind("unknown instanceId", 0) == 0) return "plugin_not_found";
+    if (error.find("shadow") != std::string::npos ||
+        error.find("state") != std::string::npos ||
+        error.find("pre-roll") != std::string::npos)
+        return "plugin_state_failed";
+    return "bad_command";
+}
+
+nlohmann::json latency_report_json() {
+    const auto plan = g_engine.latency_plan();
+    auto outputs = nlohmann::json::array();
+    for (const auto& output : plan.outputs)
+        outputs.push_back({{"trackId", output.track_id},
+                           {"totalPluginDelaySamples", output.total_plugin_delay_samples},
+                           {"compensationDelaySamples", output.compensation_delay_samples},
+                           {"synchronized", output.synchronized}});
+    auto edges = nlohmann::json::array();
+    for (const auto& edge : plan.edge_delays)
+        edges.push_back({{"fromTrackId", edge.from_track_id},
+                         {"toTrackId", edge.to_track_id},
+                         {"compensationDelaySamples", edge.delay_samples}});
+    return {{"generation", g_engine.latency_generation()},
+            {"ok", plan.ok()},
+            {"error", pdc_error_str(plan.error)},
+            {"bufferBytes", plan.buffer_bytes},
+            {"outputs", std::move(outputs)},
+            {"edges", std::move(edges)},
+            {"tracks", tracks_json()}};
 }
 
 // 成功 mutation:epoch 前進、對在線 client 廣播 status event(main thread 呼)
@@ -379,6 +457,9 @@ bool dispatch(HANDLE client, const Command& c) {
         ok(nlohmann::json{{"engineVersion", rmx::kEngineVersion}});
     } else if (c.kind == "get_snapshot") {
         ok(nlohmann::json{{"snapshot", snapshot_payload()}});
+    } else if (c.kind == "get_latency_report") {
+        std::lock_guard<std::mutex> lock(g_engine_mutex);
+        ok(nlohmann::json{{"report", latency_report_json()}});
     } else if (c.kind == "list_devices") {
         std::lock_guard<std::mutex> lock(g_engine_mutex);
         nlohmann::json devices = nlohmann::json::array();
@@ -531,6 +612,19 @@ bool dispatch(HANDLE client, const Command& c) {
         } else {
             fail("bad_command", err);
         }
+    } else if (c.kind == "track_set_latency_policy") {
+        std::lock_guard<std::mutex> lock(g_engine_mutex);
+        const auto policy = c.payload["policy"].get<std::string>() == "lowLatency"
+                                ? rmx::OutputLatencyPolicy::kLowLatency
+                                : rmx::OutputLatencyPolicy::kFullPdc;
+        std::string err;
+        if (g_engine.track_set_latency_policy(c.payload["trackId"].get<std::uint32_t>(),
+                                              policy, err)) {
+            after_mutation(client);
+            ok(nlohmann::json{{"tracks", tracks_json()}});
+        } else {
+            fail("bad_command", err);
+        }
     } else if (c.kind == "track_set_source" || c.kind == "track_set_output" ||
                c.kind == "track_set_dests") {
         std::lock_guard<std::mutex> lock(g_engine_mutex);
@@ -675,7 +769,7 @@ bool dispatch(HANDLE client, const Command& c) {
             after_mutation(client);
             ok(nlohmann::json{{"tracks", tracks_json()}});
         } else {
-            fail("plugin_not_found", err);
+            fail(plugin_mutation_error_code(err), err);
         }
     } else if (c.kind == "move_plugin") {
         std::lock_guard<std::mutex> lock(g_engine_mutex);
@@ -695,7 +789,17 @@ bool dispatch(HANDLE client, const Command& c) {
             after_mutation(client);
             ok(nlohmann::json{{"tracks", tracks_json()}});
         } else {
-            fail("plugin_not_found", err);
+            fail(plugin_mutation_error_code(err), err);
+        }
+    } else if (c.kind == "set_monitor_bypass") {
+        std::lock_guard<std::mutex> lock(g_engine_mutex);
+        std::string err;
+        if (g_engine.set_monitor_bypass(c.payload["instanceId"].get<std::uint32_t>(),
+                                        c.payload["bypassed"].get<bool>(), err)) {
+            after_mutation(client);
+            ok(nlohmann::json{{"tracks", tracks_json()}});
+        } else {
+            fail(plugin_mutation_error_code(err), err);
         }
     } else if (c.kind == "retry_plugin") {
         // placeholder → 真 plugin。與 add_plugin 同規:先 worker sandbox preflight
@@ -924,6 +1028,12 @@ LRESULT CALLBACK main_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
         if (g_active_pipe.load() != nullptr) after_mutation(g_active_pipe.load());
         return 0;
     }
+    if (msg == WM_APP_LATENCY_CHANGED) {
+        std::lock_guard<std::mutex> lock(g_engine_mutex);
+        g_engine.handle_latency_changed(static_cast<std::uint32_t>(wp), lp != 0);
+        if (HANDLE client = g_active_pipe.load()) push_status(client);
+        return 0;
+    }
     if (msg == WM_APP_QUIT) {
         PostQuitMessage(0);
         return 0;
@@ -1093,6 +1203,10 @@ int main() {
     // M5b/M5c:capture/render pump 偵錯 → main thread 排隊(pump thread 禁碰 pipe/鎖)
     g_engine.set_capture_failed_cb([](std::uint32_t track_id) {
         PostMessageW(g_main_hwnd, WM_APP_CAPTURE_ERR, track_id, 0);
+    });
+    g_engine.set_latency_changed_cb([](std::uint32_t instance_id, bool monitor_shadow) {
+        PostMessageW(g_main_hwnd, WM_APP_LATENCY_CHANGED, instance_id,
+                     monitor_shadow ? 1 : 0);
     });
 
     std::thread pipe_thread(pipe_serve_thread);

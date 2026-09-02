@@ -1,0 +1,3 @@
+# Separate plugin load from meter telemetry
+
+RoudaMix 將以 Plugin Process Load 表達逐 plugin 的單一 logical CPU 占用，primary 與 Monitor shadow 分列，並透過獨立的 256-entry telemetry table 以 30 Hz 發布。RT 量測採具序列邊界且扣除校準開銷的 TSC；UI 顯示 1 秒 EWMA 與最近 5 秒 peak，未執行的 instance 顯示不可用而非零。容量先分配給 primary instances，再依 graph 順序分配給 shadows；超額者明確顯示不可量測。只有整體 callback overload 時才產生一則整合通知，明細標出最大負載貢獻者。既有 64-entry meter strips 維持 track 優先的音量錶用途，不與 CPU telemetry 共用容量。此設計需要提升 telemetry ABI，但避免高頻動態 JSON 與 named pipe 競爭，也不會因新增效能診斷而減少既有音量錶覆蓋；128 個零工作 primary/shadow process calls 的量測 overhead 不得使 callback load 增加超過一個百分點。若 UI 與 telemetry ABI 不相容，PDC 與 Plugin Latency 仍可運作，只有 Process Load 顯示不可用並通知一次。

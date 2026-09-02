@@ -1,13 +1,13 @@
-# RoudaMix Telemetry Shared Memory ABI v3
+# RoudaMix Telemetry Shared Memory ABI v4
 
 儀表/狀態高頻通道(engine → UI 單向)。控制面走 pipe(`protocol.md`);**高頻儀表不走 pipe**。
 
-**v3 變更**(M5 多軌):strips 16 → 64(`pad0` 定義為 `kind`);v1/v2 既有欄位 offset/語意不變。`abiVersion = 3`。
+**v4 變更**:尾端新增 256-entry `pluginLoads` table；既有 v3 欄位 offset/語意不變。`abiVersion = 4`。
 
 ## 1. Mapping
 
 - 名稱:`Local\roudamix-telemetry`(session-local namespace;engine `CreateFileMappingW` 建立,bridge `OpenFileMappingW` 開啟)。
-- 大小:4096 bytes(單 page;夠用且強制有界)。
+- 大小:8192 bytes(兩 pages;固定有界)。
 - Engine 為唯一 writer;bridge 唯讀。
 
 ## 2. Layout(`#pragma pack(8)`,C++ 與 Rust 兩側 `#[repr(C)]` 對照,offset 以位元組計)
@@ -15,7 +15,7 @@
 | offset | size | 型別 | 欄位 | 說明 |
 |---|---|---|---|---|
 | 0 | 4 | u32 | `magic` | `0x524D5854`("RMXT") |
-| 4 | 4 | u32 | `abiVersion` | 本版 = 3 |
+| 4 | 4 | u32 | `abiVersion` | 本版 = 4 |
 | 8 | 4 | u32 | `sequence` | seqlock:寫前 odd(寫入中)、寫完 even;讀者比對前後 |
 | 12 | 4 | u32 | `stripCount` | ≤ 64,有效 strip 數 |
 | 16 | 8 | u64 | `xruns` | 累計 XRun |
@@ -28,8 +28,13 @@
 | 48 | 64×32 | 見下 | `strips[64]` | 每 strip 32 bytes |
 | 2096 | 4 | u32 | `spectrumCount` | 有效頻譜 bin 數,本版 = 256;未啟動 = 0 |
 | 2100 | 256×4 | f32 | `spectrumDb[256]` | engine 最終輸出的功率頻譜,**線性等間距** 0 Hz…Nyquist,dB(滿幅 sine ≈ 0,靜音/底下 = -120 floor);UI 自行做 log-freq 映射 |
+| 3124 | 4 | u32 | `pluginLoadCount` | ≤ 256，有效 Process Load entries |
+| 3128 | 4 | u32 | `_pluginLoadReserved` | 保留，必為 0 |
+| 3132 | 256×16 | 見下 | `pluginLoads[256]` | primary 優先，再依 graph 順序配置 Monitor Shadow |
 
-總計 2100 + 256×4 = 3124 bytes;pack(8) 補齊 sizeof = 3128 ≤ 4096。
+總計 3132 + 256×16 = 7228 bytes；pack(8) 補齊 sizeof = 7232 ≤ 8192。
+
+每個 Process Load entry(16 bytes):`instanceId:u32`、`variant:u32`(0 primary、1 Monitor Shadow)、`processLoad:f32`、`reserved:f32`。`processLoad` 是量測窗口內 plugin process TSC 相對 wall-clock TSC 的比例，代表單一 logical CPU 佔比，不是整機 CPU。
 
 每 strip(32 bytes):
 

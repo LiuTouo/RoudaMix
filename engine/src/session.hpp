@@ -1,5 +1,5 @@
 // Session 檔案(.rmsession,UTF-8 JSON)— 契約:contracts/protocol.md §8 SessionFile。
-// v2:多軌 tracks 取代 v1 rack;v1 檔一律拒載。load 逐軌重建(壞軌/消失 module
+// v3:Output Latency Policy + Monitor Bypass；v2 自動遷移，v1 拒載。load 逐軌重建(壞軌/消失 module
 // 略過不整體失敗)、dests 以舊 id→新 id map 重接。
 #pragma once
 
@@ -25,7 +25,7 @@ bool save(const AudioEngine& engine, const std::filesystem::path& file, std::str
 
 // 讀檔 + 重建:清空全部軌 → 逐軌 track_add → source/output/gain/mute → plugins →
 // dests(舊→新 id map)。不動裝置(不自動 start);session 的 deviceKey/sampleRate/
-// bufferSize 原樣放 applied 給 caller。v1 檔(roudamixSession != 2)一律 false。
+// bufferSize 原樣放 applied 給 caller。v2 會遷移到 v3 defaults；v1 一律 false。
 bool load(AudioEngine& engine, const std::filesystem::path& file, nlohmann::json& applied,
           std::string& err);
 

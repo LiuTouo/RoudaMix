@@ -1,6 +1,6 @@
 // VST3 host 縮編實作。依賴 Steinberg hosting(module/plugprovider/hostclasses/
 // parameterchanges/processdata)+ pluginterfaces。ponytail:stereo main bus only,
-// aux bus / Float64 / state 不支援 —— mono-only 或多 bus plugin 進不來,
+// aux bus / Float64 不支援；main bus 可 stereo，或以 host downmix/duplicate 適配 mono。
 // 需要時再開(ProMixArea vst3_adapter.cpp 有全版)。
 // editor:M4a 加,Studio Pro 式重構後 —— view 生命週期在這(createView/attached/
 // removed),視窗與 tab 列由 EditorHost 持有(見 editor_host.cpp);param 變更走
@@ -55,6 +55,7 @@ constexpr int32 kMaxParamEventsPerBlock = 64;
 class EditComponentHandler final : public IComponentHandler {
 public:
     std::function<void(ParamID, ParamValue)> on_edit;  // attach_editor 前設定一次
+    std::function<void()> on_latency_changed;
 
     tresult PLUGIN_API queryInterface(const TUID requested_iid, void** obj) override {
         if (obj == nullptr) return kInvalidArgument;
@@ -79,7 +80,10 @@ public:
         return kResultOk;
     }
     tresult PLUGIN_API endEdit(ParamID) override { return kResultOk; }
-    tresult PLUGIN_API restartComponent(int32) override { return kResultOk; }
+    tresult PLUGIN_API restartComponent(int32 flags) override {
+        if ((flags & kLatencyChanged) != 0 && on_latency_changed) on_latency_changed();
+        return kResultOk;
+    }
 
 private:
     std::atomic<uint32> references_{1};
@@ -202,6 +206,9 @@ struct Vst3Plugin::Impl {
     std::vector<Vst3ParamInfo> params;
     int32_t main_in_bus{-1};
     int32_t main_out_bus{-1};
+    bool mono_main{};
+    std::vector<float> mono_in;
+    std::vector<float> mono_out;
     bool initialized{false};
     bool loaded{false};
     std::string name_;
@@ -384,17 +391,33 @@ struct Vst3Plugin::Impl {
         for (int32 i = 0; i < out_count; ++i)
             if (processor->getBusArrangement(kOutput, i, outs[i]) != kResultOk)
                 outs[i] = SpeakerArr::kEmpty;
+        const auto preferred_in = ins[main_in_bus];
+        const auto preferred_out = outs[main_out_bus];
         ins[main_in_bus] = SpeakerArr::kStereo;
         outs[main_out_bus] = SpeakerArr::kStereo;
-        if (processor->setBusArrangements(ins.data(), in_count, outs.data(), out_count) != kResultOk) {
-            error = "plugin rejected stereo main-bus arrangement";
-            return false;
+        if (processor->setBusArrangements(ins.data(), in_count, outs.data(), out_count) !=
+            kResultOk) {
+            // VST3 negotiation:host 提案被拒後，回送 plugin 的 preferred layout。
+            // RoudaMix 內部仍是 stereo；mono effect 由 process() 下混/複製適配。
+            ins[main_in_bus] = preferred_in;
+            outs[main_out_bus] = preferred_out;
+            if (SpeakerArr::getChannelCount(preferred_in) != 1 ||
+                SpeakerArr::getChannelCount(preferred_out) != 1 ||
+                processor->setBusArrangements(ins.data(), in_count, outs.data(), out_count) !=
+                    kResultOk) {
+                error = "plugin rejected stereo and preferred mono main-bus arrangements";
+                return false;
+            }
+            mono_main = true;
+        } else {
+            mono_main = false;
         }
         BusInfo in_info{}, out_info{};
         if (component->getBusInfo(kAudio, kInput, main_in_bus, in_info) != kResultOk ||
             component->getBusInfo(kAudio, kOutput, main_out_bus, out_info) != kResultOk ||
-            in_info.channelCount != 2 || out_info.channelCount != 2) {
-            error = "plugin main bus is not stereo after negotiation";
+            in_info.channelCount != (mono_main ? 1 : 2) ||
+            out_info.channelCount != (mono_main ? 1 : 2)) {
+            error = "plugin main bus does not match the negotiated mono/stereo layout";
             return false;
         }
         return true;
@@ -434,6 +457,20 @@ struct Vst3Plugin::Impl {
             process_data.unprepare();
             return false;
         }
+        if (mono_main) {
+            try {
+                mono_in.assign(static_cast<std::size_t>(max_frames), 0.0F);
+                mono_out.assign(static_cast<std::size_t>(max_frames), 0.0F);
+            } catch (...) {
+                error = "mono adapter buffers could not be allocated";
+                component->setActive(false);
+                process_data.unprepare();
+                return false;
+            }
+        } else {
+            mono_in.clear();
+            mono_out.clear();
+        }
         slew_frames_ = static_cast<int32_t>(sample_rate * 0.015);  // 15ms 防 zipper
         // 部分 plugin 回 kNotImplemented 仍正常進 processing 狀態(ProMixArea 同款放行)
         processor->setProcessing(true);
@@ -455,6 +492,98 @@ struct Vst3Plugin::Impl {
     }
 
     // ---- preset:容器讀寫(控制面)----
+
+    bool capture_runtime_state(Vst3RuntimeState& state, std::string& err) {
+        state = {};
+        if (!loaded || !component) {
+            err = "plugin not loaded";
+            return false;
+        }
+        MemoryStream component_stream;
+        if (component->getState(&component_stream) != kResultOk) {
+            err = "plugin component getState failed";
+            return false;
+        }
+        const auto component_size = component_stream.getSize();
+        if (component_size < 0 ||
+            static_cast<std::uint64_t>(component_size) >
+                static_cast<std::uint64_t>((std::numeric_limits<std::size_t>::max)())) {
+            err = "plugin component state is too large";
+            return false;
+        }
+        const auto* component_data =
+            reinterpret_cast<const std::uint8_t*>(component_stream.getData());
+        if (component_size > 0 && component_data == nullptr) {
+            err = "plugin component returned invalid state";
+            return false;
+        }
+        if (component_size > 0)
+            state.component.assign(component_data, component_data + component_size);
+
+        if (controller) {
+            MemoryStream controller_stream;
+            // IEditController::getState 可回 kNotImplemented；component state
+            // 仍是 DSP 權威，controller view 另外由 setComponentState + host
+            // authoritative params 重建，與既有 .vstpreset 相容策略一致。
+            if (controller->getState(&controller_stream) != kResultOk) return true;
+            const auto controller_size = controller_stream.getSize();
+            if (controller_size < 0 ||
+                static_cast<std::uint64_t>(controller_size) >
+                    static_cast<std::uint64_t>((std::numeric_limits<std::size_t>::max)())) {
+                err = "plugin controller state is too large";
+                state = {};
+                return false;
+            }
+            const auto* controller_data =
+                reinterpret_cast<const std::uint8_t*>(controller_stream.getData());
+            if (controller_size > 0 && controller_data == nullptr) {
+                err = "plugin controller returned invalid state";
+                state = {};
+                return false;
+            }
+            if (controller_size > 0)
+                state.controller.assign(controller_data, controller_data + controller_size);
+        }
+        return true;
+    }
+
+    bool restore_runtime_state(const Vst3RuntimeState& state, std::string& err) {
+        if (!loaded || !component) {
+            err = "plugin not loaded";
+            return false;
+        }
+        if (state.component.empty() ||
+            state.component.size() > static_cast<std::size_t>((std::numeric_limits<int32>::max)()) ||
+            state.controller.size() > static_cast<std::size_t>((std::numeric_limits<int32>::max)())) {
+            err = "runtime component state is empty or too large";
+            return false;
+        }
+        MemoryStream component_stream(const_cast<std::uint8_t*>(state.component.data()),
+                                      static_cast<int32>(state.component.size()));
+        if (component->setState(&component_stream) != kResultOk) {
+            err = "plugin rejected runtime component state";
+            return false;
+        }
+        invalidate_slew();
+        if (controller) {
+            MemoryStream component_again(const_cast<std::uint8_t*>(state.component.data()),
+                                         static_cast<int32>(state.component.size()));
+            const bool controller_synced =
+                controller->setComponentState(&component_again) == kResultOk;
+            // 部分可正常處理的 plugin 不實作 controller state 同步；DSP
+            // component 已完整恢復，controller 由 host params 重放即可。
+            if (controller_synced && !state.controller.empty()) {
+                MemoryStream controller_stream(
+                    const_cast<std::uint8_t*>(state.controller.data()),
+                    static_cast<int32>(state.controller.size()));
+                if (controller->setState(&controller_stream) != kResultOk) {
+                    err = "plugin controller rejected runtime controller state";
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
 
     bool save_preset(const std::filesystem::path& file,
                      const std::vector<std::pair<std::uint32_t, double>>& host_params,
@@ -721,6 +850,19 @@ struct Vst3Plugin::Impl {
         context.state = 0;
         auto& in_bus = process_data.inputs[main_in_bus];
         auto& out_bus = process_data.outputs[main_out_bus];
+        if (mono_main) {
+            if (frames < 0 || static_cast<std::size_t>(frames) > mono_in.size()) return false;
+            for (int32_t i = 0; i < frames; ++i)
+                mono_in[static_cast<std::size_t>(i)] =
+                    0.5F * ((in_l != nullptr ? in_l[i] : 0.0F) +
+                            (in_r != nullptr ? in_r[i] : 0.0F));
+            in_bus.channelBuffers32[0] = mono_in.data();
+            out_bus.channelBuffers32[0] = mono_out.data();
+            if (processor->process(process_data) != kResultOk) return false;
+            for (int32_t i = 0; i < frames; ++i)
+                out_l[i] = out_r[i] = mono_out[static_cast<std::size_t>(i)];
+            return true;
+        }
         in_bus.channelBuffers32[0] = const_cast<float*>(in_l);
         in_bus.channelBuffers32[1] = const_cast<float*>(in_r);
         out_bus.channelBuffers32[0] = out_l;
@@ -773,10 +915,23 @@ void Vst3Plugin::set_param_normalized(uint32_t id, double value) noexcept {
         impl_->controller->setParamNormalized(id, std::isfinite(value) ? value : 0.0);
 }
 
+bool Vst3Plugin::capture_runtime_state(Vst3RuntimeState& state, std::string& error) {
+    return impl_ && impl_->capture_runtime_state(state, error);
+}
+
+bool Vst3Plugin::restore_runtime_state(const Vst3RuntimeState& state, std::string& error) {
+    return impl_ && impl_->restore_runtime_state(state, error);
+}
+
 void Vst3Plugin::set_param_callback(std::function<void(uint32_t, double)> cb) noexcept {
     // 僅 main thread 在 attach_editor 前呼叫;performEdit 回呼也在 main thread(其
     // editor 訊息由 main 的 message loop 派發)—— 無並發
     if (impl_ && impl_->edit_handler) impl_->edit_handler->on_edit = std::move(cb);
+}
+
+void Vst3Plugin::set_latency_changed_callback(std::function<void()> cb) noexcept {
+    if (impl_ && impl_->edit_handler)
+        impl_->edit_handler->on_latency_changed = std::move(cb);
 }
 
 bool Vst3Plugin::save_preset(const std::filesystem::path& file,
