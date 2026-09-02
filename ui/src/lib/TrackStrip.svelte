@@ -7,7 +7,7 @@
   import { mountDragGhost, removeDragGhost } from "./ghost";
   import { open as openFile } from "@tauri-apps/plugin-dialog";
   import { engineCommand } from "./protocol-commands.generated";
-  import { cssColor, parseColor, stripOfTrack } from "./tracks";
+  import { cssColor, parseColor, stripOfTrack, type MeterStripView } from "./tracks";
   import { MutationQueue, mutKey } from "./mutations";
   import { reorderLane } from "./laneOrder";
   import {
@@ -33,13 +33,11 @@
   import type {
     AudioApp,
     DeviceInfo,
-    MeterStrip,
     RackSlot,
     RenderDevice,
     ScanFailure,
     ScanModule,
     Track,
-    TelemetryStripIdentity,
   } from "./types";
 
   let {
@@ -47,8 +45,7 @@
     tracks,
     devices,
     selectedDeviceKey,
-    strips,
-    stripTable = [],
+    meterView = {},
     metered = true,
     latencyEnabled = false,
     // 掃描 job 由 App 統一跑(共用 registry,所有軌同一份清單;進度/取消也在 App)
@@ -67,8 +64,7 @@
     tracks: Track[];
     devices: DeviceInfo[];
     selectedDeviceKey: string;
-    strips: MeterStrip[] | undefined;
-    stripTable?: TelemetryStripIdentity[];
+    meterView?: MeterStripView;
     metered?: boolean;
     latencyEnabled?: boolean;
     scanModules?: ScanModule[];
@@ -1130,7 +1126,7 @@
     </div>
     <div class="meterwrap">
       {#if metered}
-        <MeterCanvas strip={stripOfTrack(track.trackId, stripTable, strips)} />
+        <MeterCanvas strip={stripOfTrack(track.trackId, meterView)} />
       {:else}
         <!-- P1-H:telemetry 預算外 = 錶不可用(非靜音);明確顯示狀態 -->
         <div

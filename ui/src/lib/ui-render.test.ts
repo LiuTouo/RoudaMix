@@ -44,7 +44,7 @@ const stripProps = (latencyEnabled: boolean) => ({
   tracks: [track],
   devices: [],
   selectedDeviceKey: "",
-  strips: undefined,
+  meterView: {},
   latencyEnabled,
   onCancelScan: () => {},
   openMenu: () => {},

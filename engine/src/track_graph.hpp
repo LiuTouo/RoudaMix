@@ -111,12 +111,21 @@ struct TrackNode {
     std::string track_error;              // control 面:capture/render 失敗等原因(UI 顯示;空 = 無)
 };
 
+struct TrackStrips {
+    std::uint32_t track_strip{kNoStrip};
+    std::vector<std::uint32_t> chain_strips;  // 平行於 chain
+};
+struct TelemetryStripPlan {
+    std::uint32_t engine_strip{kNoStrip};
+    std::vector<TrackStrips> tracks;
+    std::vector<TelemetryStripIdentity> table;
+};
+
 struct TrackGraph {
     std::vector<TrackNode> nodes;       // master 順序 = UI 欄內順序
     std::vector<std::uint32_t> order;   // 拓撲序的 node index(RT 照跑);有環時 = master 序 fallback
     std::vector<std::uint32_t> id_index;  // trackId → node index(kNoStrip = 無此 id;RT dest sum 查表)
-    std::uint32_t engine_strip{kNoStrip};
-    std::vector<TelemetryStripIdentity> strip_table;
+    TelemetryStripPlan strip_plan;
     RoutePlan route_plan;                 // control thread 規劃；RT 只讀
 };
 
@@ -138,15 +147,6 @@ void asio_channel_union(const std::vector<TrackNode>& tracks,
 // 兩輪、可預測:第一輪所有軌先各拿一個 track strip(master 序,最多 63 條軌有錶);
 // 第二輪剩餘預算依 master 序、鏈序配給 plugin。超出預算 = kNoStrip(該節點沒錶,
 // 不影響音訊)。UI 以 status.tracks[].metered 辨認「無錶」而非當成靜音。
-struct TrackStrips {
-    std::uint32_t track_strip{kNoStrip};
-    std::vector<std::uint32_t> chain_strips;  // 平行於 chain
-};
-struct TelemetryStripPlan {
-    std::uint32_t engine_strip{kNoStrip};
-    std::vector<TrackStrips> tracks;
-    std::vector<TelemetryStripIdentity> table;
-};
 TelemetryStripPlan plan_telemetry_strips(const std::vector<TrackNode>& nodes,
                                          std::size_t budget);
 

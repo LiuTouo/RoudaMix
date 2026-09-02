@@ -24,10 +24,11 @@ test("meter 對應完全由 snapshot strip table 的 id 驅動", () => {
     { id: 3, kind: 20, trackId: 7, instanceId: null },
     { id: 1, kind: 30, trackId: 7, instanceId: 11 },
   ];
+  const view = { table, strips };
 
-  assert.equal(stripEngineOut(table, strips), strips[2]);
-  assert.equal(stripOfTrack(7, table, strips), strips[3]);
-  assert.equal(stripOfPlugin(11, table, strips), strips[1]);
+  assert.equal(stripEngineOut(view), strips[2]);
+  assert.equal(stripOfTrack(7, view), strips[3]);
+  assert.equal(stripOfPlugin(11, view), strips[1]);
 });
 
 test("table 指向不存在的 SHM strip 時回傳 undefined", () => {
@@ -35,8 +36,9 @@ test("table 指向不存在的 SHM strip 時回傳 undefined", () => {
     { id: 9, kind: 20, trackId: 7, instanceId: null },
   ];
 
-  assert.equal(stripOfTrack(7, table, [meter(0.1, 7, 20)]), undefined);
-  assert.equal(stripOfTrack(8, table, [meter(0.1, 7, 20)]), undefined);
+  const view = { table, strips: [meter(0.1, 7, 20)] };
+  assert.equal(stripOfTrack(7, view), undefined);
+  assert.equal(stripOfTrack(8, view), undefined);
 });
 
 test("graph mutation 後丟棄與新 table 身分不符的舊 meter frame", () => {
@@ -45,7 +47,8 @@ test("graph mutation 後丟棄與新 table 身分不符的舊 meter frame", () =
     { id: 2, kind: 30, trackId: 8, instanceId: 12 },
   ];
   const stale = [meter(0.1, 0xffffffff, 10), meter(0.2, 7, 20), meter(0.3, 11, 30)];
+  const view = { table, strips: stale };
 
-  assert.equal(stripOfTrack(8, table, stale), undefined);
-  assert.equal(stripOfPlugin(12, table, stale), undefined);
+  assert.equal(stripOfTrack(8, view), undefined);
+  assert.equal(stripOfPlugin(12, view), undefined);
 });

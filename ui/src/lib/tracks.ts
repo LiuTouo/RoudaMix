@@ -1,12 +1,17 @@
 // tracks helpers:snapshot table 驅動 meter strip 對應 + 顏色轉換
 import type { MeterStrip, TelemetryStripIdentity, Track } from "./types";
 
+export interface MeterStripView {
+  table?: TelemetryStripIdentity[];
+  strips?: MeterStrip[];
+}
+
 function stripFor(
   identity: TelemetryStripIdentity | undefined,
-  strips: MeterStrip[] | undefined,
+  view: MeterStripView,
 ): MeterStrip | undefined {
   if (identity === undefined) return undefined;
-  const strip = strips?.[identity.id];
+  const strip = view.strips?.[identity.id];
   if (strip === undefined || strip.kind !== identity.kind) return undefined;
   const owner = identity.instanceId ?? identity.trackId;
   return owner === null || strip.instanceId === owner ? strip : undefined;
@@ -14,33 +19,30 @@ function stripFor(
 
 export function stripOfTrack(
   trackId: number,
-  table: TelemetryStripIdentity[] | undefined,
-  strips: MeterStrip[] | undefined,
+  view: MeterStripView,
 ): MeterStrip | undefined {
   return stripFor(
-    table?.find((s) => s.trackId === trackId && s.instanceId === null),
-    strips,
+    view.table?.find((s) => s.trackId === trackId && s.instanceId === null),
+    view,
   );
 }
 
 export function stripOfPlugin(
   instanceId: number,
-  table: TelemetryStripIdentity[] | undefined,
-  strips: MeterStrip[] | undefined,
+  view: MeterStripView,
 ): MeterStrip | undefined {
   return stripFor(
-    table?.find((s) => s.instanceId === instanceId),
-    strips,
+    view.table?.find((s) => s.instanceId === instanceId),
+    view,
   );
 }
 
 export function stripEngineOut(
-  table: TelemetryStripIdentity[] | undefined,
-  strips: MeterStrip[] | undefined,
+  view: MeterStripView,
 ): MeterStrip | undefined {
   return stripFor(
-    table?.find((s) => s.trackId === null && s.instanceId === null),
-    strips,
+    view.table?.find((s) => s.trackId === null && s.instanceId === null),
+    view,
   );
 }
 

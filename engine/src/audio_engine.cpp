@@ -549,8 +549,10 @@ bool AudioEngine::start(const std::string& device_key,
                     }
                 }
                 const auto* strip_table =
-                    g != nullptr && !g->strip_table.empty() ? g->strip_table.data() : nullptr;
-                const auto strip_count = g != nullptr ? g->strip_table.size() : 0;
+                    g != nullptr && !g->strip_plan.table.empty()
+                        ? g->strip_plan.table.data()
+                        : nullptr;
+                const auto strip_count = g != nullptr ? g->strip_plan.table.size() : 0;
                 meters_.publish(*shm_, device_.xruns(), strip_table, strip_count,
                                 plugin_ids, plugin_variants, plugin_count,
                                 device_.running());
@@ -605,8 +607,6 @@ bool AudioEngine::swap_graph() noexcept {
     // telemetry strip 預算:兩輪、可預測(track 全拿完才輪 plugin;純函式與
     // status_json 的 metered 共用 — 見 track_graph.cpp plan_telemetry_strips)
     auto strips = plan_telemetry_strips(fresh->nodes, kTelemetryStrips);
-    fresh->engine_strip = strips.engine_strip;
-    fresh->strip_table = std::move(strips.table);
     for (std::size_t ti = 0; ti < fresh->nodes.size(); ++ti) {
         auto& t = fresh->nodes[ti];
         t.src_l = t.src_r = t.out_l = t.out_r = -1;
@@ -619,12 +619,13 @@ bool AudioEngine::swap_graph() noexcept {
             t.out_r = resolve(omap, t.output.asio_out_ch + 1);
         }
         t.track_strip = strips.tracks[ti].track_strip;
-        t.chain_strips = std::move(strips.tracks[ti].chain_strips);
+        t.chain_strips = strips.tracks[ti].chain_strips;
         for (auto& slot : t.chain) {
             slot.primary_cpu_index = 0xFFFFFFFFu;
             slot.shadow_cpu_index = 0xFFFFFFFFu;
         }
     }
+    fresh->strip_plan = std::move(strips);
     const auto running_rate = rt_sample_rate_.load(std::memory_order_relaxed);
     const std::uint64_t plan_rate =
         running_rate > 0 ? running_rate : (last_sample_rate_ > 0 ? last_sample_rate_ : 48000u);
@@ -2017,14 +2018,7 @@ EngineStatusInfo AudioEngine::status() const {
 TelemetryStripPlan AudioEngine::telemetry_strip_plan() const {
     const TrackGraph* active = rt_graph_.load(std::memory_order_acquire);
     if (active == nullptr) return plan_telemetry_strips(tracks_, kTelemetryStrips);
-
-    TelemetryStripPlan plan;
-    plan.engine_strip = active->engine_strip;
-    plan.table = active->strip_table;
-    plan.tracks.reserve(active->nodes.size());
-    for (const auto& node : active->nodes)
-        plan.tracks.push_back({node.track_strip, node.chain_strips});
-    return plan;
+    return active->strip_plan;
 }
 
 // ---- RT:audio callback(禁配置/鎖/系統呼叫)----
@@ -2296,8 +2290,8 @@ void AudioEngine::process(const AudioBlock& block) noexcept {
     }
 
     if (engine_l != nullptr) {
-        if (g->engine_strip != kNoStrip)
-            meter_band(meters_, g->engine_strip, engine_l, engine_r, frames);
+        if (g->strip_plan.engine_strip != kNoStrip)
+            meter_band(meters_, g->strip_plan.engine_strip, engine_l, engine_r, frames);
         meters_.append_spectrum(engine_l, engine_r, frames);  // 最終輸出進頻譜 ring
     }
     meters_.add_busy_cycles(__rdtsc() - tsc0);
