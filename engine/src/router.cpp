@@ -277,16 +277,6 @@ Router::EffectPolicy Router::policy_for(Effect effect) {
     return {};
 }
 
-bool Router::verify_plugin(const std::string& module_path, const std::string& class_id,
-                           std::string& error) {
-    const auto status = engine_.status();
-    const double rate = status.running ? static_cast<double>(status.sample_rate) : 48000.0;
-    const std::uint32_t block =
-        status.running && status.buffer_size > 0 ? status.buffer_size : 512u;
-    return sandbox::preflight_module(module_path, class_id, rate, block, error) ==
-           sandbox::PreflightFailure::kNone;
-}
-
 std::vector<std::filesystem::path> Router::default_vst_roots() {
     std::vector<std::filesystem::path> roots{
         std::filesystem::path{L"C:\\Program Files\\Common Files\\VST3"},
@@ -597,7 +587,8 @@ Router::Outcome Router::handle_cancel_scan(const EmptyRequest&) {
 
 Router::Outcome Router::handle_add_plugin(const AddPluginRequest& request) {
     std::string error;
-    if (!verify_plugin(request.path, request.class_id, error))
+    if (session::preflight_plugin(engine_, request.path, request.class_id, error) !=
+        sandbox::PreflightFailure::kNone)
         return failure("plugin_load_failed", std::move(error));
     std::uint32_t instance_id = 0;
     if (!engine_.add_plugin(request.track_id, request.path, request.class_id,
@@ -656,7 +647,8 @@ Router::Outcome Router::handle_retry_plugin(const RetryPluginRequest& request) {
         request.path ? *request.path : slot->module_path;
     const std::string class_id = slot->class_id;
     std::string error;
-    if (!verify_plugin(module_path, class_id, error))
+    if (session::preflight_plugin(engine_, module_path, class_id, error) !=
+        sandbox::PreflightFailure::kNone)
         return failure("plugin_load_failed", std::move(error));
     if (!engine_.load_placeholder(request.instance_id, module_path, class_id, error))
         return failure("plugin_load_failed", std::move(error));

@@ -221,6 +221,15 @@ bool save(const AudioEngine& engine, const std::filesystem::path& file, std::str
     return true;
 }
 
+sandbox::PreflightFailure preflight_plugin(const AudioEngine& engine,
+                                           const std::string& module_path,
+                                           const std::string& class_id, std::string& error) {
+    const auto st = engine.status();
+    const double rate = st.running ? static_cast<double>(st.sample_rate) : 48000.0;
+    const std::uint32_t block = st.running && st.buffer_size > 0 ? st.buffer_size : 512u;
+    return rmx::sandbox::preflight_module(module_path, class_id, rate, block, error);
+}
+
 bool load(AudioEngine& engine, const std::filesystem::path& file, nlohmann::json& applied,
           std::string& err) {
     std::FILE* f = nullptr;
@@ -384,14 +393,8 @@ bool load(AudioEngine& engine, const std::filesystem::path& file, nlohmann::json
 
                     std::uint32_t instance_id = 0;
                     bool loaded = false;
-                    const auto st_now = engine.status();
-                    const double rate =
-                        st_now.running ? static_cast<double>(st_now.sample_rate) : 48000.0;
-                    const std::uint32_t block =
-                        st_now.running && st_now.buffer_size > 0 ? st_now.buffer_size : 512u;
                     std::string verr;
-                    const auto preflight = rmx::sandbox::preflight_module(
-                        path, class_id, rate, block, verr);
+                    const auto preflight = preflight_plugin(engine, path, class_id, verr);
                     if (preflight != rmx::sandbox::PreflightFailure::kNone) {
                         note_missing(
                             preflight == rmx::sandbox::PreflightFailure::kWorkerUnavailable

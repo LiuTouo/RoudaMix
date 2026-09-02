@@ -37,6 +37,13 @@ const rmx::PdcOutputLatency& output_latency(const rmx::RoutePlan& plan,
     std::exit(1);
 }
 
+const rmx::RouteTrackPlan& find_track(const rmx::RoutePlan& plan, std::uint32_t track_id) {
+    for (const auto& track : plan.tracks)
+        if (track.track_id == track_id) return track;
+    std::fprintf(stderr, "missing track plan for track %u\n", track_id);
+    std::exit(1);
+}
+
 }  // namespace
 
 int main() {
@@ -315,6 +322,67 @@ int main() {
               rmx::RouteSlotAction::kDelayDry);
         CHECK(suspended.tracks[0].slots[1].shadow ==
               active.tracks[0].slots[1].shadow);
+    }
+
+    {
+        // 決策矩陣:slot 狀態軸 × Output Latency Policy → primary action 與 Total Plugin Delay。
+        struct Case {
+            const char* name;
+            bool bypassed;
+            bool monitor_bypassed;
+            bool primary_available;
+            rmx::RouteRuntimeState primary_state;
+            rmx::OutputLatencyPolicy policy;
+            std::uint64_t latency;
+            rmx::RouteSlotAction expected_primary;
+            std::uint64_t expected_total;
+        };
+        const Case cases[] = {
+            {"baseline",             false, false, true,  rmx::RouteRuntimeState::kActive,
+             rmx::OutputLatencyPolicy::kFullPdc, 64, rmx::RouteSlotAction::kProcess, 64},
+            {"low-latency output",   false, false, true,  rmx::RouteRuntimeState::kActive,
+             rmx::OutputLatencyPolicy::kLowLatency, 64, rmx::RouteSlotAction::kProcess, 64},
+            {"global bypass",        true,  false, true,  rmx::RouteRuntimeState::kActive,
+             rmx::OutputLatencyPolicy::kFullPdc, 64, rmx::RouteSlotAction::kDry, 0},
+            {"placeholder",          false, false, false, rmx::RouteRuntimeState::kActive,
+             rmx::OutputLatencyPolicy::kFullPdc, 64, rmx::RouteSlotAction::kDry, 0},
+            {"monitor bypass, full", false, true,  true,  rmx::RouteRuntimeState::kActive,
+             rmx::OutputLatencyPolicy::kFullPdc, 64, rmx::RouteSlotAction::kProcess, 64},
+        };
+        for (const auto& c : cases) {
+            rmx::RouteSlotSpec slot = active_slot(200, c.latency);
+            slot.bypassed = c.bypassed;
+            slot.monitor_bypassed = c.monitor_bypassed;
+            slot.primary_available = c.primary_available;
+            slot.primary_latency_known = c.primary_available;
+            slot.primary_state = c.primary_state;
+            const auto plan = rmx::plan_routes(
+                {{1, false, true, c.policy, {slot}, {}}}, limits());
+            CHECK(plan.ok());
+            CHECK(plan.tracks[0].slots[0].primary.action == c.expected_primary);
+            CHECK(output_latency(plan, 1).total_plugin_delay_samples == c.expected_total);
+        }
+    }
+
+    {
+        // 嵌套匯流:bus 2→{3,4} 的成員 4 自己再匯流(收 2 與 6)。
+        // 路徑 1→2→4 = 64+16 = 80;路徑 6→4 = 32 → 匯流點 4 給 6 補 48。
+        const std::vector<rmx::RouteTrackSpec> graph{
+            {1, false, false, rmx::OutputLatencyPolicy::kFullPdc,
+             {active_slot(300, 64)}, {2}},
+            {2, false, false, rmx::OutputLatencyPolicy::kFullPdc,
+             {active_slot(301, 16)}, {3, 4}},
+            {3, false, true, rmx::OutputLatencyPolicy::kFullPdc, {}, {}},
+            {4, false, false, rmx::OutputLatencyPolicy::kFullPdc, {}, {5}},
+            {5, false, true, rmx::OutputLatencyPolicy::kFullPdc, {}, {}},
+            {6, false, false, rmx::OutputLatencyPolicy::kFullPdc,
+             {active_slot(302, 32)}, {4}},
+        };
+        const auto plan = rmx::plan_routes(graph, limits());
+        CHECK(plan.ok());
+        CHECK(find_track(plan, 6).sends[0].primary_delay_samples == 48);
+        CHECK(output_latency(plan, 3).total_plugin_delay_samples == 80);
+        CHECK(output_latency(plan, 5).total_plugin_delay_samples == 80);
     }
 
     std::printf("route_planner_test PASSED\n");

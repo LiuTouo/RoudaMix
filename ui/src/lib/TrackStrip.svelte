@@ -10,6 +10,7 @@
   import { cssColor, parseColor, stripOfTrack, type MeterStripView } from "./tracks";
   import { MutationQueue, mutKey } from "./mutations";
   import { reorderLane } from "./laneOrder";
+  import { pluginMenuItems } from "./pluginMenu";
   import {
     beginLatencyPolicy,
     beginMonitorBypass,
@@ -665,19 +666,24 @@
     );
   }
   function plugMenu(e: MouseEvent, slot: RackSlot) {
-    const chain = track.plugins;
-    const i = chain.findIndex((s) => s.instanceId === slot.instanceId);
-    openMenu(e.clientX, e.clientY, `Plugin「${slot.name}」操作`, [
-      { label: "編輯", disabled: isPh(slot), run: () => void openEditor(slot) },
-      { label: "上移", disabled: i <= 0, run: () => plugMove(slot, "up") },
-      { label: "下移", disabled: i >= chain.length - 1, run: () => plugMove(slot, "down") },
-      { label: "移到最前", disabled: i <= 0, run: () => plugMove(slot, "first") },
-      { label: "移到最後", disabled: i >= chain.length - 1, run: () => plugMove(slot, "last") },
-      // 右鍵選單也提供與 row 控制相同的 Monitor Bypass action。
-      ...(latencyEnabled
-        ? [{ label: shownMonitorBypass(slot) ? "取消 Monitor Bypass" : "Monitor Bypass", run: () => monitorBypass(slot) }]
-        : []),
-    ]);
+    const i = track.plugins.findIndex((s) => s.instanceId === slot.instanceId);
+    openMenu(
+      e.clientX,
+      e.clientY,
+      `Plugin「${slot.name}」操作`,
+      pluginMenuItems({
+        slot,
+        index: i,
+        chainLength: track.plugins.length,
+        latencyEnabled,
+        monitorBypassShown: shownMonitorBypass(slot),
+        run: {
+          editor: () => void openEditor(slot),
+          move: (to) => plugMove(slot, to),
+          monitorBypass: () => monitorBypass(slot),
+        },
+      }),
+    );
   }
 </script>
 

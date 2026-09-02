@@ -115,8 +115,6 @@ private:
     static Outcome failure(std::string code, std::string message,
                            bool push_status = false);
     static EffectPolicy policy_for(Effect effect);
-    bool verify_plugin(const std::string& module_path, const std::string& class_id,
-                       std::string& error);
     static std::vector<std::filesystem::path> default_vst_roots();
     void scan_job_thread(std::uint64_t job_id,
                          std::vector<std::filesystem::path> roots);

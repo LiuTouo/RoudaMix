@@ -9,6 +9,7 @@
 #include <nlohmann/json.hpp>
 
 #include "audio_engine.hpp"
+#include "sandbox.hpp"
 
 namespace rmx::session {
 
@@ -28,5 +29,12 @@ bool save(const AudioEngine& engine, const std::filesystem::path& file, std::str
 // bufferSize 原樣放 applied 給 caller。v2 會遷移到 v3 defaults；v1 一律 false。
 bool load(AudioEngine& engine, const std::filesystem::path& file, nlohmann::json& applied,
           std::string& err);
+
+// Sandbox fail-closed preflight 的單一來源:依 engine 現況推導 rate/block 後送 worker
+// preflight。回傳失敗類別(kNone = 通過);error 帶 worker 訊息。Router 的
+// add/retry_plugin 與 session load 都走這裡,不得各寫一份推導。
+sandbox::PreflightFailure preflight_plugin(const AudioEngine& engine,
+                                           const std::string& module_path,
+                                           const std::string& class_id, std::string& error);
 
 }  // namespace rmx::session

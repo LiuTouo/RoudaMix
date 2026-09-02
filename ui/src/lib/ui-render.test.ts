@@ -1,4 +1,5 @@
 import assert from "node:assert";
+import { readFileSync } from "node:fs";
 import { after, test } from "node:test";
 import { createServer } from "vite";
 import type { RackSlot, Track } from "./types.ts";
@@ -72,4 +73,19 @@ test("VST 機架以可操作名稱呈現 GUI 入口，加入按鈕不承擔重�
   assert.match(body, /<button[^>]*>＋ 加入<\/button>/);
   assert.doesNotMatch(body, />GUI<\/button>/);
   assert.doesNotMatch(body, />重新掃描<\/button>/);
+});
+
+test("渲染輸出的提示一律走 data-tooltip，不出現原生 title 屬性", () => {
+  const appBody = render(App).body;
+  const stripBody = render(TrackStrip, { props: stripProps(true) }).body;
+
+  assert.match(stripBody, /data-tooltip=/);
+  assert.doesNotMatch(appBody, /\stitle="/);
+  assert.doesNotMatch(stripBody, /\stitle="/);
+});
+
+test("靜態 index.html 同樣不出現原生 title 屬性（<title> 元素除外）", () => {
+  const html = readFileSync(new URL("../../index.html", import.meta.url), "utf8");
+  assert.match(html, /<title>/);
+  assert.doesNotMatch(html, /\stitle="/);
 });
