@@ -26,7 +26,7 @@
     type LatencyPolicyState,
     type MonitorBypassState,
     type OutputLatencyPolicy,
-  } from "./monitorBypass";
+  } from "./latencyControls";
   import { friendlyError } from "./errors";
   import AppPicker from "./AppPicker.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";

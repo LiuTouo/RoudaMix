@@ -1,3 +1,5 @@
+// 交易式 latency controls：per-plugin Monitor Bypass 與 per-track Output Latency Policy。
+
 interface PendingMonitorBypass {
   phase: "pending";
   confirmed: boolean;

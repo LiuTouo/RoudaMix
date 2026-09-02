@@ -13,7 +13,7 @@ import {
   monitorBypassValue,
   reconcileLatencyPolicy,
   reconcileMonitorBypass,
-} from "./monitorBypass.ts";
+} from "./latencyControls.ts";
 
 test("Monitor Bypass request 保留確認值並只送出反向意圖", () => {
   const result = beginMonitorBypass(initialMonitorBypass(), 17, false);
