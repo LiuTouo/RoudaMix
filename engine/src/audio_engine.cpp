@@ -1697,40 +1697,9 @@ bool AudioEngine::move_plugin(std::uint32_t instance_id, std::size_t to_index,
     return false;
 }
 
-bool AudioEngine::set_bypass(std::uint32_t instance_id, bool bypass, std::string& err,
-                             PluginMutationFailure* failure) {
-    if (failure != nullptr) *failure = PluginMutationFailure::kNone;
-    RackSlot* s = find_slot_mut(instance_id);
-    if (s == nullptr) {
-        if (failure != nullptr) *failure = PluginMutationFailure::kNotFound;
-        err = "unknown instanceId " + std::to_string(instance_id);
-        return false;
-    }
-    if (s->bypass == bypass) return true;
-    const bool previous = s->bypass;
-    s->bypass = bypass;
-    if (!prepare_monitor_variants(err)) {
-        if (failure != nullptr) *failure = PluginMutationFailure::kStateFailed;
-        s->bypass = previous;
-        std::string cleanup_error;
-        (void)ensure_monitor_shadows(cleanup_error);
-        (void)swap_graph();
-        return false;
-    }
-    if (!swap_graph()) {
-        if (failure != nullptr) *failure = PluginMutationFailure::kBadCommand;
-        s->bypass = previous;
-        std::string cleanup_error;
-        (void)ensure_monitor_shadows(cleanup_error);
-        (void)swap_graph();
-        err = "PDC plan exceeds latency or memory safety limits";
-        return false;
-    }
-    return true;
-}
-
-bool AudioEngine::set_monitor_bypass(std::uint32_t instance_id, bool bypass,
-                                     std::string& err,
+// bypass 旗標的交易式提交:兩個命令只剩旗標成員指標的差異。
+bool AudioEngine::commit_bypass_flag(bool RackSlot::* flag, std::uint32_t instance_id,
+                                     bool value, std::string& err,
                                      PluginMutationFailure* failure) {
     if (failure != nullptr) *failure = PluginMutationFailure::kNone;
     RackSlot* s = find_slot_mut(instance_id);
@@ -1739,27 +1708,40 @@ bool AudioEngine::set_monitor_bypass(std::uint32_t instance_id, bool bypass,
         err = "unknown instanceId " + std::to_string(instance_id);
         return false;
     }
-    if (s->monitor_bypass == bypass) return true;
-    const bool previous = s->monitor_bypass;
-    s->monitor_bypass = bypass;
-    if (!prepare_monitor_variants(err)) {
-        if (failure != nullptr) *failure = PluginMutationFailure::kStateFailed;
-        s->monitor_bypass = previous;
+    if (s->*flag == value) return true;
+    const bool previous = s->*flag;
+    s->*flag = value;
+    const auto rollback = [&] {
+        s->*flag = previous;
         std::string cleanup_error;
         (void)ensure_monitor_shadows(cleanup_error);
+        // running 時先前的 bypass 過渡 graph 必須還原
         (void)swap_graph();
+    };
+    if (!prepare_monitor_variants(err)) {
+        if (failure != nullptr) *failure = PluginMutationFailure::kStateFailed;
+        rollback();
         return false;
     }
     if (!swap_graph()) {
         if (failure != nullptr) *failure = PluginMutationFailure::kBadCommand;
-        s->monitor_bypass = previous;
-        std::string cleanup_error;
-        (void)ensure_monitor_shadows(cleanup_error);
-        (void)swap_graph();  // running 時先前的全 bypass 過渡 graph 必須還原
+        rollback();
         err = "PDC plan exceeds latency or memory safety limits";
         return false;
     }
     return true;
+}
+
+bool AudioEngine::set_bypass(std::uint32_t instance_id, bool bypass, std::string& err,
+                             PluginMutationFailure* failure) {
+    return commit_bypass_flag(&RackSlot::bypass, instance_id, bypass, err, failure);
+}
+
+bool AudioEngine::set_monitor_bypass(std::uint32_t instance_id, bool bypass,
+                                     std::string& err,
+                                     PluginMutationFailure* failure) {
+    return commit_bypass_flag(&RackSlot::monitor_bypass, instance_id, bypass, err,
+                              failure);
 }
 
 bool AudioEngine::set_param(std::uint32_t instance_id, std::uint32_t param_id, double value,

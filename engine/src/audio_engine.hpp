@@ -236,6 +236,10 @@ private:
     // (createBuffers 只能在 stop 狀態;聯集沒變 = 不動)。失敗 = 串流已停
     bool rebuild_asio_channels(std::string& err);
     RackSlot* find_slot_mut(std::uint32_t instance_id) noexcept;
+    // bypass 旗標的交易式提交:set_bypass / set_monitor_bypass 共用流程——
+    // 寫旗標、prepare/swap 任一失敗即回滾並還原 monitor shadow graph。
+    bool commit_bypass_flag(bool RackSlot::* flag, std::uint32_t instance_id, bool value,
+                            std::string& err, PluginMutationFailure* failure);
     TrackNode* find_track_mut(std::uint32_t track_id) noexcept;
     // 同 ASIO pair 全 engine 只能一軌用(source 與 output 各自方向內查重)
     bool asio_in_pair_busy(std::uint32_t ch, std::uint32_t except_track) const noexcept;
