@@ -4,6 +4,8 @@
 #include <limits>
 #include <unordered_map>
 
+#include "graph_topo.hpp"
+
 namespace rmx {
 
 namespace {
@@ -51,44 +53,21 @@ RoutePlan plan_routes(const std::vector<RouteTrackSpec>& tracks,
     result.latency = primary_plan;
     if (!result.ok()) return result;
 
-    std::unordered_map<std::uint32_t, std::size_t> index;
-    index.reserve(tracks.size());
-    for (std::size_t i = 0; i < tracks.size(); ++i) index.emplace(tracks[i].track_id, i);
-    std::vector<std::vector<std::size_t>> incoming(tracks.size());
-    std::vector<std::size_t> indegree(tracks.size(), 0);
-    for (std::size_t from = 0; from < tracks.size(); ++from)
-        for (const auto dest_id : tracks[from].dests) {
-            incoming[index.at(dest_id)].push_back(from);
-            ++indegree[index.at(dest_id)];
-        }
+    const auto build = graph::build_topo(tracks);
+    const auto& g = build.graph;
+    // 拓撲已在第一階段由 plan_plugin_delay 驗證;此防線只在未知缺陷時 fail closed。
+    if (build.duplicate_id || build.unknown_dest || !g.complete()) {
+        result.latency.error = PdcPlanError::kCycle;
+        result.tracks.clear();
+        return result;
+    }
 
-    std::vector<std::size_t> order;
-    order.reserve(tracks.size());
+    std::vector<std::size_t> low_latency_seeds;
     for (std::size_t i = 0; i < tracks.size(); ++i)
-        if (indegree[i] == 0) order.push_back(i);
-    for (std::size_t cursor = 0; cursor < order.size(); ++cursor) {
-        for (const auto dest_id : tracks[order[cursor]].dests) {
-            const auto dest = index.at(dest_id);
-            if (--indegree[dest] == 0) order.push_back(dest);
-        }
-    }
-
-    std::vector<bool> reaches_low_latency(tracks.size(), false);
-    std::vector<std::size_t> pending;
-    for (std::size_t i = 0; i < tracks.size(); ++i) {
         if (tracks[i].is_output &&
-            tracks[i].latency_policy == OutputLatencyPolicy::kLowLatency) {
-            reaches_low_latency[i] = true;
-            pending.push_back(i);
-        }
-    }
-    for (std::size_t cursor = 0; cursor < pending.size(); ++cursor) {
-        for (const auto from : incoming[pending[cursor]]) {
-            if (reaches_low_latency[from]) continue;
-            reaches_low_latency[from] = true;
-            pending.push_back(from);
-        }
-    }
+            tracks[i].latency_policy == OutputLatencyPolicy::kLowLatency)
+            low_latency_seeds.push_back(i);
+    const std::vector<bool> reaches_low_latency = graph::reverse_reach(g, low_latency_seeds);
 
     result.tracks.resize(tracks.size());
     std::vector<std::uint64_t> monitor_chain_latency(tracks.size(), 0);
@@ -101,7 +80,7 @@ RoutePlan plan_routes(const std::vector<RouteTrackSpec>& tracks,
             });
         return found == primary_plan.edge_delays.end() ? 0u : found->delay_samples;
     };
-    for (const auto i : order) {
+    for (const auto i : g.order) {
         const auto& track = tracks[i];
         RouteTrackPlan planned;
         planned.track_id = track.track_id;
@@ -116,6 +95,9 @@ RoutePlan plan_routes(const std::vector<RouteTrackSpec>& tracks,
         for (const auto& slot : track.slots) {
             RouteSlotPlan slot_plan;
             slot_plan.instance_id = slot.instance_id;
+            // 預設 shadow 處置:有 shadow 即釋放;分歧/重用分支僅在需要時覆寫。
+            slot_plan.shadow = slot.shadow_available ? ShadowDisposition::kRelease
+                                                    : ShadowDisposition::kNone;
             if (primary_processes(slot)) {
                 slot_plan.primary = {RouteSlotAction::kProcess, RouteBus::kPrimary,
                                      slot.primary_latency_known
@@ -129,32 +111,20 @@ RoutePlan plan_routes(const std::vector<RouteTrackSpec>& tracks,
             const bool primary_is_dry =
                 slot_plan.primary.action != RouteSlotAction::kProcess;
             if (!planned.monitor_required) {
-                slot_plan.monitor = {RouteSlotAction::kReusePrimary, RouteBus::kPrimary, 0u};
-                slot_plan.shadow = slot.shadow_available ? ShadowDisposition::kRelease
-                                                        : ShadowDisposition::kNone;
-            } else if (primary_is_dry) {
+                slot_plan.monitor = {RouteSlotAction::kReusePrimary, RouteBus::kPrimary, 0u};            } else if (primary_is_dry) {
                 slot_plan.monitor = monitor_diverged
                                         ? RoutePathPlan{RouteSlotAction::kDry,
                                                         RouteBus::kMonitor, 0u}
                                         : RoutePathPlan{RouteSlotAction::kReusePrimary,
-                                                        RouteBus::kPrimary, 0u};
-                slot_plan.shadow = slot.shadow_available ? ShadowDisposition::kRelease
-                                                        : ShadowDisposition::kNone;
-            } else if (!monitor_diverged && !slot.monitor_bypassed) {
-                slot_plan.monitor = {RouteSlotAction::kReusePrimary, RouteBus::kPrimary, 0u};
-                slot_plan.shadow = slot.shadow_available ? ShadowDisposition::kRelease
-                                                        : ShadowDisposition::kNone;
-                if (slot.primary_latency_known &&
+                                                        RouteBus::kPrimary, 0u};            } else if (!monitor_diverged && !slot.monitor_bypassed) {
+                slot_plan.monitor = {RouteSlotAction::kReusePrimary, RouteBus::kPrimary, 0u};                if (slot.primary_latency_known &&
                     !add_latency(slot.primary_latency_samples, monitor_chain_latency[i])) {
                     result.latency.error = PdcPlanError::kArithmeticOverflow;
                     result.tracks.clear();
                     return result;
                 }
             } else if (slot.monitor_bypassed) {
-                slot_plan.monitor = {RouteSlotAction::kDry, RouteBus::kMonitor, 0u};
-                slot_plan.shadow = slot.shadow_available ? ShadowDisposition::kRelease
-                                                        : ShadowDisposition::kNone;
-                monitor_diverged = true;
+                slot_plan.monitor = {RouteSlotAction::kDry, RouteBus::kMonitor, 0u};                monitor_diverged = true;
             } else if (!slot.shadow_available) {
                 slot_plan.monitor = {RouteSlotAction::kDry, RouteBus::kMonitor, 0u};
                 slot_plan.shadow = ShadowDisposition::kCreate;
@@ -188,7 +158,7 @@ RoutePlan plan_routes(const std::vector<RouteTrackSpec>& tracks,
             const auto delay = pdc_delay(track.track_id, dest_id);
             planned.sends.push_back({dest_id, RouteBus::kPrimary, RouteBus::kMonitor,
                                      delay});
-            const auto dest = index.at(dest_id);
+            const auto dest = g.index.at(dest_id);
             if (reaches_low_latency[dest] && tracks[dest].uses_input_bus &&
                 (monitor_diverged || delay > 0))
                 incoming_monitor_diverged[dest] = true;
