@@ -26,6 +26,7 @@
   import {
     initialScanJob,
     isScanJobRunning,
+    scanCompletionNotice,
     transitionScanJob,
     type ScanJobState,
   } from "./lib/scanJob";
@@ -97,11 +98,12 @@
     msg: string,
     raw?: string,
     autoDismissMs = 0,
+    dismissible = autoDismissMs <= 0,
   ): void {
     const id = nextNoticeId++;
     notices = [
       ...notices.slice(-4),
-      { id, kind, msg, raw, dismissible: autoDismissMs <= 0, autoDismissMs },
+      { id, kind, msg, raw, dismissible, autoDismissMs },
     ];
     if (autoDismissMs > 0) setTimeout(() => dismissNotice(id), autoDismissMs);
   }
@@ -109,6 +111,7 @@
     notices = notices.filter((n) => n.id !== id);
   }
   function observeLatencyRuntime(tracks: Track[]): void {
+    revisionDirty = transitionRevisionDirty(revisionDirty, { type: "runtimeObserved" });
     if (!latencyEnabled) return;
     for (const track of tracks) {
       for (const plugin of track.plugins) {
@@ -195,6 +198,9 @@
       revision: value,
     });
   }
+  function rejectRevisionBaseline(): void {
+    revisionDirty = transitionRevisionDirty(revisionDirty, { type: "baselineRejected" });
+  }
   // ---- E:背景掃描 job(共用 registry,所有軌共用一份清單)----
   let scanModules = $state<ScanModule[]>([]);
   let scanFailed = $state<ScanFailure[]>([]);
@@ -278,7 +284,6 @@
           ensuredDefaults = false;
           restoreP = null;
           currentSessionPath = null; // 新 engine 尚未成功恢復任何檔案，不得覆寫上一代 Session
-          revisionDirty = transitionRevisionDirty(revisionDirty, { type: "reset" });
           scanJob = transitionScanJob(scanJob, { type: "reset" }).state;
         }
         conn = c;
@@ -336,12 +341,23 @@
           if (transition.accepted && transition.state.result?.outcome === "success") {
             scanModules = transition.state.result.modules;
             scanFailed = transition.state.result.failures;
+            const completionNotice = scanCompletionNotice(
+              scanModules.length,
+              scanFailed.length,
+            );
             addNotice(
               "info",
-              `VST 清單已更新：${scanModules.length} 個模組${scanFailed.length ? `，${scanFailed.length} 個無法載入` : ""}`,
+              completionNotice.message,
               undefined,
-              3000,
+              completionNotice.autoDismissMs,
+              completionNotice.dismissible,
             );
+            setTimeout(() => {
+              scanJob = transitionScanJob(scanJob, {
+                type: "dismiss",
+                jobId: p.jobId,
+              }).state;
+            }, completionNotice.autoDismissMs);
           }
         }
         if (kind === "scan_failed") {
@@ -528,6 +544,7 @@
       restoreError = "";
       return true;
     } catch (e) {
+      rejectRevisionBaseline();
       // P1-F:存檔失敗 dirty 不清(cleanRevision 沒動)、原檔仍在(原子寫入)
       notice = String(e);
       addNotice("error", "Session 儲存失敗 —— 未儲存的變更仍在", String(e));
@@ -590,6 +607,7 @@
         applyLoadedSession(r);
         currentSessionPath = p;
       } catch (e) {
+        rejectRevisionBaseline();
         // 檔案不存在/損壞 = 開空白 + 頂列提示,不擋啟動
         restoreError = String(e);
       }
@@ -609,6 +627,7 @@
       // 新空白場景的系統輸出 = 基準狀態,不算使用者未存變更
       confirmRevisionBaseline(r.revision);
     } catch {
+      rejectRevisionBaseline();
       // 連線競態:失敗就等下一個 status 事件再試
       ensuredDefaults = false;
     }
@@ -970,6 +989,7 @@
       notice = "";
       restoreError = ""; // 手動救回 = 啟動失敗警示該滅
     } catch (e) {
+      rejectRevisionBaseline();
       notice = String(e);
       addNotice("error", "Session 儲存失敗", String(e));
     }
@@ -996,6 +1016,7 @@
       notice = "";
       restoreError = "";
     } catch (e) {
+      rejectRevisionBaseline();
       notice = String(e);
       addNotice("error", "Session 載入失敗", String(e));
     }
@@ -1045,6 +1066,7 @@
       notice = "";
       restoreError = "";
     } catch (e) {
+      rejectRevisionBaseline();
       notice = String(e);
       addNotice("error", "Session 載入失敗", String(e));
     }

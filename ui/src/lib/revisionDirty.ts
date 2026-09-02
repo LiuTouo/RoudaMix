@@ -9,8 +9,7 @@ export type RevisionDirtyEvent =
   | { type: "engineRevisionObserved"; revision: number }
   | { type: "baselineConfirmed"; revision: number }
   | { type: "baselineRejected" }
-  | { type: "runtimeObserved" }
-  | { type: "reset" };
+  | { type: "runtimeObserved" };
 
 export function initialRevisionDirty(): RevisionDirtyState {
   return { revision: null, cleanRevision: null };
@@ -24,7 +23,6 @@ export function transitionRevisionDirty(
   state: RevisionDirtyState,
   event: RevisionDirtyEvent,
 ): RevisionDirtyState {
-  if (event.type === "reset") return initialRevisionDirty();
   if (event.type === "runtimeObserved" || event.type === "baselineRejected") return state;
   if (event.type === "baselineConfirmed")
     return { revision: event.revision, cleanRevision: event.revision };

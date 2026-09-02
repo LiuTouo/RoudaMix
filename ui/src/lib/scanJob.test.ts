@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   initialScanJob,
   isScanJobRunning,
+  scanCompletionNotice,
   transitionScanJob,
 } from "./scanJob.ts";
 
@@ -88,8 +89,24 @@ test("完成、失敗、取消與 dismiss 都有明確轉移", () => {
     modules: [],
     failures: [],
   });
-  assert.equal(transitionScanJob(failed.state, { type: "dismiss" }).state.phase, "idle");
+  assert.equal(
+    transitionScanJob(failed.state, { type: "dismiss", jobId: 7 }).state.phase,
+    "idle",
+  );
   assert.equal(isScanJobRunning(completed.state), false);
+});
+
+test("完成通知描述結果、三秒自動 dismiss 且不提供手動關閉", () => {
+  assert.deepEqual(scanCompletionNotice(4, 0), {
+    message: "VST 清單已更新：4 個模組",
+    autoDismissMs: 3000,
+    dismissible: false,
+  });
+  assert.deepEqual(scanCompletionNotice(4, 2), {
+    message: "VST 清單已更新：4 個模組，2 個無法載入",
+    autoDismissMs: 3000,
+    dismissible: false,
+  });
 });
 
 test("start 失敗可回滾為 failed；cancel request 失敗維持 scanning", () => {
@@ -124,8 +141,11 @@ test("reset 與 terminal state 收到重複 late event 都保持冪等", () => {
     failures: [],
   });
   const reset = transitionScanJob(completed, { type: "reset" });
+  const staleDismiss = transitionScanJob(completed, { type: "dismiss", jobId: 6 });
 
   assert.equal(duplicate.accepted, false);
   assert.equal(duplicate.state, completed);
+  assert.equal(staleDismiss.accepted, false);
+  assert.equal(staleDismiss.state, completed);
   assert.deepEqual(reset.state, initialScanJob());
 });

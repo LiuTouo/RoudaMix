@@ -5,6 +5,12 @@ export interface ScanProgress {
   total: number;
 }
 
+export interface ScanCompletionNotice {
+  message: string;
+  autoDismissMs: 3000;
+  dismissible: false;
+}
+
 export type ScanJobResult<TModule, TFailure> =
   | { outcome: "success"; modules: TModule[]; failures: TFailure[] }
   | { outcome: "cancelled"; modules: []; failures: [] };
@@ -27,7 +33,7 @@ export type ScanJobEvent<TModule, TFailure> =
   | { type: "failed"; jobId: number; error: string }
   | { type: "cancelled"; jobId: number }
   | { type: "cancelRejected"; error: string }
-  | { type: "dismiss" }
+  | { type: "dismiss"; jobId: number }
   | { type: "reset" };
 
 export interface ScanJobTransition<TModule, TFailure> {
@@ -81,10 +87,11 @@ export function transitionScanJob<TModule, TFailure>(
   }
 
   if (event.type === "dismiss") {
-    if (state.phase === "completed" || state.phase === "failed")
+    if (
+      (state.phase === "completed" || state.phase === "failed") &&
+      state.jobId === event.jobId
+    )
       return { state: initialScanJob(), accepted: true };
-    if (state.error)
-      return { state: { ...state, error: "" }, accepted: true };
     return { state, accepted: false };
   }
 
@@ -183,4 +190,15 @@ export function transitionScanJob<TModule, TFailure>(
 
 export function isScanJobRunning(state: ScanJobState): boolean {
   return state.phase === "scanning";
+}
+
+export function scanCompletionNotice(
+  moduleCount: number,
+  failureCount: number,
+): ScanCompletionNotice {
+  return {
+    message: `VST 清單已更新：${moduleCount} 個模組${failureCount ? `，${failureCount} 個無法載入` : ""}`,
+    autoDismissMs: 3000,
+    dismissible: false,
+  };
 }

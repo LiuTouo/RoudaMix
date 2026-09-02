@@ -77,15 +77,6 @@ test("save/load 成功建立新 baseline；失敗保留原 dirty 狀態", () => 
   assert.deepEqual(loaded, { revision: 2, cleanRevision: 2 });
 });
 
-test("reset 清除上一個 engine epoch 的 revision 與 baseline", () => {
-  const clean = transitionRevisionDirty(initialRevisionDirty(), {
-    type: "baselineConfirmed",
-    revision: 5,
-  });
-
-  assert.deepEqual(transitionRevisionDirty(clean, { type: "reset" }), initialRevisionDirty());
-});
-
 test("dirty choice：cancel 擋、discard 過、save 先存；clean 時直接過", () => {
   assert.deepEqual(resolveDirtyChoice(true, "cancel"), {
     proceed: false,

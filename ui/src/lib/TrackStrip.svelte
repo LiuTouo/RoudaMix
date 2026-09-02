@@ -13,8 +13,11 @@
   import {
     beginMonitorBypass,
     finishMonitorBypass,
+    initialMonitorBypass,
     isMonitorBypassPending,
-    type MonitorBypassTransactions,
+    monitorBypassValue,
+    reconcileMonitorBypass,
+    type MonitorBypassState,
   } from "./monitorBypass";
   import { friendlyError } from "./errors";
   import AppPicker from "./AppPicker.svelte";
@@ -78,7 +81,7 @@
   // P2-N:刪除確認(track/plugin);系統輸出軌不可刪(engine 權威)
   let confirmBox = $state<{ title: string; impact: string[]; confirmLabel: string } | null>(null);
   let pendingDelete: (() => void) | null = null;
-  let monitorBypassTransactions = $state<MonitorBypassTransactions>(new Map());
+  let monitorBypassState = $state<MonitorBypassState>(initialMonitorBypass());
   let pendingLatencyPolicy = $state(false);
   // P1-C:app 軌程序選擇器(needsRebind / 程序死亡重綁)
   let pickerOpen = $state(false);
@@ -95,6 +98,15 @@
   const dev = $derived(devices.find((d) => d.deviceKey === selectedDeviceKey) ?? null);
   const isOutput = $derived(track.kind === "output");
   const basename = (p: string) => p.split(/[\\/]/).pop() ?? p;
+  $effect(() => {
+    const reconciled = reconcileMonitorBypass(
+      monitorBypassState,
+      track.plugins.map((slot) => [slot.instanceId, slot.monitorBypassed ?? false] as const),
+    );
+    if (reconciled !== monitorBypassState) monitorBypassState = reconciled;
+  });
+  const shownMonitorBypass = (slot: RackSlot) =>
+    monitorBypassValue(monitorBypassState, slot.instanceId, slot.monitorBypassed ?? false);
 
   // ASIO pair 選項:基底偶數 ch,顯示「1/2 名稱」
   function pairOptions(names: string[], dir: "in" | "out") {
@@ -388,13 +400,13 @@
 
   async function monitorBypass(slot: RackSlot) {
     const request = beginMonitorBypass(
-      monitorBypassTransactions,
+      monitorBypassState,
       slot.instanceId,
       slot.monitorBypassed ?? false,
     );
     if (!request.command) return;
     err = "";
-    monitorBypassTransactions = request.transactions;
+    monitorBypassState = request.state;
     let outcome: "confirmed" | "rejected" = "confirmed";
     try {
       await engineCommand("set_monitor_bypass", request.command);
@@ -402,11 +414,11 @@
       outcome = "rejected";
       err = friendlyError(String(e)).friendly;
     } finally {
-      monitorBypassTransactions = finishMonitorBypass(
-        monitorBypassTransactions,
+      monitorBypassState = finishMonitorBypass(
+        monitorBypassState,
         slot.instanceId,
         outcome,
-      ).transactions;
+      );
     }
   }
 
@@ -644,7 +656,7 @@
       { label: "移到最後", disabled: i >= chain.length - 1, run: () => plugMove(slot, "last") },
       // 右鍵選單也提供與 row 控制相同的 Monitor Bypass action。
       ...(latencyEnabled
-        ? [{ label: slot.monitorBypassed ? "取消 Monitor Bypass" : "Monitor Bypass", run: () => monitorBypass(slot) }]
+        ? [{ label: shownMonitorBypass(slot) ? "取消 Monitor Bypass" : "Monitor Bypass", run: () => monitorBypass(slot) }]
         : []),
     ]);
   }
@@ -932,20 +944,20 @@
               {#if latencyEnabled}
                 <button
                   class="mini plugicon monitor-bypass"
-                  class:on={s.monitorBypassed}
-                  class:pending={isMonitorBypassPending(monitorBypassTransactions, s.instanceId)}
-                  disabled={isMonitorBypassPending(monitorBypassTransactions, s.instanceId)}
+                  class:on={shownMonitorBypass(s)}
+                  class:pending={isMonitorBypassPending(monitorBypassState, s.instanceId)}
+                  disabled={isMonitorBypassPending(monitorBypassState, s.instanceId)}
                   onclick={() => void monitorBypass(s)}
-                  aria-pressed={s.monitorBypassed ?? false}
-                  aria-label={s.monitorBypassed
+                  aria-pressed={shownMonitorBypass(s)}
+                  aria-label={shownMonitorBypass(s)
                     ? `取消 ${s.name} 的 Monitor Bypass`
                     : `啟用 ${s.name} 的 Monitor Bypass`}
-                  data-tooltip={isMonitorBypassPending(monitorBypassTransactions, s.instanceId)
+                  data-tooltip={isMonitorBypassPending(monitorBypassState, s.instanceId)
                     ? "正在建立或同步 Monitor Shadow；engine 確認前不改變目前狀態。"
-                    : s.monitorBypassed
+                    : shownMonitorBypass(s)
                     ? "Monitor Bypass 已啟用：Low-Latency Outputs 略過此 plugin；右鍵選單也可取消。"
                     : "只讓 Low-Latency Outputs 略過此 plugin；Stream 的完整處理不受影響，右鍵選單也可切換。"}
-                  >{isMonitorBypassPending(monitorBypassTransactions, s.instanceId) ? "…" : "M"}</button
+                  >{isMonitorBypassPending(monitorBypassState, s.instanceId) ? "…" : "M"}</button
                 >
               {/if}
               <button

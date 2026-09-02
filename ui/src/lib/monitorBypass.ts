@@ -1,50 +1,93 @@
-export interface MonitorBypassTransaction {
+interface PendingMonitorBypass {
+  phase: "pending";
   confirmed: boolean;
   requested: boolean;
 }
 
-export type MonitorBypassTransactions = ReadonlyMap<number, MonitorBypassTransaction>;
+interface SettledMonitorBypass {
+  phase: "settled";
+  value: boolean;
+}
+
+type MonitorBypassEntry = PendingMonitorBypass | SettledMonitorBypass;
+
+export type MonitorBypassState = ReadonlyMap<number, MonitorBypassEntry>;
 
 export interface MonitorBypassCommand {
   instanceId: number;
   bypassed: boolean;
 }
 
-export function beginMonitorBypass(
-  transactions: MonitorBypassTransactions,
-  instanceId: number,
-  confirmed: boolean,
-): { transactions: MonitorBypassTransactions; command: MonitorBypassCommand | null } {
-  if (transactions.has(instanceId)) return { transactions, command: null };
+export function initialMonitorBypass(): MonitorBypassState {
+  return new Map();
+}
 
+export function monitorBypassValue(
+  state: MonitorBypassState,
+  instanceId: number,
+  observed: boolean,
+): boolean {
+  const entry = state.get(instanceId);
+  if (!entry) return observed;
+  return entry.phase === "pending" ? entry.confirmed : entry.value;
+}
+
+export function beginMonitorBypass(
+  state: MonitorBypassState,
+  instanceId: number,
+  observed: boolean,
+): { state: MonitorBypassState; command: MonitorBypassCommand | null } {
+  const current = state.get(instanceId);
+  if (current?.phase === "pending") return { state, command: null };
+
+  const confirmed = current?.value ?? observed;
   const requested = !confirmed;
-  const next = new Map(transactions);
-  next.set(instanceId, { confirmed, requested });
+  const next = new Map(state);
+  next.set(instanceId, { phase: "pending", confirmed, requested });
   return {
-    transactions: next,
+    state: next,
     command: { instanceId, bypassed: requested },
   };
 }
 
 export function finishMonitorBypass(
-  transactions: MonitorBypassTransactions,
+  state: MonitorBypassState,
   instanceId: number,
   outcome: "confirmed" | "rejected",
-): { transactions: MonitorBypassTransactions; value: boolean | null } {
-  const transaction = transactions.get(instanceId);
-  if (!transaction) return { transactions, value: null };
+): MonitorBypassState {
+  const transaction = state.get(instanceId);
+  if (transaction?.phase !== "pending") return state;
 
-  const next = new Map(transactions);
-  next.delete(instanceId);
-  return {
-    transactions: next,
+  const next = new Map(state);
+  next.set(instanceId, {
+    phase: "settled",
     value: outcome === "confirmed" ? transaction.requested : transaction.confirmed,
-  };
+  });
+  return next;
+}
+
+/** Engine status 對齊 local settle 後移除 override，後續顯示回到外部權威值。 */
+export function reconcileMonitorBypass(
+  state: MonitorBypassState,
+  observations: Iterable<readonly [number, boolean]>,
+): MonitorBypassState {
+  const observed = new Map(observations);
+  let next: Map<number, MonitorBypassEntry> | null = null;
+  for (const [instanceId, entry] of state) {
+    if (
+      !observed.has(instanceId) ||
+      (entry.phase === "settled" && observed.get(instanceId) === entry.value)
+    ) {
+      next ??= new Map(state);
+      next.delete(instanceId);
+    }
+  }
+  return next ?? state;
 }
 
 export function isMonitorBypassPending(
-  transactions: MonitorBypassTransactions,
+  state: MonitorBypassState,
   instanceId: number,
 ): boolean {
-  return transactions.has(instanceId);
+  return state.get(instanceId)?.phase === "pending";
 }
