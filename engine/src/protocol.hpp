@@ -1,4 +1,4 @@
-// RoudaMix engine protocol — 契約權威:contracts/protocol.md + protocol.schema.json
+// RoudaMix engine protocol — control-plane 權威:contracts/command_contract.json
 #pragma once
 #include <nlohmann/json.hpp>
 #include <cstdint>
@@ -17,7 +17,10 @@ inline constexpr const char* kPipeName = "\\\\.\\pipe\\roudamix-engine";
 inline constexpr const wchar_t* kSingletonMutex = L"Local\\roudamix-engine-singleton";
 
 struct ParseError : std::runtime_error {
-    explicit ParseError(const std::string& what) : std::runtime_error(what) {}
+    std::string code;
+
+    ParseError(std::string code_value, const std::string& what)
+        : std::runtime_error(what), code(std::move(code_value)) {}
 };
 
 struct ProtocolError {

@@ -1,0 +1,8 @@
+#pragma once
+
+namespace rmx::contract {
+
+inline constexpr char kCommandContractJson[] =
+@RMX_COMMAND_CONTRACT_LITERALS@;
+
+}  // namespace rmx::contract

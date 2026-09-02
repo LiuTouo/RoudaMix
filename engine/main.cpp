@@ -968,8 +968,7 @@ void serve_client(HANDLE pipe, uint64_t gen) {
             }
             // server 收到 reply/event:契約上不該出現,忽略(容錯不斷線)
         } catch (const rmx::ParseError& e) {
-            send_frame(pipe, rmx::make_reply_err(0, g_epoch.load(), "bad_command",
-                                                 e.what()));
+            send_frame(pipe, rmx::make_reply_err(0, g_epoch.load(), e.code, e.what()));
         }
     }
 }

@@ -4,6 +4,30 @@ project(roudamix-engine CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+set(RMX_COMMAND_CONTRACT "${CMAKE_CURRENT_SOURCE_DIR}/../contracts/command_contract.json")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${RMX_COMMAND_CONTRACT}")
+file(READ "${RMX_COMMAND_CONTRACT}" RMX_COMMAND_CONTRACT_JSON)
+string(LENGTH "${RMX_COMMAND_CONTRACT_JSON}" RMX_COMMAND_CONTRACT_LENGTH)
+set(RMX_COMMAND_CONTRACT_LITERALS "")
+set(RMX_COMMAND_CONTRACT_OFFSET 0)
+while(RMX_COMMAND_CONTRACT_OFFSET LESS RMX_COMMAND_CONTRACT_LENGTH)
+    math(EXPR RMX_COMMAND_CONTRACT_REMAINING
+         "${RMX_COMMAND_CONTRACT_LENGTH} - ${RMX_COMMAND_CONTRACT_OFFSET}")
+    if(RMX_COMMAND_CONTRACT_REMAINING GREATER 8000)
+        set(RMX_COMMAND_CONTRACT_CHUNK_LENGTH 8000)
+    else()
+        set(RMX_COMMAND_CONTRACT_CHUNK_LENGTH ${RMX_COMMAND_CONTRACT_REMAINING})
+    endif()
+    string(SUBSTRING "${RMX_COMMAND_CONTRACT_JSON}" ${RMX_COMMAND_CONTRACT_OFFSET}
+           ${RMX_COMMAND_CONTRACT_CHUNK_LENGTH} RMX_COMMAND_CONTRACT_CHUNK)
+    string(APPEND RMX_COMMAND_CONTRACT_LITERALS
+           "R\"RMX_CONTRACT(${RMX_COMMAND_CONTRACT_CHUNK})RMX_CONTRACT\"\n")
+    math(EXPR RMX_COMMAND_CONTRACT_OFFSET
+         "${RMX_COMMAND_CONTRACT_OFFSET} + ${RMX_COMMAND_CONTRACT_CHUNK_LENGTH}")
+endwhile()
+configure_file(src/command_contract_embed.hpp.in
+               "${CMAKE_CURRENT_BINARY_DIR}/generated/command_contract_embed.hpp" @ONLY)
+
 # Portable 發佈不得要求目標電腦先安裝 Visual C++ Redistributable。
 # Debug 仍使用 debug CRT；Release 與其他非 Debug 組態使用靜態 release CRT。
 if(MSVC)
@@ -51,6 +75,7 @@ endif()
 
 add_executable(roudamix-engine
     main.cpp
+    src/command_contract.cpp
     src/protocol.cpp
     src/frame_io.cpp
     src/pcm_convert.cpp
@@ -66,7 +91,7 @@ add_executable(roudamix-engine
     src/sandbox.cpp
     src/vst_registry.cpp
 )
-target_include_directories(roudamix-engine PRIVATE src)
+target_include_directories(roudamix-engine PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_include_directories(roudamix-engine SYSTEM PRIVATE third_party)
 target_link_libraries(roudamix-engine PRIVATE asio_sdk vst3_sdk user32 ole32 gdi32 gdiplus dwmapi mmdevapi psapi)
 if(MSVC)
@@ -92,14 +117,23 @@ endif()
 enable_testing()
 
 # 協議 conformance(純 fixture,不依賴 ASIO/Windows SDK)
-add_executable(conformance_test tests/conformance_test.cpp src/protocol.cpp)
-target_include_directories(conformance_test PRIVATE src)
+add_executable(conformance_test tests/conformance_test.cpp src/protocol.cpp src/command_contract.cpp)
+target_include_directories(conformance_test PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_include_directories(conformance_test SYSTEM PRIVATE third_party)
 if(MSVC)
     target_compile_options(conformance_test PRIVATE /W4 /utf-8)
 endif()
 add_test(NAME protocol_conformance
     COMMAND conformance_test "${CMAKE_CURRENT_SOURCE_DIR}/../fixtures/protocol")
+
+add_executable(protocol_probe tests/protocol_probe.cpp src/protocol.cpp src/command_contract.cpp)
+target_include_directories(protocol_probe PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/generated")
+target_include_directories(protocol_probe SYSTEM PRIVATE third_party)
+if(MSVC)
+    target_compile_options(protocol_probe PRIVATE /W4 /utf-8)
+endif()
+add_test(NAME protocol_parity
+    COMMAND node "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/protocol-parity.mjs")
 
 # 轉換表 round-trip + meter accumulate 離線測試
 add_executable(audio_test tests/audio_test.cpp src/pcm_convert.cpp)

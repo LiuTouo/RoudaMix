@@ -137,10 +137,11 @@ impl Bridge {
     /// 送 command 等 reply。斷線/逾時即失敗,不重發(契約 §7)。
     pub async fn send(&self, kind: &str, payload: Value) -> Result<Value, String> {
         let id = self.inner.next_id.fetch_add(1, Ordering::Relaxed) + 1;
+        let frame = make_command(id, kind, payload)
+            .map_err(|error| format!("{}: {error}", error.code()))?;
         let (tx, rx) = oneshot::channel();
         self.inner.pending.register(id, tx);
 
-        let frame = make_command(id, kind, payload);
         let buf = match serde_json::to_vec(&frame) {
             Ok(b) => b,
             Err(e) => {
@@ -273,13 +274,14 @@ async fn serve(app: &AppHandle, b: &Bridge, pipe: NamedPipeClient) {
         .map(|h| h.0 as u64);
     if let Some(hwnd) = owner {
         let id = b.inner.next_id.fetch_add(1, Ordering::Relaxed) + 1;
-        let frame = make_command(id, "set_editor_owner", json!({ "hwnd": hwnd }));
-        if let Ok(buf) = serde_json::to_vec(&frame) {
-            let mut framed = (buf.len() as u32).to_le_bytes().to_vec();
-            framed.extend_from_slice(&buf);
-            let mut w = b.inner.write.lock().await;
-            if let Some(h) = w.as_mut() {
-                let _ = h.write_all(&framed).await;
+        if let Ok(frame) = make_command(id, "set_editor_owner", json!({ "hwnd": hwnd })) {
+            if let Ok(buf) = serde_json::to_vec(&frame) {
+                let mut framed = (buf.len() as u32).to_le_bytes().to_vec();
+                framed.extend_from_slice(&buf);
+                let mut w = b.inner.write.lock().await;
+                if let Some(h) = w.as_mut() {
+                    let _ = h.write_all(&framed).await;
+                }
             }
         }
     }

@@ -1,0 +1,287 @@
+{
+  "schemaVersion": 1,
+  "commands": {
+    "ping": {
+      "missing": [],
+      "wrongType": []
+    },
+    "get_snapshot": {
+      "missing": [],
+      "wrongType": []
+    },
+    "get_latency_report": {
+      "missing": [],
+      "wrongType": []
+    },
+    "list_devices": {
+      "missing": [],
+      "wrongType": []
+    },
+    "list_audio_apps": {
+      "missing": [],
+      "wrongType": []
+    },
+    "list_render_devices": {
+      "missing": [],
+      "wrongType": []
+    },
+    "start": {
+      "missing": [
+        "deviceKey",
+        "sampleRate"
+      ],
+      "wrongType": [
+        "deviceKey",
+        "sampleRate",
+        "bufferSize"
+      ]
+    },
+    "stop": {
+      "missing": [],
+      "wrongType": []
+    },
+    "open_device_panel": {
+      "missing": [],
+      "wrongType": []
+    },
+    "track_add": {
+      "missing": [
+        "kind"
+      ],
+      "wrongType": [
+        "kind",
+        "name",
+        "color"
+      ]
+    },
+    "track_remove": {
+      "missing": [
+        "trackId"
+      ],
+      "wrongType": [
+        "trackId"
+      ]
+    },
+    "track_set": {
+      "missing": [
+        "trackId"
+      ],
+      "wrongType": [
+        "trackId",
+        "name",
+        "color",
+        "gain",
+        "mute"
+      ]
+    },
+    "track_set_source": {
+      "missing": [
+        "trackId",
+        "source"
+      ],
+      "wrongType": [
+        "trackId",
+        "source"
+      ]
+    },
+    "track_set_dests": {
+      "missing": [
+        "trackId",
+        "dests"
+      ],
+      "wrongType": [
+        "trackId",
+        "dests"
+      ]
+    },
+    "track_set_output": {
+      "missing": [
+        "trackId",
+        "output"
+      ],
+      "wrongType": [
+        "trackId",
+        "output"
+      ]
+    },
+    "track_set_latency_policy": {
+      "missing": [
+        "trackId",
+        "policy"
+      ],
+      "wrongType": [
+        "trackId",
+        "policy"
+      ]
+    },
+    "track_move": {
+      "missing": [
+        "trackId",
+        "newIndex"
+      ],
+      "wrongType": [
+        "trackId",
+        "newIndex"
+      ]
+    },
+    "start_scan": {
+      "missing": [],
+      "wrongType": [
+        "roots"
+      ]
+    },
+    "cancel_scan": {
+      "missing": [],
+      "wrongType": []
+    },
+    "add_plugin": {
+      "missing": [
+        "trackId",
+        "path"
+      ],
+      "wrongType": [
+        "trackId",
+        "path",
+        "classId"
+      ]
+    },
+    "remove_plugin": {
+      "missing": [
+        "instanceId"
+      ],
+      "wrongType": [
+        "instanceId"
+      ]
+    },
+    "move_plugin": {
+      "missing": [
+        "instanceId",
+        "newIndex"
+      ],
+      "wrongType": [
+        "instanceId",
+        "newIndex"
+      ]
+    },
+    "set_bypass": {
+      "missing": [
+        "instanceId",
+        "bypassed"
+      ],
+      "wrongType": [
+        "instanceId",
+        "bypassed"
+      ]
+    },
+    "set_monitor_bypass": {
+      "missing": [
+        "instanceId",
+        "bypassed"
+      ],
+      "wrongType": [
+        "instanceId",
+        "bypassed"
+      ]
+    },
+    "retry_plugin": {
+      "missing": [
+        "instanceId"
+      ],
+      "wrongType": [
+        "instanceId",
+        "path"
+      ]
+    },
+    "set_param": {
+      "missing": [
+        "instanceId",
+        "paramId",
+        "value"
+      ],
+      "wrongType": [
+        "instanceId",
+        "paramId",
+        "value"
+      ]
+    },
+    "get_params": {
+      "missing": [
+        "instanceId"
+      ],
+      "wrongType": [
+        "instanceId"
+      ]
+    },
+    "open_editor": {
+      "missing": [
+        "instanceId"
+      ],
+      "wrongType": [
+        "instanceId"
+      ]
+    },
+    "close_editor": {
+      "missing": [
+        "instanceId"
+      ],
+      "wrongType": [
+        "instanceId"
+      ]
+    },
+    "save_preset": {
+      "missing": [
+        "instanceId",
+        "path"
+      ],
+      "wrongType": [
+        "instanceId",
+        "path"
+      ]
+    },
+    "load_preset": {
+      "missing": [
+        "instanceId",
+        "path"
+      ],
+      "wrongType": [
+        "instanceId",
+        "path"
+      ]
+    },
+    "save_session": {
+      "missing": [
+        "path"
+      ],
+      "wrongType": [
+        "path",
+        "deviceKey",
+        "sampleRate",
+        "bufferSize"
+      ]
+    },
+    "load_session": {
+      "missing": [
+        "path"
+      ],
+      "wrongType": [
+        "path"
+      ]
+    },
+    "ensure_system_outputs": {
+      "missing": [],
+      "wrongType": []
+    },
+    "set_editor_owner": {
+      "missing": [
+        "hwnd"
+      ],
+      "wrongType": [
+        "hwnd"
+      ]
+    },
+    "shutdown_engine": {
+      "missing": [],
+      "wrongType": []
+    }
+  }
+}

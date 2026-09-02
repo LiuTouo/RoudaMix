@@ -1,5 +1,5 @@
-//! UI→bridge Tauri commands。一條泛用 pass-through(kind+payload),typed 包裝在前端 ipc.ts。
-//! 契約 §6 的 16 種 kind 都走這裡;bridge 只做 framing + correlation。
+//! UI→bridge Tauri transport。前端 typed interface 由 command_contract.json 生成，
+//! bridge 在送出前以同一張表驗證 payload，再負責 framing + correlation。
 //! engine_command 必須 async:send 等 reply 最長 30s,sync command 會卡住 thread。
 
 use serde_json::Value;

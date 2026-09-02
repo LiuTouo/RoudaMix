@@ -1,9 +1,10 @@
-//! 協議型別 — 契約權威:contracts/protocol.md + protocol.schema.json
-//! 兩階段解析:先 envelope(ProtocolVersion/Id/Kind/Payload 或 Reply 或 Event),
-//! 再 per-kind payload 轉型(與 C++ side 同構)。
+//! 協議 envelope 與 table-driven control-plane validation。
+//! 命令、結果、錯誤碼與事件 kind 的唯一手寫權威是 contracts/command_contract.json。
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+use crate::command_contract;
 
 pub const PROTOCOL_VERSION: u32 = 2;
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
@@ -13,9 +14,21 @@ pub const PIPE_NAME: &str = r"\\.\pipe\roudamix-engine";
 pub enum ProtocolError {
     #[error("parse error: {0}")]
     Parse(String),
+    #[error("bad command: {0}")]
+    BadCommand(String),
+    #[error("unsupported version: {0}")]
+    UnsupportedVersion(String),
 }
 
-// ---------- envelope ----------
+impl ProtocolError {
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::Parse(_) => "bad_frame",
+            Self::BadCommand(_) => "bad_command",
+            Self::UnsupportedVersion(_) => "unsupported_version",
+        }
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CommandEnvelope {
@@ -67,358 +80,62 @@ pub enum Frame {
     Event(EventEnvelope),
 }
 
-/// 契約分派:command 四鍵 / reply 三鍵 / event 兩鍵;reply 的 ok↔result/error 一致性在此驗。
-pub fn parse_frame(j: Value) -> Result<Frame, ProtocolError> {
-    let obj = j.as_object().ok_or_else(|| err("frame must be object"))?;
-    if obj.contains_key("protocolVersion") {
-        let c: CommandEnvelope =
-            serde_json::from_value(j).map_err(|e| err(format!("bad command envelope: {e}")))?;
-        if c.protocol_version != PROTOCOL_VERSION {
-            return Err(err(format!(
+pub fn parse_frame(json: Value) -> Result<Frame, ProtocolError> {
+    let object = json
+        .as_object()
+        .ok_or_else(|| parse_error("frame must be object"))?;
+    if object.contains_key("protocolVersion") {
+        let command: CommandEnvelope = serde_json::from_value(json)
+            .map_err(|error| parse_error(format!("bad command envelope: {error}")))?;
+        if command.protocol_version != PROTOCOL_VERSION {
+            return Err(ProtocolError::UnsupportedVersion(format!(
                 "unsupported protocolVersion: {}",
-                c.protocol_version
+                command.protocol_version
             )));
         }
-        validate_command_payload(&c)?;
-        return Ok(Frame::Command(c));
+        command_contract::validate_command_payload(&command.kind, &command.payload)
+            .map_err(ProtocolError::BadCommand)?;
+        return Ok(Frame::Command(command));
     }
-    if obj.contains_key("ok") {
-        let r: ReplyEnvelope =
-            serde_json::from_value(j).map_err(|e| err(format!("bad reply envelope: {e}")))?;
-        return match (r.ok, &r.result, &r.error) {
-            (true, Some(_), None) => Ok(Frame::Reply(r)),
-            (false, None, Some(e)) if known_error_code(&e.code) => Ok(Frame::Reply(r)),
-            (true, _, _) => Err(err("ok reply must carry result and no error")),
-            (false, _, _) => Err(err("error reply must carry known error code and no result")),
+    if object.contains_key("ok") {
+        let reply: ReplyEnvelope = serde_json::from_value(json)
+            .map_err(|error| parse_error(format!("bad reply envelope: {error}")))?;
+        return match (reply.ok, &reply.result, &reply.error) {
+            (true, Some(_), None) => Ok(Frame::Reply(reply)),
+            (false, None, Some(error)) if command_contract::is_error_code(&error.code) => {
+                Ok(Frame::Reply(reply))
+            }
+            (true, _, _) => Err(parse_error("ok reply must carry result and no error")),
+            (false, _, _) => Err(parse_error(
+                "error reply must carry known error code and no result",
+            )),
         };
     }
-    if obj.contains_key("kind") {
-        let e: EventEnvelope =
-            serde_json::from_value(j).map_err(|e| err(format!("bad event envelope: {e}")))?;
-        if !known_event_kind(&e.kind) {
-            return Err(err(format!("unknown event kind: {}", e.kind)));
+    if object.contains_key("kind") {
+        let event: EventEnvelope = serde_json::from_value(json)
+            .map_err(|error| parse_error(format!("bad event envelope: {error}")))?;
+        if !command_contract::is_event_kind(&event.kind) {
+            return Err(parse_error(format!("unknown event kind: {}", event.kind)));
         }
-        return Ok(Frame::Event(e));
+        if !event.payload.is_object() {
+            return Err(parse_error("event payload must be object"));
+        }
+        return Ok(Frame::Event(event));
     }
-    Err(err("frame matches no schema variant"))
+    Err(parse_error("frame matches no schema variant"))
 }
 
-fn err<S: Into<String>>(s: S) -> ProtocolError {
-    ProtocolError::Parse(s.into())
+fn parse_error(message: impl Into<String>) -> ProtocolError {
+    ProtocolError::Parse(message.into())
 }
 
-// ---------- per-kind payload(§6)----------
-
-pub const COMMAND_KINDS: &[&str] = &[
-    "ping",
-    "get_snapshot",
-    "list_devices",
-    "list_audio_apps",
-    "list_render_devices",
-    "start",
-    "stop",
-    "open_device_panel",
-    "track_add",
-    "track_remove",
-    "track_set",
-    "track_set_source",
-    "track_set_dests",
-    "track_set_output",
-    "track_move",
-    "start_scan",
-    "cancel_scan",
-    "add_plugin",
-    "remove_plugin",
-    "move_plugin",
-    "set_bypass",
-    "retry_plugin",
-    "set_param",
-    "get_params",
-    "open_editor",
-    "close_editor",
-    "save_preset",
-    "load_preset",
-    "save_session",
-    "load_session",
-    "ensure_system_outputs",
-    "shutdown_engine",
-    "set_editor_owner",
-];
-
-fn validate_command_payload(c: &CommandEnvelope) -> Result<(), ProtocolError> {
-    use Value as V;
-    if !COMMAND_KINDS.contains(&c.kind.as_str()) {
-        return Err(err(format!("unknown command kind: {}", c.kind)));
-    }
-    let p = c
-        .payload
-        .as_object()
-        .ok_or_else(|| err("payload must be object"))?;
-    let s = |k: &str| {
-        p.get(k)
-            .and_then(|v| v.as_str())
-            .map(|_| ())
-            .ok_or_else(|| err(format!("payload.{k} must be string")))
-    };
-    match c.kind.as_str() {
-        "start" => {
-            s("deviceKey")?;
-            match p.get("sampleRate") {
-                None | Some(V::Null) => Ok(()),
-                Some(v) if v.as_u64().map(|n| n <= u32::MAX as u64).unwrap_or(false) => Ok(()),
-                _ => Err(err("payload.sampleRate must be u32 or null")),
-            }
-        }
-        "track_add" => {
-            match p.get("kind") {
-                Some(V::String(k)) if matches!(k.as_str(), "audio" | "app" | "fx" | "output") => {}
-                _ => return Err(err("payload.kind must be audio|app|fx|output")),
-            }
-            match p.get("name") {
-                None | Some(V::String(_)) => Ok(()),
-                _ => Err(err("payload.name must be string when present")),
-            }?;
-            match p.get("color") {
-                None => Ok(()),
-                Some(v) if v.as_u64().map(|n| n <= u32::MAX as u64).unwrap_or(false) => Ok(()),
-                _ => Err(err("payload.color must be u32 when present")),
-            }
-        }
-        "track_remove" => u32_field(p, "trackId"),
-        "track_move" => {
-            u32_field(p, "trackId")?;
-            u32_field(p, "newIndex")
-        }
-        "track_set" => {
-            u32_field(p, "trackId")?;
-            match p.get("name") {
-                None | Some(V::String(_)) => Ok(()),
-                _ => Err(err("payload.name must be string when present")),
-            }?;
-            match p.get("color") {
-                None => Ok(()),
-                Some(v) if v.as_u64().map(|n| n <= u32::MAX as u64).unwrap_or(false) => Ok(()),
-                _ => Err(err("payload.color must be u32 when present")),
-            }?;
-            match p.get("gain") {
-                None => Ok(()),
-                Some(V::Number(n))
-                    if n.as_f64()
-                        .map(|v| (0.0..=4.0).contains(&v))
-                        .unwrap_or(false) =>
-                {
-                    Ok(())
-                }
-                _ => Err(err("payload.gain must be number in [0,4]")),
-            }?;
-            match p.get("mute") {
-                None | Some(V::Bool(_)) => Ok(()),
-                _ => Err(err("payload.mute must be bool when present")),
-            }
-        }
-        "track_set_source" => {
-            u32_field(p, "trackId")?;
-            match p.get("source") {
-                Some(V::Null) => Ok(()),
-                Some(V::Object(o)) => match o.get("type").and_then(|v| v.as_str()) {
-                    Some("sine") => match o.get("freq") {
-                        Some(V::Number(_)) => Ok(()),
-                        _ => Err(err("payload.source.freq must be number")),
-                    },
-                    Some("asioIn") => match o.get("channel") {
-                        Some(v) if v.as_u64().map(|n| n <= u32::MAX as u64).unwrap_or(false) => {
-                            Ok(())
-                        }
-                        _ => Err(err("payload.source.channel must be u32")),
-                    },
-                    Some("app") => match o.get("pid") {
-                        Some(v) if v.as_u64().map(|n| n <= u32::MAX as u64).unwrap_or(false) => {
-                            Ok(())
-                        }
-                        _ => Err(err("payload.source.pid must be u32")),
-                    },
-                    _ => Err(err("payload.source.type must be sine|asioIn|app")),
-                },
-                _ => Err(err("payload.source must be null or object")),
-            }
-        }
-        "track_set_dests" => {
-            u32_field(p, "trackId")?;
-            match p.get("dests") {
-                Some(V::Array(a))
-                    if a.iter()
-                        .all(|v| v.as_u64().map(|n| n <= u32::MAX as u64).unwrap_or(false)) =>
-                {
-                    Ok(())
-                }
-                _ => Err(err("payload.dests must be u32[]")),
-            }
-        }
-        "track_set_output" => {
-            u32_field(p, "trackId")?;
-            match p.get("output") {
-                Some(V::Null) => Ok(()),
-                Some(V::Object(o)) => match o.get("type").and_then(|v| v.as_str()) {
-                    Some("asioOut") => match o.get("channel") {
-                        Some(v) if v.as_u64().map(|n| n <= u32::MAX as u64).unwrap_or(false) => {
-                            Ok(())
-                        }
-                        _ => Err(err("payload.output.channel must be u32")),
-                    },
-                    Some("wasapi") => match o.get("deviceId") {
-                        Some(V::String(_)) => Ok(()),
-                        _ => Err(err("payload.output.deviceId must be string")),
-                    },
-                    _ => Err(err("payload.output.type must be asioOut|wasapi")),
-                },
-                _ => Err(err("payload.output must be null or object")),
-            }
-        }
-        "start_scan" => match p.get("roots") {
-            None => Ok(()),
-            Some(V::Array(a)) if a.iter().all(|v| v.is_string()) => Ok(()),
-            _ => Err(err("payload.roots must be string[] when present")),
-        },
-        "cancel_scan" | "ensure_system_outputs" => {
-            if p.is_empty() {
-                Ok(())
-            } else {
-                Err(err("payload must be empty object"))
-            }
-        }
-        "add_plugin" => {
-            u32_field(p, "trackId")?;
-            s("path")
-        }
-        "remove_plugin" | "get_params" | "open_editor" | "close_editor" | "retry_plugin" => {
-            u32_field(p, "instanceId")?;
-            match p.get("path") {
-                None | Some(V::String(_)) => Ok(()),
-                _ => Err(err("payload.path must be string when present")),
-            }
-        }
-        "move_plugin" => {
-            u32_field(p, "instanceId")?;
-            u32_field(p, "newIndex")
-        }
-        "set_bypass" => {
-            u32_field(p, "instanceId")?;
-            match p.get("bypassed") {
-                Some(V::Bool(_)) => Ok(()),
-                _ => Err(err("payload.bypassed must be bool")),
-            }
-        }
-        "set_param" => {
-            u32_field(p, "instanceId")?;
-            u32_field(p, "paramId")?;
-            match p.get("value") {
-                Some(V::Number(n))
-                    if n.as_f64()
-                        .map(|v| (0.0..=1.0).contains(&v))
-                        .unwrap_or(false) =>
-                {
-                    Ok(())
-                }
-                _ => Err(err("payload.value must be number in [0,1]")),
-            }
-        }
-        "save_session" => {
-            match p.get("path") {
-                Some(V::String(_)) | Some(V::Null) => Ok(()),
-                _ => return Err(err("payload.path must be string or null")),
-            }?;
-            match p.get("deviceKey") {
-                None | Some(V::Null) | Some(V::String(_)) => Ok(()),
-                _ => Err(err("payload.deviceKey must be string or null")),
-            }?;
-            match p.get("sampleRate") {
-                None | Some(V::Null) => Ok(()),
-                Some(v) if v.as_u64().map(|n| n <= u32::MAX as u64).unwrap_or(false) => Ok(()),
-                _ => Err(err("payload.sampleRate must be u32 or null")),
-            }
-        }
-        "load_session" => s("path"),
-        "save_preset" | "load_preset" => {
-            u32_field(p, "instanceId")?;
-            s("path")
-        }
-        "set_editor_owner" => match p.get("hwnd") {
-            Some(V::Number(n)) if n.as_u64().is_some() => Ok(()),
-            _ => Err(err("payload.hwnd must be u64")),
-        },
-        "ping"
-        | "get_snapshot"
-        | "list_devices"
-        | "list_audio_apps"
-        | "list_render_devices"
-        | "stop"
-        | "shutdown_engine"
-        | "open_device_panel" => {
-            if p.is_empty() {
-                Ok(())
-            } else {
-                Err(err("payload must be empty object"))
-            }
-        }
-        _ => unreachable!(),
-    }
+pub fn make_command(id: u64, kind: &str, payload: Value) -> Result<Value, ProtocolError> {
+    command_contract::validate_command_payload(kind, &payload)
+        .map_err(ProtocolError::BadCommand)?;
+    serde_json::to_value(CommandEnvelope::new(id, kind, payload))
+        .map_err(|error| parse_error(format!("command envelope serialization failed: {error}")))
 }
 
-fn u32_field(p: &serde_json::Map<String, Value>, k: &str) -> Result<(), ProtocolError> {
-    match p.get(k) {
-        Some(v) if v.as_u64().map(|n| n <= u32::MAX as u64).unwrap_or(false) => Ok(()),
-        _ => Err(err(format!("payload.{k} must be u32"))),
-    }
-}
-
-fn known_error_code(c: &str) -> bool {
-    [
-        "unsupported_version",
-        "bad_frame",
-        "bad_command",
-        "not_running",
-        "already_running",
-        "device_open_failed",
-        "device_lost",
-        "track_not_found",
-        "cycle_detected",
-        "device_busy",
-        "app_not_found",
-        "unsupported_windows",
-        "plugin_not_found",
-        "plugin_load_failed",
-        "plugin_no_editor",
-        "param_not_found",
-        "session_io",
-        "preset_io",
-        "plugin_state_failed",
-        "internal",
-    ]
-    .contains(&c)
-}
-
-fn known_event_kind(k: &str) -> bool {
-    [
-        "snapshot",
-        "status",
-        "scan_progress",
-        "scan_done",
-        "scan_failed",
-        "scan_cancelled",
-        "rack_changed",
-        "plugin_event",
-        "devices_changed",
-    ]
-    .contains(&k)
-}
-
-// ---------- 建構 helpers(server→client 方向 bridge 只解析,不建構)----------
-
-pub fn make_command(id: u64, kind: &str, payload: Value) -> Value {
-    serde_json::to_value(CommandEnvelope::new(id, kind, payload)).expect("envelope serializes")
-}
-
-// ---------- conformance 測試 ----------
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -429,24 +146,27 @@ mod tests {
     fn check_dir(dir: &Path, must_pass: bool) -> usize {
         let mut fail = 0;
         for entry in fs::read_dir(dir).expect("fixtures dir") {
-            let p = entry.unwrap().path();
-            let raw = fs::read_to_string(&p).unwrap();
-            let j: Value = match serde_json::from_str(&raw) {
-                Ok(v) => v,
+            let path = entry.unwrap().path();
+            if !path.is_file() || path.extension().is_none_or(|extension| extension != "json") {
+                continue;
+            }
+            let raw = fs::read_to_string(&path).unwrap();
+            let json: Value = match serde_json::from_str(&raw) {
+                Ok(value) => value,
                 Err(_) => {
                     if must_pass {
-                        eprintln!("FAIL(valid, bad json): {}", p.display());
+                        eprintln!("FAIL(valid, bad json): {}", path.display());
                         fail += 1;
                     }
                     continue;
                 }
             };
-            let passed = parse_frame(j).is_ok();
+            let passed = parse_frame(json).is_ok();
             if passed != must_pass {
                 eprintln!(
                     "FAIL({}): {}",
                     if must_pass { "valid" } else { "invalid" },
-                    p.display()
+                    path.display()
                 );
                 fail += 1;
             }
@@ -457,24 +177,21 @@ mod tests {
     #[test]
     fn protocol_conformance() {
         let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/protocol");
-        let v = check_dir(Path::new(root).join("valid").as_path(), true);
-        let i = check_dir(Path::new(root).join("invalid").as_path(), false);
-        assert_eq!((v, i), (0, 0), "fixture conformance failures");
+        let valid = check_dir(Path::new(root).join("valid").as_path(), true);
+        let invalid = check_dir(Path::new(root).join("invalid").as_path(), false);
+        assert_eq!((valid, invalid), (0, 0), "fixture conformance failures");
     }
 
-    /// P1-G:reply 帶 epoch/revision 對齊資訊,envelope 解析後可取得。
     #[test]
     fn reply_envelope_carries_epoch() {
-        let j = json!({"id": 9, "ok": true, "epoch": 5, "result": {"revision": 12}});
-        let Frame::Reply(r) = parse_frame(j).unwrap() else {
+        let json = json!({"id": 9, "ok": true, "epoch": 5, "result": {"revision": 12}});
+        let Frame::Reply(reply) = parse_frame(json).unwrap() else {
             panic!("not a reply");
         };
-        assert_eq!(r.epoch, 5);
-        assert_eq!(r.result.unwrap()["revision"], json!(12));
+        assert_eq!(reply.epoch, 5);
+        assert_eq!(reply.result.unwrap()["revision"], json!(12));
     }
 
-    /// P1-G:scan job 的 events(進度/結案/取消)是已知 kind,重連後晚到也解析得動
-    /// (jobId 過濾在 UI 端做,見 App 的 scanJobId 比對)。
     #[test]
     fn scan_event_kinds_parse() {
         for kind in [
@@ -483,20 +200,31 @@ mod tests {
             "scan_failed",
             "scan_cancelled",
         ] {
-            let j = json!({"kind": kind, "payload": {"jobId": 3}});
-            let Frame::Event(e) = parse_frame(j).unwrap() else {
+            let json = json!({"kind": kind, "payload": {"jobId": 3}});
+            let Frame::Event(event) = parse_frame(json).unwrap() else {
                 panic!("not an event: {kind}");
             };
-            assert_eq!(e.kind, kind);
+            assert_eq!(event.kind, kind);
         }
     }
 
-    /// P1-G:壞 reply(ok 又帶 error)= 壞 frame,拒絕 —— 不可能半套狀態進來。
     #[test]
     fn inconsistent_reply_rejected() {
-        let j = json!({"id": 1, "ok": true, "epoch": 0, "result": {"a": 1}, "error": {"code": "internal", "message": "x"}});
-        assert!(parse_frame(j).is_err());
-        let j2 = json!({"id": 1, "ok": false, "epoch": 0, "error": {"code": "no_such_code", "message": "x"}});
-        assert!(parse_frame(j2).is_err());
+        let json = json!({"id": 1, "ok": true, "epoch": 0, "result": {"a": 1}, "error": {"code": "internal", "message": "x"}});
+        assert!(parse_frame(json).is_err());
+        let unknown_code = json!({"id": 1, "ok": false, "epoch": 0, "error": {"code": "no_such_code", "message": "x"}});
+        assert!(parse_frame(unknown_code).is_err());
+    }
+
+    #[test]
+    fn make_command_rejects_invalid_outgoing_payload() {
+        let error = make_command(
+            7,
+            "start",
+            json!({"deviceKey": "asio:test", "sampleRate": null, "bufferSize": "256"}),
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), "bad_command");
+        assert!(error.to_string().contains("payload.bufferSize"));
     }
 }

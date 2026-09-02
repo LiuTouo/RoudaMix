@@ -1,0 +1,782 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "schemaVersion": 1,
+  "protocolVersion": 2,
+  "description": "RoudaMix control-plane authority. Command payloads, results, errors and event kinds are handwritten only here.",
+  "definitions": {
+    "u32": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+    "u64": { "type": "integer", "minimum": 0 },
+    "normalized": { "type": "number", "minimum": 0, "maximum": 1 },
+    "emptyObject": { "type": "object", "maxProperties": 0 },
+    "nullableString": { "oneOf": [{ "type": "string" }, { "type": "null" }] },
+    "nullableU32": { "oneOf": [{ "$ref": "#/definitions/u32" }, { "type": "null" }] },
+    "stringArray": { "type": "array", "items": { "type": "string" } },
+    "u32Array": { "type": "array", "items": { "$ref": "#/definitions/u32" } },
+    "trackSource": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["type", "freq"],
+          "properties": {
+            "type": { "const": "sine" },
+            "freq": { "type": "number" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["type", "channel"],
+          "properties": {
+            "type": { "const": "asioIn" },
+            "channel": { "$ref": "#/definitions/u32" },
+            "mono": { "type": "boolean" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["type", "pid"],
+          "properties": {
+            "type": { "const": "app" },
+            "pid": { "$ref": "#/definitions/u32" },
+            "name": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "trackOutput": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["type", "channel"],
+          "properties": {
+            "type": { "const": "asioOut" },
+            "channel": { "$ref": "#/definitions/u32" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["type", "deviceId"],
+          "properties": {
+            "type": { "const": "wasapi" },
+            "deviceId": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "trackArray": { "type": "array", "items": { "type": "object", "tsType": "Track" } },
+    "snapshot": { "type": "object", "tsType": "Snapshot" },
+    "engineStatus": { "type": "object", "tsType": "EngineStatus" },
+    "deviceInfo": {
+      "type": "object",
+      "tsType": "DeviceInfo",
+      "required": ["deviceKey", "name", "maxIn", "maxOut", "sampleRates", "currentSampleRate", "minBufferSize", "maxBufferSize", "preferredBufferSize", "bufferSizes", "inputNames", "outputNames"],
+      "properties": {
+        "deviceKey": { "type": "string" },
+        "name": { "type": "string" },
+        "maxIn": { "$ref": "#/definitions/u32" },
+        "maxOut": { "$ref": "#/definitions/u32" },
+        "sampleRates": { "type": "array", "items": { "$ref": "#/definitions/u32" } },
+        "currentSampleRate": { "$ref": "#/definitions/u32" },
+        "minBufferSize": { "$ref": "#/definitions/u32" },
+        "maxBufferSize": { "$ref": "#/definitions/u32" },
+        "preferredBufferSize": { "$ref": "#/definitions/u32" },
+        "bufferSizes": { "type": "array", "items": { "$ref": "#/definitions/u32" } },
+        "inputNames": { "$ref": "#/definitions/stringArray" },
+        "outputNames": { "$ref": "#/definitions/stringArray" }
+      }
+    },
+    "audioApp": {
+      "type": "object",
+      "tsType": "AudioApp",
+      "required": ["pid", "name", "path"],
+      "properties": {
+        "pid": { "$ref": "#/definitions/u32" },
+        "name": { "type": "string" },
+        "path": { "$ref": "#/definitions/nullableString" }
+      }
+    },
+    "renderDevice": {
+      "type": "object",
+      "tsType": "RenderDevice",
+      "required": ["id", "name", "default", "sampleRate"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "default": { "type": "boolean" },
+        "sampleRate": { "$ref": "#/definitions/u32" }
+      }
+    },
+    "paramInfo": {
+      "type": "object",
+      "tsType": "ParamInfo",
+      "required": ["paramId", "name", "normalized", "default", "bypass"],
+      "properties": {
+        "paramId": { "$ref": "#/definitions/u32" },
+        "name": { "type": "string" },
+        "normalized": { "$ref": "#/definitions/normalized" },
+        "default": { "$ref": "#/definitions/normalized" },
+        "bypass": { "type": "boolean" }
+      }
+    },
+    "latencyReportOutput": {
+      "type": "object",
+      "required": ["trackId", "totalPluginDelaySamples", "compensationDelaySamples", "synchronized"],
+      "properties": {
+        "trackId": { "$ref": "#/definitions/u32" },
+        "totalPluginDelaySamples": { "$ref": "#/definitions/u64" },
+        "compensationDelaySamples": { "$ref": "#/definitions/u64" },
+        "synchronized": { "type": "boolean" }
+      }
+    },
+    "latencyReportEdge": {
+      "type": "object",
+      "required": ["fromTrackId", "toTrackId", "compensationDelaySamples"],
+      "properties": {
+        "fromTrackId": { "$ref": "#/definitions/u32" },
+        "toTrackId": { "$ref": "#/definitions/u32" },
+        "compensationDelaySamples": { "$ref": "#/definitions/u64" }
+      }
+    },
+    "latencyReport": {
+      "type": "object",
+      "required": ["generation", "ok", "error", "bufferBytes", "outputs", "edges", "tracks"],
+      "properties": {
+        "generation": { "$ref": "#/definitions/u64" },
+        "ok": { "type": "boolean" },
+        "error": { "type": "string" },
+        "bufferBytes": { "$ref": "#/definitions/u64" },
+        "outputs": { "type": "array", "items": { "$ref": "#/definitions/latencyReportOutput" } },
+        "edges": { "type": "array", "items": { "$ref": "#/definitions/latencyReportEdge" } },
+        "tracks": { "$ref": "#/definitions/trackArray" }
+      }
+    }
+  },
+  "commands": [
+    {
+      "kind": "ping",
+      "payload": { "$ref": "#/definitions/emptyObject" },
+      "result": {
+        "type": "object",
+        "required": ["engineVersion"],
+        "properties": { "engineVersion": { "type": "string" } }
+      },
+      "errors": []
+    },
+    {
+      "kind": "get_snapshot",
+      "payload": { "$ref": "#/definitions/emptyObject" },
+      "result": {
+        "type": "object",
+        "required": ["snapshot"],
+        "properties": { "snapshot": { "$ref": "#/definitions/snapshot" } }
+      },
+      "errors": []
+    },
+    {
+      "kind": "get_latency_report",
+      "payload": { "$ref": "#/definitions/emptyObject" },
+      "result": {
+        "type": "object",
+        "required": ["report"],
+        "properties": { "report": { "$ref": "#/definitions/latencyReport" } }
+      },
+      "errors": []
+    },
+    {
+      "kind": "list_devices",
+      "payload": { "$ref": "#/definitions/emptyObject" },
+      "result": {
+        "type": "object",
+        "required": ["devices"],
+        "properties": {
+          "devices": { "type": "array", "items": { "$ref": "#/definitions/deviceInfo" } }
+        }
+      },
+      "errors": []
+    },
+    {
+      "kind": "list_audio_apps",
+      "payload": { "$ref": "#/definitions/emptyObject" },
+      "result": {
+        "type": "object",
+        "required": ["apps"],
+        "properties": {
+          "apps": { "type": "array", "items": { "$ref": "#/definitions/audioApp" } }
+        }
+      },
+      "errors": []
+    },
+    {
+      "kind": "list_render_devices",
+      "payload": { "$ref": "#/definitions/emptyObject" },
+      "result": {
+        "type": "object",
+        "required": ["devices"],
+        "properties": {
+          "devices": { "type": "array", "items": { "$ref": "#/definitions/renderDevice" } }
+        }
+      },
+      "errors": []
+    },
+    {
+      "kind": "start",
+      "payload": {
+        "type": "object",
+        "required": ["deviceKey", "sampleRate"],
+        "properties": {
+          "deviceKey": { "type": "string" },
+          "sampleRate": { "$ref": "#/definitions/nullableU32" },
+          "bufferSize": { "$ref": "#/definitions/nullableU32" }
+        }
+      },
+      "result": { "$ref": "#/definitions/engineStatus" },
+      "errors": ["already_running", "device_open_failed"]
+    },
+    {
+      "kind": "stop",
+      "payload": { "$ref": "#/definitions/emptyObject" },
+      "result": { "$ref": "#/definitions/engineStatus" },
+      "errors": []
+    },
+    {
+      "kind": "open_device_panel",
+      "payload": { "$ref": "#/definitions/emptyObject" },
+      "result": {
+        "type": "object",
+        "required": ["panel"],
+        "properties": { "panel": { "type": "boolean" } }
+      },
+      "errors": ["not_running"]
+    },
+    {
+      "kind": "track_add",
+      "payload": {
+        "type": "object",
+        "required": ["kind"],
+        "properties": {
+          "kind": { "enum": ["audio", "app", "fx", "output"] },
+          "name": { "type": "string" },
+          "color": { "$ref": "#/definitions/u32" }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": ["trackId", "tracks"],
+        "properties": {
+          "trackId": { "$ref": "#/definitions/u32" },
+          "tracks": { "$ref": "#/definitions/trackArray" }
+        }
+      },
+      "errors": ["bad_command"]
+    },
+    {
+      "kind": "track_remove",
+      "payload": {
+        "type": "object",
+        "required": ["trackId"],
+        "properties": { "trackId": { "$ref": "#/definitions/u32" } }
+      },
+      "result": {
+        "type": "object",
+        "required": ["tracks"],
+        "properties": { "tracks": { "$ref": "#/definitions/trackArray" } }
+      },
+      "errors": ["track_not_found"]
+    },
+    {
+      "kind": "track_set",
+      "payload": {
+        "type": "object",
+        "required": ["trackId"],
+        "properties": {
+          "trackId": { "$ref": "#/definitions/u32" },
+          "name": { "type": "string" },
+          "color": { "$ref": "#/definitions/u32" },
+          "gain": { "type": "number", "minimum": 0, "maximum": 4 },
+          "mute": { "type": "boolean" }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": ["tracks"],
+        "properties": { "tracks": { "$ref": "#/definitions/trackArray" } }
+      },
+      "errors": ["bad_command"]
+    },
+    {
+      "kind": "track_set_source",
+      "payload": {
+        "type": "object",
+        "required": ["trackId", "source"],
+        "properties": {
+          "trackId": { "$ref": "#/definitions/u32" },
+          "source": { "$ref": "#/definitions/trackSource" }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": ["tracks"],
+        "properties": { "tracks": { "$ref": "#/definitions/trackArray" } }
+      },
+      "errors": ["bad_command", "track_not_found", "app_not_found", "unsupported_windows", "device_busy"]
+    },
+    {
+      "kind": "track_set_dests",
+      "payload": {
+        "type": "object",
+        "required": ["trackId", "dests"],
+        "properties": {
+          "trackId": { "$ref": "#/definitions/u32" },
+          "dests": { "$ref": "#/definitions/u32Array" }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": ["tracks"],
+        "properties": { "tracks": { "$ref": "#/definitions/trackArray" } }
+      },
+      "errors": ["bad_command", "track_not_found", "cycle_detected", "plugin_state_failed"]
+    },
+    {
+      "kind": "track_set_output",
+      "payload": {
+        "type": "object",
+        "required": ["trackId", "output"],
+        "properties": {
+          "trackId": { "$ref": "#/definitions/u32" },
+          "output": { "$ref": "#/definitions/trackOutput" }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": ["tracks"],
+        "properties": { "tracks": { "$ref": "#/definitions/trackArray" } }
+      },
+      "errors": ["bad_command", "track_not_found", "device_busy"]
+    },
+    {
+      "kind": "track_set_latency_policy",
+      "payload": {
+        "type": "object",
+        "required": ["trackId", "policy"],
+        "properties": {
+          "trackId": { "$ref": "#/definitions/u32" },
+          "policy": { "enum": ["fullPdc", "lowLatency"] }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": ["tracks"],
+        "properties": { "tracks": { "$ref": "#/definitions/trackArray" } }
+      },
+      "errors": ["bad_command"]
+    },
+    {
+      "kind": "track_move",
+      "payload": {
+        "type": "object",
+        "required": ["trackId", "newIndex"],
+        "properties": {
+          "trackId": { "$ref": "#/definitions/u32" },
+          "newIndex": { "$ref": "#/definitions/u32" }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": ["tracks"],
+        "properties": { "tracks": { "$ref": "#/definitions/trackArray" } }
+      },
+      "errors": ["bad_command"]
+    },
+    {
+      "kind": "start_scan",
+      "payload": {
+        "type": "object",
+        "properties": { "roots": { "$ref": "#/definitions/stringArray" } }
+      },
+      "result": {
+        "type": "object",
+        "required": ["jobId", "reused"],
+        "properties": {
+          "jobId": { "$ref": "#/definitions/u64" },
+          "reused": { "type": "boolean" }
+        }
+      },
+      "errors": []
+    },
+    {
+      "kind": "cancel_scan",
+      "payload": { "$ref": "#/definitions/emptyObject" },
+      "result": {
+        "type": "object",
+        "required": ["jobId", "cancelling"],
+        "properties": {
+          "jobId": { "$ref": "#/definitions/u64" },
+          "cancelling": { "type": "boolean" }
+        }
+      },
+      "errors": []
+    },
+    {
+      "kind": "add_plugin",
+      "payload": {
+        "type": "object",
+        "required": ["trackId", "path"],
+        "properties": {
+          "trackId": { "$ref": "#/definitions/u32" },
+          "path": { "type": "string" },
+          "classId": { "type": "string" }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": ["instanceId", "trackId", "tracks"],
+        "properties": {
+          "instanceId": { "$ref": "#/definitions/u32" },
+          "trackId": { "$ref": "#/definitions/u32" },
+          "tracks": { "$ref": "#/definitions/trackArray" }
+        }
+      },
+      "errors": ["plugin_load_failed"]
+    },
+    {
+      "kind": "remove_plugin",
+      "payload": {
+        "type": "object",
+        "required": ["instanceId"],
+        "properties": { "instanceId": { "$ref": "#/definitions/u32" } }
+      },
+      "result": {
+        "type": "object",
+        "required": ["tracks"],
+        "properties": { "tracks": { "$ref": "#/definitions/trackArray" } }
+      },
+      "errors": ["plugin_not_found", "plugin_state_failed", "bad_command"]
+    },
+    {
+      "kind": "move_plugin",
+      "payload": {
+        "type": "object",
+        "required": ["instanceId", "newIndex"],
+        "properties": {
+          "instanceId": { "$ref": "#/definitions/u32" },
+          "newIndex": { "$ref": "#/definitions/u32" }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": ["tracks"],
+        "properties": { "tracks": { "$ref": "#/definitions/trackArray" } }
+      },
+      "errors": ["bad_command"]
+    },
+    {
+      "kind": "set_bypass",
+      "payload": {
+        "type": "object",
+        "required": ["instanceId", "bypassed"],
+        "properties": {
+          "instanceId": { "$ref": "#/definitions/u32" },
+          "bypassed": { "type": "boolean" }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": ["tracks"],
+        "properties": { "tracks": { "$ref": "#/definitions/trackArray" } }
+      },
+      "errors": ["plugin_not_found", "plugin_state_failed", "bad_command"]
+    },
+    {
+      "kind": "set_monitor_bypass",
+      "payload": {
+        "type": "object",
+        "required": ["instanceId", "bypassed"],
+        "properties": {
+          "instanceId": { "$ref": "#/definitions/u32" },
+          "bypassed": { "type": "boolean" }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": ["tracks"],
+        "properties": { "tracks": { "$ref": "#/definitions/trackArray" } }
+      },
+      "errors": ["plugin_not_found", "plugin_state_failed", "bad_command"]
+    },
+    {
+      "kind": "retry_plugin",
+      "payload": {
+        "type": "object",
+        "required": ["instanceId"],
+        "properties": {
+          "instanceId": { "$ref": "#/definitions/u32" },
+          "path": { "type": "string" }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": ["instanceId", "tracks"],
+        "properties": {
+          "instanceId": { "$ref": "#/definitions/u32" },
+          "tracks": { "$ref": "#/definitions/trackArray" }
+        }
+      },
+      "errors": ["plugin_not_found", "plugin_load_failed", "bad_command"]
+    },
+    {
+      "kind": "set_param",
+      "payload": {
+        "type": "object",
+        "required": ["instanceId", "paramId", "value"],
+        "properties": {
+          "instanceId": { "$ref": "#/definitions/u32" },
+          "paramId": { "$ref": "#/definitions/u32" },
+          "value": { "$ref": "#/definitions/normalized" }
+        }
+      },
+      "result": { "$ref": "#/definitions/emptyObject" },
+      "errors": ["param_not_found"]
+    },
+    {
+      "kind": "get_params",
+      "payload": {
+        "type": "object",
+        "required": ["instanceId"],
+        "properties": { "instanceId": { "$ref": "#/definitions/u32" } }
+      },
+      "result": {
+        "type": "object",
+        "required": ["instanceId", "params"],
+        "properties": {
+          "instanceId": { "$ref": "#/definitions/u32" },
+          "params": { "type": "array", "items": { "$ref": "#/definitions/paramInfo" } }
+        }
+      },
+      "errors": ["plugin_not_found"]
+    },
+    {
+      "kind": "open_editor",
+      "payload": {
+        "type": "object",
+        "required": ["instanceId"],
+        "properties": { "instanceId": { "$ref": "#/definitions/u32" } }
+      },
+      "result": {
+        "type": "object",
+        "required": ["instanceId", "editor"],
+        "properties": {
+          "instanceId": { "$ref": "#/definitions/u32" },
+          "editor": { "type": "boolean" }
+        }
+      },
+      "errors": ["plugin_not_found", "plugin_no_editor"]
+    },
+    {
+      "kind": "close_editor",
+      "payload": {
+        "type": "object",
+        "required": ["instanceId"],
+        "properties": { "instanceId": { "$ref": "#/definitions/u32" } }
+      },
+      "result": { "$ref": "#/definitions/emptyObject" },
+      "errors": ["plugin_not_found"]
+    },
+    {
+      "kind": "save_preset",
+      "payload": {
+        "type": "object",
+        "required": ["instanceId", "path"],
+        "properties": {
+          "instanceId": { "$ref": "#/definitions/u32" },
+          "path": { "type": "string" }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": ["savedPath"],
+        "properties": { "savedPath": { "type": "string" } }
+      },
+      "errors": ["plugin_not_found", "preset_io"]
+    },
+    {
+      "kind": "load_preset",
+      "payload": {
+        "type": "object",
+        "required": ["instanceId", "path"],
+        "properties": {
+          "instanceId": { "$ref": "#/definitions/u32" },
+          "path": { "type": "string" }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": ["tracks"],
+        "properties": { "tracks": { "$ref": "#/definitions/trackArray" } }
+      },
+      "errors": ["plugin_not_found", "preset_io", "plugin_state_failed"]
+    },
+    {
+      "kind": "save_session",
+      "payload": {
+        "type": "object",
+        "required": ["path"],
+        "properties": {
+          "path": { "$ref": "#/definitions/nullableString" },
+          "deviceKey": { "$ref": "#/definitions/nullableString" },
+          "sampleRate": { "$ref": "#/definitions/nullableU32" },
+          "bufferSize": { "$ref": "#/definitions/nullableU32" }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": ["savedPath", "revision"],
+        "properties": {
+          "savedPath": { "type": "string" },
+          "revision": { "$ref": "#/definitions/u64" }
+        }
+      },
+      "errors": ["session_io"]
+    },
+    {
+      "kind": "load_session",
+      "payload": {
+        "type": "object",
+        "required": ["path"],
+        "properties": { "path": { "type": "string" } }
+      },
+      "result": {
+        "type": "object",
+        "required": ["revision"],
+        "properties": {
+          "revision": { "$ref": "#/definitions/u64" },
+          "deviceKey": { "$ref": "#/definitions/nullableString" },
+          "sampleRate": { "$ref": "#/definitions/nullableU32" },
+          "bufferSize": { "$ref": "#/definitions/nullableU32" },
+          "missing": { "type": "array", "items": { "type": "object" } }
+        }
+      },
+      "errors": ["session_io"]
+    },
+    {
+      "kind": "ensure_system_outputs",
+      "payload": { "$ref": "#/definitions/emptyObject" },
+      "result": {
+        "type": "object",
+        "required": ["tracks", "revision"],
+        "properties": {
+          "tracks": { "$ref": "#/definitions/trackArray" },
+          "revision": { "$ref": "#/definitions/u64" }
+        }
+      },
+      "errors": []
+    },
+    {
+      "kind": "set_editor_owner",
+      "payload": {
+        "type": "object",
+        "required": ["hwnd"],
+        "properties": { "hwnd": { "$ref": "#/definitions/u64" } }
+      },
+      "result": { "$ref": "#/definitions/emptyObject" },
+      "errors": []
+    },
+    {
+      "kind": "shutdown_engine",
+      "payload": { "$ref": "#/definitions/emptyObject" },
+      "result": { "$ref": "#/definitions/emptyObject" },
+      "errors": []
+    }
+  ],
+  "errorCodes": [
+    { "code": "unsupported_version", "meaning": "The peer protocol version is not supported." },
+    { "code": "bad_frame", "meaning": "The wire frame is malformed or violates its envelope schema." },
+    { "code": "bad_command", "meaning": "The command kind, payload or requested mutation is invalid." },
+    { "code": "not_running", "meaning": "The operation requires a running audio engine." },
+    { "code": "already_running", "meaning": "The engine is already running." },
+    { "code": "device_open_failed", "meaning": "The requested audio device or stream could not be opened." },
+    { "code": "device_lost", "meaning": "An active audio device became unavailable." },
+    { "code": "track_not_found", "meaning": "The referenced track does not exist." },
+    { "code": "cycle_detected", "meaning": "The requested routing would create a graph cycle." },
+    { "code": "device_busy", "meaning": "The requested device is already in use." },
+    { "code": "app_not_found", "meaning": "The referenced application process is absent or ended." },
+    { "code": "unsupported_windows", "meaning": "The operation requires a newer Windows capability." },
+    { "code": "plugin_not_found", "meaning": "The referenced plugin instance does not exist." },
+    { "code": "plugin_load_failed", "meaning": "The plugin module could not be verified or loaded." },
+    { "code": "plugin_no_editor", "meaning": "The plugin has no usable editor." },
+    { "code": "param_not_found", "meaning": "The referenced plugin parameter does not exist." },
+    { "code": "session_io", "meaning": "Session serialization or file I/O failed." },
+    { "code": "preset_io", "meaning": "Preset serialization or file I/O failed." },
+    { "code": "plugin_state_failed", "meaning": "The plugin rejected or could not apply a state change." },
+    { "code": "internal", "meaning": "An unexpected engine or bridge failure occurred." }
+  ],
+  "events": [
+    { "kind": "snapshot", "payload": { "$ref": "#/definitions/snapshot" } },
+    { "kind": "status", "payload": { "$ref": "#/definitions/engineStatus" } },
+    {
+      "kind": "scan_progress",
+      "payload": {
+        "type": "object",
+        "required": ["jobId", "done", "total", "root"],
+        "properties": {
+          "jobId": { "$ref": "#/definitions/u64" },
+          "done": { "$ref": "#/definitions/u32" },
+          "total": { "$ref": "#/definitions/u32" },
+          "root": { "type": "string" }
+        }
+      }
+    },
+    {
+      "kind": "scan_done",
+      "payload": {
+        "type": "object",
+        "required": ["jobId", "plugins", "failed"],
+        "properties": {
+          "jobId": { "$ref": "#/definitions/u64" },
+          "plugins": { "type": "array", "items": { "type": "object" } },
+          "failed": { "type": "array", "items": { "type": "object" } }
+        }
+      }
+    },
+    {
+      "kind": "scan_failed",
+      "payload": {
+        "type": "object",
+        "required": ["jobId", "error"],
+        "properties": {
+          "jobId": { "$ref": "#/definitions/u64" },
+          "error": { "type": "string" }
+        }
+      }
+    },
+    {
+      "kind": "scan_cancelled",
+      "payload": {
+        "type": "object",
+        "required": ["jobId"],
+        "properties": { "jobId": { "$ref": "#/definitions/u64" } }
+      }
+    },
+    {
+      "kind": "rack_changed",
+      "payload": {
+        "type": "object",
+        "required": ["rack"],
+        "properties": { "rack": { "type": "array", "items": { "type": "object" } } }
+      }
+    },
+    {
+      "kind": "plugin_event",
+      "payload": {
+        "type": "object",
+        "required": ["instanceId", "what"],
+        "properties": {
+          "instanceId": { "$ref": "#/definitions/u32" },
+          "what": { "enum": ["crashed", "recovered"] }
+        }
+      }
+    },
+    { "kind": "devices_changed", "payload": { "$ref": "#/definitions/emptyObject" } }
+  ]
+}

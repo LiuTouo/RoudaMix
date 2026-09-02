@@ -2,9 +2,10 @@
 //! engine(獨立 process)生死與此 process 無關;關視窗只斷 pipe,不影響 engine。
 
 mod bridge;
+mod command_contract;
 mod commands;
 mod portable;
-mod protocol;
+pub mod protocol;
 mod settings;
 mod shm;
 mod spawn;

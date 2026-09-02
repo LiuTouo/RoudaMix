@@ -8,6 +8,8 @@
 # Any failure = throw (nonzero exit); all pass = SMOKE PASSED.
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
+$protocolContractJson = Get-Content -Raw (Join-Path $root 'contracts\command_contract.json')
+$protocolStubFramework = Get-Content -Raw (Join-Path $root 'scripts\protocol-stub-framework.js')
 $edge = 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
 function Assert($cond, $msg) { if (-not $cond) { throw "ASSERT FAIL: $msg" } }
 
@@ -89,6 +91,8 @@ try {
 
     # --- 2. stub __TAURI_INTERNALS__ before app code runs(記憶體 engine 模擬器)---
     $stub = @'
+const __protocolContract = __ROUDAMIX_COMMAND_CONTRACT__;
+const __validateEngineCommand = createProtocolStubValidator(__protocolContract);
 window.__engine = {
   nextTrackId: 1, nextInst: 1,
   tracks: [], commands: [],
@@ -111,8 +115,8 @@ window.__engine = {
     }
   },
   cmd: function (kind, p) {
+    __validateEngineCommand(kind, p);
     this.commands.push(kind);
-    const R = (v) => v;
     switch (kind) {
       case 'engine_command': return 'NEVER';
       case 'get_snapshot': return { snapshot: { epoch: 1, engineVersion: 'stub', status: this.status(), tracks: this.tracks } };
@@ -205,6 +209,7 @@ window.__TAURI_INTERNALS__ = {
 };
 console.log('__engine_status__ stub installed');
 '@
+    $stub = $protocolStubFramework + "`n" + $stub.Replace('__ROUDAMIX_COMMAND_CONTRACT__', $protocolContractJson)
     [void](Cdp 'Page.addScriptToEvaluateOnNewDocument' @{ source = $stub } $null)
     [void](Cdp 'Runtime.enable' @{} $null)
     [void](Cdp 'Page.reload' @{ ignoreCache = $false } $null)

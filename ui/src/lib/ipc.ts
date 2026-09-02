@@ -2,12 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { ConnectionStatus, MetersFrame, Snapshot } from "./types";
 
-export function engineCommand(
-  kind: string,
-  payload: Record<string, unknown> = {},
-): Promise<Record<string, unknown>> {
-  return invoke("engine_command", { kind, payload });
-}
+export { engineCommand } from "./protocol-commands.generated";
 
 export const connectStatus = () => invoke<ConnectionStatus>("connect_status");
 

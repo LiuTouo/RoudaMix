@@ -2,7 +2,7 @@
   // P1-C:App 軌程序選擇器。session 載入後 app 軌 pid=0(needsRebind)—— engine
   // 不猜 PID,由使用者在此選。列正在出聲的 active audio sessions(exe 名、PID、
   // 完整路徑);同名程序可辨識。重新整理 + 搜尋;空清單說明原因。
-  import { engineCommand } from "./ipc";
+  import { engineCommand } from "./protocol-commands.generated";
   import { friendlyError } from "./errors";
   import type { AudioApp } from "./types";
 
