@@ -1156,7 +1156,7 @@ bool AudioEngine::track_set(std::uint32_t track_id, std::optional<std::string> n
     return true;
 }
 
-bool AudioEngine::track_set_latency_policy(std::uint32_t track_id,
+bool AudioEngine::track_set_output_latency_policy(std::uint32_t track_id,
                                            OutputLatencyPolicy policy,
                                            std::string& err) {
     TrackNode* t = find_track_mut(track_id);

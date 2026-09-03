@@ -75,7 +75,7 @@ private:
     using TrackSourceRequest = router_request::TrackSourceSet;
     using TrackDestsRequest = router_request::TrackDestsSet;
     using TrackOutputRequest = router_request::TrackOutputSet;
-    using TrackLatencyPolicyRequest = router_request::TrackLatencyPolicySet;
+    using TrackOutputLatencyPolicyRequest = router_request::TrackOutputLatencyPolicySet;
     using TrackMoveRequest = router_request::TrackMove;
     using StartScanRequest = router_request::StartScan;
     using AddPluginRequest = router_request::AddPlugin;
@@ -134,7 +134,7 @@ private:
     Outcome handle_track_set_source(const TrackSourceRequest& request);
     Outcome handle_track_set_dests(const TrackDestsRequest& request);
     Outcome handle_track_set_output(const TrackOutputRequest& request);
-    Outcome handle_track_set_latency_policy(const TrackLatencyPolicyRequest& request);
+    Outcome handle_track_set_output_latency_policy(const TrackOutputLatencyPolicyRequest& request);
     Outcome handle_track_move(const TrackMoveRequest& request);
     Outcome handle_start_scan(const StartScanRequest& request);
     Outcome handle_cancel_scan(const EmptyRequest& request);

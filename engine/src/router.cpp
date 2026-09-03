@@ -187,7 +187,7 @@ const std::unordered_map<std::string, Router::Route>& Router::routes() {
         {"track_set_source", &Router::route<TrackSourceRequest, &Router::handle_track_set_source>},
         {"track_set_dests", &Router::route<TrackDestsRequest, &Router::handle_track_set_dests>},
         {"track_set_output", &Router::route<TrackOutputRequest, &Router::handle_track_set_output>},
-        {"track_set_latency_policy", &Router::route<TrackLatencyPolicyRequest, &Router::handle_track_set_latency_policy>},
+        {"track_set_output_latency_policy", &Router::route<TrackOutputLatencyPolicyRequest, &Router::handle_track_set_output_latency_policy>},
         {"track_move", &Router::route<TrackMoveRequest, &Router::handle_track_move>},
         {"start_scan", &Router::route<StartScanRequest, &Router::handle_start_scan>},
         {"cancel_scan", &Router::route<EmptyRequest, &Router::handle_cancel_scan>},
@@ -532,10 +532,10 @@ Router::Outcome Router::handle_track_set_output(const TrackOutputRequest& reques
     return success({{"tracks", session::tracks_json(engine_)}}, Effect::kDirty);
 }
 
-Router::Outcome Router::handle_track_set_latency_policy(
-    const TrackLatencyPolicyRequest& request) {
+Router::Outcome Router::handle_track_set_output_latency_policy(
+    const TrackOutputLatencyPolicyRequest& request) {
     std::string error;
-    if (!engine_.track_set_latency_policy(request.track_id, request.policy, error))
+    if (!engine_.track_set_output_latency_policy(request.track_id, request.policy, error))
         return failure("bad_command", std::move(error));
     return success({{"tracks", session::tracks_json(engine_)}}, Effect::kDirty);
 }

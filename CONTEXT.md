@@ -41,8 +41,16 @@ _Avoid_: Disabled plugin
 _Avoid_: Low-latency mode, global bypass
 
 **Runtime-suspended Plugin**:
-因執行期 Plugin Latency 超出 PDC 安全範圍而暫時停止處理的 plugin instance；primary 被暫停時所有輸出改走 dry signal，shadow 被暫停時只影響 low-latency outputs，且此狀態不寫入 Session。
+因 primary 的執行期 Plugin Latency 超出 PDC 安全範圍而暫時停止處理的 plugin instance；此時所有輸出對該 plugin 改走 dry signal，且此狀態不寫入 Session。
 _Avoid_: Bypassed Plugin, failed plugin
+
+**Runtime-degraded Plugin**:
+因 Shadow Plugin 的 Plugin Latency 超出 PDC 安全範圍而只讓 Low-Latency Outputs 對該 plugin 改走 dry signal 的狀態；Stream Output 路徑仍使用 primary 的完整處理，且此狀態不寫入 Session。
+_Avoid_: Runtime-suspended Plugin, suspended plugin
+
+**Shadow Plugin**:
+當 Monitor Bypass 使 Monitor 與 Stream 的處理分岔時，為 monitor 分支額外建立的獨立 plugin instance；單向鏡像 primary 的參數、preset 與 bypass，不開放使用者直接編輯，並以自己的實際 Plugin Latency 計算所屬路徑。
+_Avoid_: mirror instance, clone
 
 **Placeholder Plugin**:
 因無法載入而保留在原 chain 位置的 plugin instance；它不參與音訊處理，Plugin Latency 未知，且不計入 Path Latency。

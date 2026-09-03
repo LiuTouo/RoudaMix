@@ -128,11 +128,11 @@ struct TrackOutputSet {
     }
 };
 
-struct TrackLatencyPolicySet {
+struct TrackOutputLatencyPolicySet {
     std::uint32_t track_id;
     OutputLatencyPolicy policy;
 
-    explicit TrackLatencyPolicySet(const nlohmann::json& payload)
+    explicit TrackOutputLatencyPolicySet(const nlohmann::json& payload)
         : track_id(payload.at("trackId").get<std::uint32_t>()),
           policy(payload.at("policy").get<std::string>() == "lowLatency"
                      ? OutputLatencyPolicy::kLowLatency

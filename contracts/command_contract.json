@@ -356,7 +356,7 @@
       "errors": ["bad_command", "track_not_found", "device_busy"]
     },
     {
-      "kind": "track_set_latency_policy",
+      "kind": "track_set_output_latency_policy",
       "payload": {
         "type": "object",
         "required": ["trackId", "policy"],

@@ -296,7 +296,7 @@ bool load(AudioEngine& engine, const std::filesystem::path& file, nlohmann::json
                 const auto policy = ps == "lowLatency" ? OutputLatencyPolicy::kLowLatency
                                                         : OutputLatencyPolicy::kFullPdc;
                 std::string policy_err;
-                (void)engine.track_set_latency_policy(new_id, policy, policy_err);
+                (void)engine.track_set_output_latency_policy(new_id, policy, policy_err);
             }
 
             std::string op_err, op_code;

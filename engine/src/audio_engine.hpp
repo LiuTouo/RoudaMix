@@ -107,7 +107,7 @@ public:
     bool track_set(std::uint32_t track_id, std::optional<std::string> name,
                    std::optional<std::uint32_t> color, std::optional<float> gain,
                    std::optional<bool> mute, std::string& err);
-    bool track_set_latency_policy(std::uint32_t track_id, OutputLatencyPolicy policy,
+    bool track_set_output_latency_policy(std::uint32_t track_id, OutputLatencyPolicy policy,
                                   std::string& err);
     bool track_set_source(std::uint32_t track_id, const TrackSource& source,
                           std::string& err, std::string& code);

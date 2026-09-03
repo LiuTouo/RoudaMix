@@ -448,7 +448,7 @@
     latencyPolicyState = request.state;
     let outcome: "confirmed" | "rejected" = "confirmed";
     try {
-      await engineCommand("track_set_latency_policy", {
+      await engineCommand("track_set_output_latency_policy", {
         trackId: track.trackId,
         policy: request.requested,
       });
