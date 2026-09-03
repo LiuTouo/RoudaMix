@@ -16,6 +16,7 @@
 #include <windows.h>
 
 #include "asio_device.hpp"
+#include "failure.hpp"
 #include "rack.hpp"
 #include "telemetry.hpp"
 #include "track_graph.hpp"
@@ -33,20 +34,6 @@ struct EngineStatusInfo {
     std::uint32_t track_count{};
     std::uint32_t plugin_fails{};  // RT plugin process 失敗累計
     std::string error;        // 最近錯誤(空 = 無)
-};
-
-enum class PluginMutationFailure {
-    kNone,
-    kNotFound,
-    kStateFailed,
-    kBadCommand,
-};
-
-enum class PresetLoadFailure {
-    kNone,
-    kNotFound,
-    kPresetIo,
-    kPluginStateFailed,
 };
 
 class AudioEngine final : public IAudioCallback {
@@ -93,61 +80,60 @@ public:
     void handle_latency_changed(std::uint32_t instance_id, bool monitor_shadow);
     void handle_track_failed(std::uint32_t track_id);  // main thread 專屬(capture 或 render)
 
-    bool start(const std::string& device_key, std::optional<std::uint32_t> sample_rate,
-               std::optional<std::uint32_t> buffer_size, std::string& err);
+    // 控制面回報慣例:std::optional<Failure>,nullopt = 成功;code 分類由本層
+    // 決定(enum 集合 = protocol error codes,見 failure.hpp)
+    std::optional<Failure> start(const std::string& device_key,
+                                 std::optional<std::uint32_t> sample_rate,
+                                 std::optional<std::uint32_t> buffer_size);
     void stop() noexcept;
-    bool open_control_panel(std::string& err);
+    std::optional<Failure> open_control_panel();
 
     // ---- tracks(控制面;全部由 Router 的臨界區序列化)----
-    // code out:特殊錯誤碼(cycle_detected/device_busy/track_not_found/bad_command),
-    // main.cpp 直接當 reply code 用;通用失敗設 bad_command
-    bool track_add(TrackKind kind, const std::string& name, std::uint32_t color,
-                   std::uint32_t& track_id, std::string& err);
-    bool track_remove(std::uint32_t track_id, std::string& err);
-    bool track_set(std::uint32_t track_id, std::optional<std::string> name,
-                   std::optional<std::uint32_t> color, std::optional<float> gain,
-                   std::optional<bool> mute, std::string& err);
-    bool track_set_output_latency_policy(std::uint32_t track_id, OutputLatencyPolicy policy,
-                                  std::string& err);
-    bool track_set_source(std::uint32_t track_id, const TrackSource& source,
-                          std::string& err, std::string& code);
-    bool track_set_dests(std::uint32_t track_id, std::vector<std::uint32_t> dests,
-                         std::string& err, std::string& code);
-    bool track_set_output(std::uint32_t track_id, const TrackOutput& output,
-                          std::string& err, std::string& code);
-    bool track_move(std::uint32_t track_id, std::size_t new_index, std::string& err);
+    std::optional<Failure> track_add(TrackKind kind, const std::string& name,
+                                     std::uint32_t color, std::uint32_t& track_id);
+    std::optional<Failure> track_remove(std::uint32_t track_id);
+    std::optional<Failure> track_set(std::uint32_t track_id, std::optional<std::string> name,
+                                     std::optional<std::uint32_t> color,
+                                     std::optional<float> gain, std::optional<bool> mute);
+    std::optional<Failure> track_set_output_latency_policy(std::uint32_t track_id,
+                                                           OutputLatencyPolicy policy);
+    std::optional<Failure> track_set_source(std::uint32_t track_id, const TrackSource& source);
+    std::optional<Failure> track_set_dests(std::uint32_t track_id,
+                                           std::vector<std::uint32_t> dests);
+    std::optional<Failure> track_set_output(std::uint32_t track_id, const TrackOutput& output);
+    std::optional<Failure> track_move(std::uint32_t track_id, std::size_t new_index);
 
     // ---- plugins(簽名與 M4 相同,只是搜尋/插入範圍變成各軌 chain)----
-    bool add_plugin(std::uint32_t track_id, const std::string& module_path,
-                    const std::string& class_id, std::uint32_t& instance_id, std::string& err);
+    std::optional<Failure> add_plugin(std::uint32_t track_id, const std::string& module_path,
+                                      const std::string& class_id, std::uint32_t& instance_id);
     // session 載入:module 載不動也要原位置保留 metadata。plugin == nullptr 的
     // placeholder(不參與 DSP = 等同 bypass),availability/load_error 記原因;
     // params 直接進 host 權威表(placeholder 沒有 plugin metadata 可查)
-    bool add_placeholder_plugin(std::uint32_t track_id, const std::string& module_path,
-                                const std::string& class_id, const std::string& name,
-                                bool bypassed, RackSlot::Availability why,
-                                const std::string& load_error,
-                                const std::vector<std::pair<std::uint32_t, double>>& params,
-                                std::uint32_t& instance_id, std::string& err);
+    std::optional<Failure> add_placeholder_plugin(std::uint32_t track_id,
+                                                  const std::string& module_path,
+                                                  const std::string& class_id,
+                                                  const std::string& name, bool bypassed,
+                                                  RackSlot::Availability why,
+                                                  const std::string& load_error,
+                                                  const std::vector<std::pair<std::uint32_t, double>>& params,
+                                                  std::uint32_t& instance_id);
     // placeholder → 真 plugin(原 instanceId/位置/params/bypass 保留)。
     // 前置:呼叫端先過 sandbox verify(session 與 dispatch 同規;worker 不在 fail closed)
-    bool load_placeholder(std::uint32_t instance_id, const std::string& module_path,
-                          const std::string& class_id, std::string& err);
-    bool remove_plugin(std::uint32_t instance_id, std::string& err,
-                       PluginMutationFailure* failure = nullptr);
-    bool move_plugin(std::uint32_t instance_id, std::size_t to_index, std::string& err);
-    bool set_bypass(std::uint32_t instance_id, bool bypass, std::string& err,
-                    PluginMutationFailure* failure = nullptr);
-    bool set_monitor_bypass(std::uint32_t instance_id, bool bypass, std::string& err,
-                            PluginMutationFailure* failure = nullptr);
-    bool set_param(std::uint32_t instance_id, std::uint32_t param_id, double value,
-                   std::string& err);
+    std::optional<Failure> load_placeholder(std::uint32_t instance_id,
+                                            const std::string& module_path,
+                                            const std::string& class_id);
+    std::optional<Failure> remove_plugin(std::uint32_t instance_id);
+    std::optional<Failure> move_plugin(std::uint32_t instance_id, std::size_t to_index);
+    std::optional<Failure> set_bypass(std::uint32_t instance_id, bool bypass);
+    std::optional<Failure> set_monitor_bypass(std::uint32_t instance_id, bool bypass);
+    std::optional<Failure> set_param(std::uint32_t instance_id, std::uint32_t param_id,
+                                     double value);
     // preset(檔案式 .vstpreset;控制面，由 Router 臨界區序列化)。
     // load 成功後 host 端 param 權威值自 controller 重同步
-    bool save_preset(std::uint32_t instance_id, const std::filesystem::path& file,
-                     std::string& err);
-    bool load_preset(std::uint32_t instance_id, const std::filesystem::path& file,
-                     std::string& err, PresetLoadFailure* failure = nullptr);
+    std::optional<Failure> save_preset(std::uint32_t instance_id,
+                                       const std::filesystem::path& file);
+    std::optional<Failure> load_preset(std::uint32_t instance_id,
+                                       const std::filesystem::path& file);
     // 把 host 權威值推給 controller(editor GUI 顯示同步);session 載入後呼,
     // set_param 只餵 RT ring、GUI 不知道。由 Router 臨界區序列化。
     void sync_controller_params(std::uint32_t instance_id);
@@ -192,8 +178,8 @@ private:
     void process(const AudioBlock& block) noexcept override;  // RT
     void bind_latency_callback(RackSlot& slot);
     static void refresh_latency(RackSlot& slot) noexcept;
-    bool ensure_monitor_shadows(std::string& err);
-    bool prepare_monitor_variants(std::string& err);
+    std::optional<Failure> ensure_monitor_shadows();
+    std::optional<Failure> prepare_monitor_variants();
 
     AsioDevice device_;
     MeterAccumulator meters_;
@@ -234,22 +220,22 @@ private:
     void clear_expired_retired(bool force) noexcept;  // grace > 500ms 才刪
     // 跑著時軌道動了 ASIO pair:以最新 source/output 聯集重建裝置 buffer
     // (createBuffers 只能在 stop 狀態;聯集沒變 = 不動)。失敗 = 串流已停
-    bool rebuild_asio_channels(std::string& err);
+    bool rebuild_asio_channels(std::string& err);  // 內部 plumbing;分類 = 呼叫端 kDeviceBusy
     RackSlot* find_slot_mut(std::uint32_t instance_id) noexcept;
     // bypass 旗標的交易式提交:set_bypass / set_monitor_bypass 共用流程——
     // 寫旗標、prepare/swap 任一失敗即回滾並還原 monitor shadow graph。
-    bool commit_bypass_flag(bool RackSlot::* flag, std::uint32_t instance_id, bool value,
-                            std::string& err, PluginMutationFailure* failure);
+    std::optional<Failure> commit_bypass_flag(bool RackSlot::* flag, std::uint32_t instance_id,
+                                              bool value);
     TrackNode* find_track_mut(std::uint32_t track_id) noexcept;
     // 同 ASIO pair 全 engine 只能一軌用(source 與 output 各自方向內查重)
     bool asio_in_pair_busy(std::uint32_t ch, std::uint32_t except_track) const noexcept;
     bool asio_out_pair_busy(std::uint32_t ch, std::uint32_t except_track) const noexcept;
     // M5b:app capture 生命週期(控制面)。ensure 失敗 = t.track_error 帶原因
-    bool ensure_capture(TrackNode& t, std::uint32_t dst_rate, std::string& err);
+    std::optional<Failure> ensure_capture(TrackNode& t, std::uint32_t dst_rate);
     void stop_capture(TrackNode& t) noexcept;
     void stop_captures() noexcept;
     // M5c:wasapi render sink 生命週期(同語意)
-    bool ensure_render(TrackNode& t, std::uint32_t src_rate, std::string& err);
+    std::optional<Failure> ensure_render(TrackNode& t, std::uint32_t src_rate);
     void stop_render(TrackNode& t) noexcept;
     void stop_renders() noexcept;
     std::function<void(std::uint32_t)> capture_failed_cb_;

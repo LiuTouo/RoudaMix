@@ -23,72 +23,8 @@ RackSlot::Availability availability_from(const nlohmann::json& j) {
     return RackSlot::Availability::kOk;
 }
 
-// ---- TrackSource/TrackOutput ↔ JSON(格式同 protocol §8)----
-
-nlohmann::json source_to_json(const TrackSource& src) {
-    switch (src.type) {
-        case TrackSource::kSine:
-            return nlohmann::json{{"type", "sine"}, {"freq", src.sine_freq}};
-        case TrackSource::kAsioIn:
-            return nlohmann::json{{"type", "asioIn"},
-                                  {"channel", src.asio_in_ch},
-                                  {"mono", src.mono}};
-        // app:存程序名不存 pid(pid 跨載入無意義;load 對不到 = 該軌靜音不 fail)
-        case TrackSource::kApp:
-            return src.app_name.empty()
-                       ? nlohmann::json(nullptr)
-                       : nlohmann::json{{"type", "app"}, {"name", src.app_name}};
-        case TrackSource::kNone:
-            return nullptr;
-    }
-    return nullptr;
-}
-
-TrackSource source_from_json(const nlohmann::json& j) {
-    TrackSource src;
-    if (!j.is_object() || !j.contains("type") || !j["type"].is_string()) return src;
-    const auto t = j["type"].get<std::string>();
-    if (t == "sine" && j.contains("freq") && j["freq"].is_number()) {
-        src.type = TrackSource::kSine;
-        src.sine_freq = j["freq"].get<float>();
-    } else if (t == "asioIn" && j.contains("channel") && j["channel"].is_number_unsigned()) {
-        src.type = TrackSource::kAsioIn;
-        src.asio_in_ch = j["channel"].get<std::uint32_t>();
-        if (j.contains("mono") && j["mono"].is_boolean()) src.mono = j["mono"].get<bool>();
-    } else if (t == "app" && j.contains("name") && j["name"].is_string()) {
-        src.type = TrackSource::kApp;
-        src.app_name = j["name"].get<std::string>();
-    }
-    return src;
-}
-
-nlohmann::json output_to_json(const TrackOutput& out) {
-    switch (out.type) {
-        case TrackOutput::kAsioOut:
-            return nlohmann::json{{"type", "asioOut"}, {"channel", out.asio_out_ch}};
-        case TrackOutput::kWasapiRender:
-            return out.wasapi_id.empty()
-                       ? nlohmann::json(nullptr)
-                       : nlohmann::json{{"type", "wasapi"}, {"deviceId", out.wasapi_id}};
-        case TrackOutput::kNone:
-            return nullptr;
-    }
-    return nullptr;
-}
-
-TrackOutput output_from_json(const nlohmann::json& j) {
-    TrackOutput out;
-    if (!j.is_object() || !j.contains("type") || !j["type"].is_string()) return out;
-    const auto t = j["type"].get<std::string>();
-    if (t == "asioOut" && j.contains("channel") && j["channel"].is_number_unsigned()) {
-        out.type = TrackOutput::kAsioOut;
-        out.asio_out_ch = j["channel"].get<std::uint32_t>();
-    } else if (t == "wasapi" && j.contains("deviceId") && j["deviceId"].is_string()) {
-        out.type = TrackOutput::kWasapiRender;
-        out.wasapi_id = j["deviceId"].get<std::string>();
-    }
-    return out;
-}
+// TrackSource/TrackOutput ↔ JSON 走 rmx::source_to_json 等(track_graph.hpp;
+// 與 status 投影、router 請求解碼共用的唯一 codec)
 }  // namespace
 
 std::filesystem::path default_path() {
@@ -159,8 +95,8 @@ nlohmann::json serialize(const AudioEngine& engine) {
 //    rename 失敗 = 把 .bak 搬回正式檔復原,仍失敗 = err(原檔可能遺失,.bak 還在)。
 // 3. 成功:.tmp 已隨 rename 消失;保留一份 .bak(上一版,手動恢復用)。
 // 效果:任何時刻中斷,正式檔要嘛完整舊版、要嘛完整新版,不會有截斷的半檔。
-bool save(const AudioEngine& engine, const std::filesystem::path& file, std::string& err,
-          const nlohmann::json& overrides) {
+std::optional<Failure> save(const AudioEngine& engine, const std::filesystem::path& file,
+                            const nlohmann::json& overrides) {
     nlohmann::json j = serialize(engine);
     if (overrides.is_object()) {
         if (overrides.contains("deviceKey") && overrides["deviceKey"].is_string())
@@ -180,18 +116,17 @@ bool save(const AudioEngine& engine, const std::filesystem::path& file, std::str
     // 1. temp 完整寫入 + 落盤
     {
         std::FILE* f = nullptr;
-        if (_wfopen_s(&f, tmp.c_str(), L"wb") != 0 || f == nullptr) {
-            err = "cannot open session temp file for writing: " + tmp.string();
-            return false;
-        }
+        if (_wfopen_s(&f, tmp.c_str(), L"wb") != 0 || f == nullptr)
+            return failure(Err::kSessionIo,
+                           "cannot open session temp file for writing: " + tmp.string());
         const bool wrote = std::fwrite(text.data(), 1, text.size(), f) == text.size();
         const bool flushed = wrote && std::fflush(f) == 0 && _commit(_fileno(f)) == 0;
         std::fclose(f);
         if (!flushed) {
             std::error_code ec;
             std::filesystem::remove(tmp, ec);  // 寫/落盤失敗:temp 清掉,原檔不動
-            err = "session temp file write/flush failed: " + tmp.string();
-            return false;
+            return failure(Err::kSessionIo,
+                           "session temp file write/flush failed: " + tmp.string());
         }
     }
 
@@ -204,9 +139,9 @@ bool save(const AudioEngine& engine, const std::filesystem::path& file, std::str
         std::filesystem::rename(file, bak, ec);
         if (ec) {
             std::filesystem::remove(tmp, ec);
-            err = "cannot move previous session to backup: " + bak.string() + ": " +
-                  ec.message();
-            return false;
+            return failure(Err::kSessionIo,
+                           "cannot move previous session to backup: " + bak.string() + ": " +
+                               ec.message());
         }
     }
 
@@ -215,10 +150,10 @@ bool save(const AudioEngine& engine, const std::filesystem::path& file, std::str
     if (ec) {
         std::error_code rb;
         if (had_old) std::filesystem::rename(bak, file, rb);
-        err = "cannot replace session file: " + file.string() + ": " + ec.message();
-        return false;
+        return failure(Err::kSessionIo,
+                       "cannot replace session file: " + file.string() + ": " + ec.message());
     }
-    return true;
+    return std::nullopt;
 }
 
 sandbox::PreflightFailure preflight_plugin(const AudioEngine& engine,
@@ -230,13 +165,11 @@ sandbox::PreflightFailure preflight_plugin(const AudioEngine& engine,
     return rmx::sandbox::preflight_module(module_path, class_id, rate, block, error);
 }
 
-bool load(AudioEngine& engine, const std::filesystem::path& file, nlohmann::json& applied,
-          std::string& err) {
+std::optional<Failure> load(AudioEngine& engine, const std::filesystem::path& file,
+                            nlohmann::json& applied) {
     std::FILE* f = nullptr;
-    if (_wfopen_s(&f, file.c_str(), L"rb") != 0 || f == nullptr) {
-        err = "cannot open session file: " + file.string();
-        return false;
-    }
+    if (_wfopen_s(&f, file.c_str(), L"rb") != 0 || f == nullptr)
+        return failure(Err::kSessionIo, "cannot open session file: " + file.string());
     std::string text;
     char buf[4096];
     size_t n;
@@ -245,15 +178,12 @@ bool load(AudioEngine& engine, const std::filesystem::path& file, nlohmann::json
 
     const nlohmann::json j = nlohmann::json::parse(text, nullptr, /*allow_exceptions=*/false);
     if (j.is_discarded() || !j.is_object() || !j.contains("roudamixSession") ||
-        !j["roudamixSession"].is_number_integer()) {
-        err = "not a RoudaMix session file";
-        return false;
-    }
+        !j["roudamixSession"].is_number_integer())
+        return failure(Err::kSessionIo, "not a RoudaMix session file");
     const int file_version = j["roudamixSession"].get<int>();
-    if (file_version != 2 && file_version != kSessionVersion) {
-        err = "unsupported RoudaMix session version (expected v2 or v3)";
-        return false;
-    }
+    if (file_version != 2 && file_version != kSessionVersion)
+        return failure(Err::kSessionIo,
+                       "unsupported RoudaMix session version (expected v2 or v3)");
 
     // 舊全軌清空(trackId/instanceId 不保留 — load 後全部重發;含系統輸出軌,
     // 載入後 ensure_system_outputs 會依檔案重建/補齊)
@@ -278,8 +208,7 @@ bool load(AudioEngine& engine, const std::filesystem::path& file, nlohmann::json
                     ? st["color"].get<std::uint32_t>()
                     : 0u;
             std::uint32_t new_id = 0;
-            std::string add_err;
-            if (!engine.track_add(kind, name, color, new_id, add_err)) continue;
+            if (engine.track_add(kind, name, color, new_id)) continue;
             if (st.contains("trackId") && st["trackId"].is_number_unsigned())
                 id_map[st["trackId"].get<std::uint32_t>()] = new_id;
             // systemRole:值不合法 = kNone(ensure_system_outputs 之後會補齊)
@@ -295,21 +224,17 @@ bool load(AudioEngine& engine, const std::filesystem::path& file, nlohmann::json
                 const auto ps = st["latencyPolicy"].get<std::string>();
                 const auto policy = ps == "lowLatency" ? OutputLatencyPolicy::kLowLatency
                                                         : OutputLatencyPolicy::kFullPdc;
-                std::string policy_err;
-                (void)engine.track_set_output_latency_policy(new_id, policy, policy_err);
+                (void)engine.track_set_output_latency_policy(new_id, policy);
             }
 
-            std::string op_err, op_code;
             if (st.contains("source"))
-                (void)engine.track_set_source(new_id, source_from_json(st["source"]), op_err,
-                                              op_code);
+                (void)engine.track_set_source(new_id, source_from_json(st["source"]));
             if (st.contains("output"))
-                (void)engine.track_set_output(new_id, output_from_json(st["output"]), op_err,
-                                              op_code);
+                (void)engine.track_set_output(new_id, output_from_json(st["output"]));
             if (st.contains("gain") && st["gain"].is_number() && st.contains("mute") &&
                 st["mute"].is_boolean())
                 (void)engine.track_set(new_id, std::nullopt, std::nullopt,
-                                       st["gain"].get<float>(), st["mute"].get<bool>(), op_err);
+                                       st["gain"].get<float>(), st["mute"].get<bool>());
 
             // plugins:best-effort——module 消失/壞檔/worker 不在 = 原位置保留
             // placeholder(metadata/params/bypass 全存),不參與 DSP;載入走與手動
@@ -381,12 +306,11 @@ bool load(AudioEngine& engine, const std::filesystem::path& file, nlohmann::json
                                      stored_err.empty() ? "unavailable (from session file)"
                                                         : stored_err);
                         std::uint32_t instance_id = 0;
-                        std::string ph_err;
                         (void)engine.add_placeholder_plugin(new_id, path, class_id, plug_name,
                                                             bypassed, stored, stored_err, params,
-                                                            instance_id, ph_err);
+                                                            instance_id);
                         if (monitor_bypassed)
-                            (void)engine.set_monitor_bypass(instance_id, true, ph_err);
+                            (void)engine.set_monitor_bypass(instance_id, true);
                         ++chain_index;
                         continue;
                     }
@@ -401,36 +325,31 @@ bool load(AudioEngine& engine, const std::filesystem::path& file, nlohmann::json
                                 ? "sandbox_unavailable"
                                 : "plugin_load_failed",
                             verr);
-                    } else if (!engine.add_plugin(new_id, path, class_id, instance_id,
-                                                  verr)) {
+                    } else if (engine.add_plugin(new_id, path, class_id, instance_id)) {
                         note_missing("plugin_load_failed", verr);
                     } else {
                         loaded = true;
                     }
                     if (loaded) {
-                        std::string pl_err;
-                        if (bypassed) (void)engine.set_bypass(instance_id, true, pl_err);
+                        if (bypassed) (void)engine.set_bypass(instance_id, true);
                         if (monitor_bypassed)
-                            (void)engine.set_monitor_bypass(instance_id, true, pl_err);
-                        for (const auto& [pid, v] : params) {
-                            std::string perr;
-                            (void)engine.set_param(instance_id, pid, v, perr);
-                        }
+                            (void)engine.set_monitor_bypass(instance_id, true);
+                        for (const auto& [pid, v] : params)
+                            (void)engine.set_param(instance_id, pid, v);
                         // set_param 只餵 RT;controller 也推,開 plugin GUI 才會顯示場景值
                         engine.sync_controller_params(instance_id);
                     } else {
                         // fail closed:placeholder 佔住原鏈位,metadata/params/bypass 全存
                         std::uint32_t ph_id = 0;
-                        std::string ph_err;
                         (void)engine.add_placeholder_plugin(
                             new_id, path, class_id, plug_name, bypassed,
                             RackSlot::Availability::kLoadFailed,
                             missing.back().is_object() && missing.back().contains("message")
                                 ? missing.back()["message"].get<std::string>()
                                 : std::string("load failed"),
-                            params, ph_id, ph_err);
+                            params, ph_id);
                         if (monitor_bypassed)
-                            (void)engine.set_monitor_bypass(ph_id, true, ph_err);
+                            (void)engine.set_monitor_bypass(ph_id, true);
                     }
                     ++chain_index;
                 }
@@ -452,8 +371,7 @@ bool load(AudioEngine& engine, const std::filesystem::path& file, nlohmann::json
                 const auto it = id_map.find(d.get<std::uint32_t>());
                 if (it != id_map.end()) dests.push_back(it->second);
             }
-            std::string d_err, d_code;
-            (void)engine.track_set_dests(mine->second, std::move(dests), d_err, d_code);
+            (void)engine.track_set_dests(mine->second, std::move(dests));
         }
 
         // 系統輸出(monitor/stream)唯一性 + 存在性:檔案缺 role(舊 v2)= 確定性
@@ -473,7 +391,7 @@ bool load(AudioEngine& engine, const std::filesystem::path& file, nlohmann::json
                            : nlohmann::json(nullptr)},
         {"missing", std::move(missing)},
     };
-    return true;
+    return std::nullopt;
 }
 
 }  // namespace rmx::session

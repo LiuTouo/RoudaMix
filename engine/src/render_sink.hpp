@@ -15,6 +15,7 @@
 #include <string>
 #include <thread>
 
+#include "failure.hpp"
 #include "resampler.hpp"
 #include "spsc_fifo.hpp"
 
@@ -25,10 +26,11 @@ public:
     using FailCallback = std::function<void()>;
 
     // 啟動(阻塞;main thread STA COM)。device_id = MMDevice endpoint id;
-    // src_rate = ASIO 現行率(RT 寫端率);失敗回 nullptr
+    // src_rate = ASIO 現行率(RT 寫端率);失敗回 nullptr,failure 帶分類
+    // (本層自行分類:裝置/format/啟動失敗 = device_busy)
     static std::shared_ptr<RenderSink> create(const std::string& device_id,
                                               std::uint32_t src_rate, FailCallback on_fail,
-                                              std::string& err);
+                                              Failure& failure);
     ~RenderSink();
     void stop() noexcept;
 

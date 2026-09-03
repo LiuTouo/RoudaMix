@@ -13,9 +13,9 @@ namespace rmx {
 
 std::shared_ptr<RenderSink> RenderSink::create(const std::string& device_id,
                                                std::uint32_t src_rate, FailCallback on_fail,
-                                               std::string& err) {
+                                               Failure& failure) {
     if (device_id.empty()) {
-        err = "wasapi deviceId empty";
+        failure = Failure{Err::kDeviceBusy, "wasapi deviceId empty"};
         return nullptr;
     }
     // endpoint id string → UTF-16
@@ -38,14 +38,14 @@ std::shared_ptr<RenderSink> RenderSink::create(const std::string& device_id,
     if (device != nullptr) device->Release();
     if (FAILED(hr) || client == nullptr) {
         if (client != nullptr) client->Release();
-        err = "wasapi device not found: " + device_id;
+        failure = Failure{Err::kDeviceBusy, "wasapi device not found: " + device_id};
         return nullptr;
     }
 
     WAVEFORMATEX* mix = nullptr;
     if (FAILED(client->GetMixFormat(&mix)) || mix == nullptr) {
         client->Release();
-        err = "wasapi: GetMixFormat failed";
+        failure = Failure{Err::kDeviceBusy, "wasapi: GetMixFormat failed"};
         return nullptr;
     }
     // shared mode 只支援裝置 mix format;僅收 f32(絕大多數裝置 mix = float)
@@ -57,7 +57,7 @@ std::shared_ptr<RenderSink> RenderSink::create(const std::string& device_id,
     if (!is_float || mix->wBitsPerSample != 32 || mix->nChannels < 1) {
         CoTaskMemFree(mix);
         client->Release();
-        err = "wasapi: device mix format not f32";
+        failure = Failure{Err::kDeviceBusy, "wasapi: device mix format not f32"};
         return nullptr;
     }
     const std::uint32_t dst_rate = mix->nSamplesPerSec;
@@ -69,14 +69,14 @@ std::shared_ptr<RenderSink> RenderSink::create(const std::string& device_id,
     CoTaskMemFree(mix);
     if (FAILED(ihr)) {
         client->Release();
-        err = "wasapi: Initialize failed";
+        failure = Failure{Err::kDeviceBusy, "wasapi: Initialize failed"};
         return nullptr;
     }
     HANDLE ev = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     if (ev == nullptr || FAILED(client->SetEventHandle(ev))) {
         if (ev != nullptr) CloseHandle(ev);
         client->Release();
-        err = "wasapi: SetEventHandle failed";
+        failure = Failure{Err::kDeviceBusy, "wasapi: SetEventHandle failed"};
         return nullptr;
     }
     IAudioRenderClient* render = nullptr;
@@ -84,7 +84,7 @@ std::shared_ptr<RenderSink> RenderSink::create(const std::string& device_id,
         render == nullptr) {
         CloseHandle(ev);
         client->Release();
-        err = "wasapi: GetService(IAudioRenderClient) failed";
+        failure = Failure{Err::kDeviceBusy, "wasapi: GetService(IAudioRenderClient) failed"};
         return nullptr;
     }
     std::uint32_t buffer_frames = 0;
@@ -92,14 +92,14 @@ std::shared_ptr<RenderSink> RenderSink::create(const std::string& device_id,
         render->Release();
         CloseHandle(ev);
         client->Release();
-        err = "wasapi: GetBufferSize failed";
+        failure = Failure{Err::kDeviceBusy, "wasapi: GetBufferSize failed"};
         return nullptr;
     }
     if (FAILED(client->Start())) {
         render->Release();
         CloseHandle(ev);
         client->Release();
-        err = "wasapi: Start failed";
+        failure = Failure{Err::kDeviceBusy, "wasapi: Start failed"};
         return nullptr;
     }
 

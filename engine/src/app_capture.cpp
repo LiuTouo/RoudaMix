@@ -157,7 +157,7 @@ private:
 }  // namespace
 
 std::shared_ptr<AppCapture> AppCapture::create(std::uint32_t pid, std::uint32_t dst_rate,
-                                               FailCallback on_fail, std::string& err) {
+                                               FailCallback on_fail, Failure& failure) {
     // activation 參數:目標程序樹 loopback(本 SDK 形態 = DWORD TargetProcessId)
     AUDIOCLIENT_ACTIVATION_PARAMS params{};
     params.ActivationType = AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK;
@@ -176,7 +176,9 @@ std::shared_ptr<AppCapture> AppCapture::create(std::uint32_t pid, std::uint32_t 
     if (FAILED(hr)) {
         handler->Release();
         if (op != nullptr) op->Release();
-        err = "process loopback activation failed: " + std::to_string(static_cast<unsigned long>(hr));
+        failure = Failure{Err::kUnsupportedWindows,
+                               "process loopback activation failed: " +
+                               std::to_string(static_cast<unsigned long>(hr))};
         return nullptr;
     }
     const HRESULT hr_activate = handler->wait(2000);
@@ -187,7 +189,7 @@ std::shared_ptr<AppCapture> AppCapture::create(std::uint32_t pid, std::uint32_t 
         char msg[128];
         std::snprintf(msg, sizeof(msg), "process loopback not supported or failed (hr=0x%08lX)",
                       static_cast<unsigned long>(hr_activate));
-        err = msg;
+        failure = Failure{Err::kUnsupportedWindows, msg};
         return nullptr;
     }
 
@@ -218,7 +220,8 @@ std::shared_ptr<AppCapture> AppCapture::create(std::uint32_t pid, std::uint32_t 
         if (enumerator != nullptr) enumerator->Release();
         if (FAILED(hrf) || mix == nullptr) {
             client->Release();
-            err = "process loopback: default render mix format unavailable";
+            failure = Failure{Err::kUnsupportedWindows,
+                                   "process loopback: default render mix format unavailable"};
             return nullptr;
         }
     }
@@ -241,7 +244,8 @@ std::shared_ptr<AppCapture> AppCapture::create(std::uint32_t pid, std::uint32_t 
     if (!is_float && !is_s16) {
         CoTaskMemFree(mix);
         client->Release();
-        err = "process loopback: unsupported mix format";
+        failure = Failure{Err::kUnsupportedWindows,
+                               "process loopback: unsupported mix format"};
         return nullptr;
     }
     cap->src_rate_ = mix->nSamplesPerSec;
@@ -260,14 +264,14 @@ std::shared_ptr<AppCapture> AppCapture::create(std::uint32_t pid, std::uint32_t 
     CoTaskMemFree(mix);
     if (FAILED(ihr)) {
         client->Release();
-        err = "process loopback: Initialize failed";
+        failure = Failure{Err::kUnsupportedWindows, "process loopback: Initialize failed"};
         return nullptr;
     }
     HANDLE ev = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     if (ev == nullptr || FAILED(client->SetEventHandle(ev))) {
         if (ev != nullptr) CloseHandle(ev);
         client->Release();
-        err = "process loopback: SetEventHandle failed";
+        failure = Failure{Err::kUnsupportedWindows, "process loopback: SetEventHandle failed"};
         return nullptr;
     }
     IAudioCaptureClient* capture = nullptr;
@@ -275,14 +279,15 @@ std::shared_ptr<AppCapture> AppCapture::create(std::uint32_t pid, std::uint32_t 
         capture == nullptr) {
         CloseHandle(ev);
         client->Release();
-        err = "process loopback: GetService(IAudioCaptureClient) failed";
+        failure = Failure{Err::kUnsupportedWindows,
+                               "process loopback: GetService(IAudioCaptureClient) failed"};
         return nullptr;
     }
     if (FAILED(client->Start())) {
         capture->Release();
         CloseHandle(ev);
         client->Release();
-        err = "process loopback: Start failed";
+        failure = Failure{Err::kUnsupportedWindows, "process loopback: Start failed"};
         return nullptr;
     }
 

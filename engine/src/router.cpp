@@ -1,6 +1,7 @@
 #include "router.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <cstdio>
 #include <exception>
 #include <optional>
@@ -11,27 +12,48 @@
 #include "session.hpp"
 #include "session_projection.hpp"
 
+#include "command_contract.hpp"
+
 namespace rmx {
 
 namespace {
 
 constexpr std::uint32_t kScanRootTimeoutMs = 10u * 60u * 1000u;
 
-const char* plugin_mutation_error_code(PluginMutationFailure failure) {
-    switch (failure) {
-        case PluginMutationFailure::kNotFound: return "plugin_not_found";
-        case PluginMutationFailure::kStateFailed: return "plugin_state_failed";
-        case PluginMutationFailure::kNone:
-        case PluginMutationFailure::kBadCommand: return "bad_command";
-    }
-    return "bad_command";
-}
+// Err → protocol wire code 的唯一對照表(contracts/command_contract.json errorCodes)。
+// handler 一律輸出 enum;字串形式只在此出現。
+struct ErrName {
+    Err code;
+    const char* wire;
+};
 
-const char* preset_load_error_code(PresetLoadFailure failure) {
-    if (failure == PresetLoadFailure::kNotFound) return "plugin_not_found";
-    if (failure == PresetLoadFailure::kPluginStateFailed)
-        return "plugin_state_failed";
-    return "preset_io";
+constexpr ErrName kErrNames[] = {
+    {Err::kUnsupportedVersion, "unsupported_version"},
+    {Err::kBadFrame, "bad_frame"},
+    {Err::kBadCommand, "bad_command"},
+    {Err::kNotRunning, "not_running"},
+    {Err::kAlreadyRunning, "already_running"},
+    {Err::kDeviceOpenFailed, "device_open_failed"},
+    {Err::kDeviceLost, "device_lost"},
+    {Err::kTrackNotFound, "track_not_found"},
+    {Err::kCycleDetected, "cycle_detected"},
+    {Err::kDeviceBusy, "device_busy"},
+    {Err::kAppNotFound, "app_not_found"},
+    {Err::kUnsupportedWindows, "unsupported_windows"},
+    {Err::kPluginNotFound, "plugin_not_found"},
+    {Err::kPluginLoadFailed, "plugin_load_failed"},
+    {Err::kPluginNoEditor, "plugin_no_editor"},
+    {Err::kParamNotFound, "param_not_found"},
+    {Err::kSessionIo, "session_io"},
+    {Err::kPresetIo, "preset_io"},
+    {Err::kPluginStateFailed, "plugin_state_failed"},
+    {Err::kInternal, "internal"},
+};
+
+const char* to_code(Err code) {
+    for (const auto& entry : kErrNames)
+        if (entry.code == code) return entry.wire;
+    return "internal";
 }
 
 }  // namespace
@@ -145,7 +167,7 @@ bool Router::dispatch(std::uint64_t generation, const Command& command) {
     const auto reply_epoch = epoch_;
     const auto found = routes().find(command.kind);
     Outcome outcome = found == routes().end()
-                          ? failure("internal", command.kind + " not implemented yet (M2)")
+                          ? failure(Err::kInternal, command.kind + " not implemented yet (M2)")
                           : found->second(*this, command.payload);
     const bool should_shutdown = outcome.shutdown;
     complete(generation, command, reply_epoch, std::move(outcome));
@@ -215,9 +237,13 @@ const std::unordered_map<std::string, Router::Route>& Router::routes() {
 void Router::complete(std::uint64_t generation, const Command& command,
                       std::uint64_t reply_epoch, Outcome outcome) {
     if (!outcome.ok) {
-        send_to(generation, make_reply_err(command.id, reply_epoch,
-                                           std::move(outcome.error_code),
-                                           std::move(outcome.error_message)));
+        const char* wire = to_code(outcome.error.code);
+        // contract errors 清單執法:code 必須屬於該指令宣告集;違反 = handler 分類
+        // bug,debug build 中止,release 零開銷(NDEBUG)
+        assert(rmx::contract::is_declared_error(command.kind, wire) &&
+               "error code not declared for this command (see contracts/command_contract.json)");
+        send_to(generation, make_reply_err(command.id, reply_epoch, wire,
+                                           std::move(outcome.error.message)));
         if (outcome.push_status_on_error)
             send_to(generation,
                     make_event("status", session::status_json(engine_, revision_)));
@@ -256,14 +282,16 @@ Router::Outcome Router::success(nlohmann::json result, Effect effect) {
     return outcome;
 }
 
-Router::Outcome Router::failure(std::string code, std::string message,
-                                bool push_status) {
+Router::Outcome Router::failure(Failure failure_value, bool push_status) {
     Outcome outcome;
     outcome.ok = false;
-    outcome.error_code = std::move(code);
-    outcome.error_message = std::move(message);
+    outcome.error = std::move(failure_value);
     outcome.push_status_on_error = push_status;
     return outcome;
+}
+
+Router::Outcome Router::failure(Err code, std::string message, bool push_status) {
+    return failure(Failure{code, std::move(message)}, push_status);
 }
 
 Router::EffectPolicy Router::policy_for(Effect effect) {
@@ -453,10 +481,9 @@ Router::Outcome Router::handle_list_render_devices(const EmptyRequest&) {
 
 Router::Outcome Router::handle_start(const StartRequest& request) {
     if (engine_.status().running)
-        return failure("already_running", "engine already running");
-    std::string error;
-    if (!engine_.start(request.device_key, request.sample_rate, request.buffer_size, error))
-        return failure("device_open_failed", std::move(error), true);
+        return failure(Err::kAlreadyRunning, "engine already running");
+    if (auto fail = engine_.start(request.device_key, request.sample_rate, request.buffer_size))
+        return failure(std::move(*fail), true);
     return success(session::status_json(engine_, revision_), Effect::kStatus);
 }
 
@@ -467,16 +494,15 @@ Router::Outcome Router::handle_stop(const EmptyRequest&) {
 
 Router::Outcome Router::handle_open_device_panel(const EmptyRequest&) {
     if (!engine_.status().running)
-        return failure("not_running", "engine not running");
+        return failure(Err::kNotRunning, "engine not running");
     std::uint64_t generation = 0;
     {
         std::lock_guard<std::mutex> lock(connection_mutex_);
         generation = connection_generation_;
     }
     std::thread([this, generation] {
-        std::string error;
-        if (!engine_.open_control_panel(error)) {
-            std::fprintf(stderr, "[engine] open panel failed: %s\n", error.c_str());
+        if (auto fail = engine_.open_control_panel()) {
+            std::fprintf(stderr, "[engine] open panel failed: %s\n", fail->message.c_str());
             return;
         }
         send_to(generation, make_event("devices_changed", nlohmann::json::object()));
@@ -486,64 +512,52 @@ Router::Outcome Router::handle_open_device_panel(const EmptyRequest&) {
 
 Router::Outcome Router::handle_track_add(const TrackAddRequest& request) {
     std::uint32_t track_id = 0;
-    std::string error;
-    if (!engine_.track_add(request.kind, request.name, request.color, track_id, error))
-        return failure("bad_command", std::move(error));
+    if (auto fail = engine_.track_add(request.kind, request.name, request.color, track_id))
+        return failure(std::move(*fail));
     return success({{"trackId", track_id}, {"tracks", session::tracks_json(engine_)}},
                    Effect::kDirty);
 }
 
 Router::Outcome Router::handle_track_remove(const TrackIdRequest& request) {
-    std::string error;
-    if (!engine_.track_remove(request.track_id, error))
-        return failure("track_not_found", std::move(error));
+    if (auto fail = engine_.track_remove(request.track_id)) return failure(std::move(*fail));
     return success({{"tracks", session::tracks_json(engine_)}}, Effect::kDirty);
 }
 
 Router::Outcome Router::handle_track_set(const TrackSetRequest& request) {
-    std::string error;
-    if (!engine_.track_set(request.track_id, request.name, request.color,
-                           request.gain, request.mute, error))
-        return failure("bad_command", std::move(error));
+    if (auto fail = engine_.track_set(request.track_id, request.name, request.color,
+                                      request.gain, request.mute))
+        return failure(std::move(*fail));
     return success({{"tracks", session::tracks_json(engine_)}}, Effect::kDirty);
 }
 
 Router::Outcome Router::handle_track_set_source(const TrackSourceRequest& request) {
-    std::string error;
-    std::string code = "bad_command";
-    if (!engine_.track_set_source(request.track_id, request.source, error, code))
-        return failure(std::move(code), std::move(error), true);
+    if (auto fail = engine_.track_set_source(request.track_id, request.source))
+        return failure(std::move(*fail), true);
     return success({{"tracks", session::tracks_json(engine_)}}, Effect::kDirty);
 }
 
 Router::Outcome Router::handle_track_set_dests(const TrackDestsRequest& request) {
-    std::string error;
-    std::string code = "bad_command";
-    if (!engine_.track_set_dests(request.track_id, request.dests, error, code))
-        return failure(std::move(code), std::move(error), true);
+    if (auto fail = engine_.track_set_dests(request.track_id, request.dests))
+        return failure(std::move(*fail), true);
     return success({{"tracks", session::tracks_json(engine_)}}, Effect::kDirty);
 }
 
 Router::Outcome Router::handle_track_set_output(const TrackOutputRequest& request) {
-    std::string error;
-    std::string code = "bad_command";
-    if (!engine_.track_set_output(request.track_id, request.output, error, code))
-        return failure(std::move(code), std::move(error), true);
+    if (auto fail = engine_.track_set_output(request.track_id, request.output))
+        return failure(std::move(*fail), true);
     return success({{"tracks", session::tracks_json(engine_)}}, Effect::kDirty);
 }
 
 Router::Outcome Router::handle_track_set_output_latency_policy(
     const TrackOutputLatencyPolicyRequest& request) {
-    std::string error;
-    if (!engine_.track_set_output_latency_policy(request.track_id, request.policy, error))
-        return failure("bad_command", std::move(error));
+    if (auto fail = engine_.track_set_output_latency_policy(request.track_id, request.policy))
+        return failure(std::move(*fail));
     return success({{"tracks", session::tracks_json(engine_)}}, Effect::kDirty);
 }
 
 Router::Outcome Router::handle_track_move(const TrackMoveRequest& request) {
-    std::string error;
-    if (!engine_.track_move(request.track_id, request.new_index, error))
-        return failure("bad_command", std::move(error));
+    if (auto fail = engine_.track_move(request.track_id, request.new_index))
+        return failure(std::move(*fail));
     return success({{"tracks", session::tracks_json(engine_)}}, Effect::kDirty);
 }
 
@@ -589,11 +603,11 @@ Router::Outcome Router::handle_add_plugin(const AddPluginRequest& request) {
     std::string error;
     if (session::preflight_plugin(engine_, request.path, request.class_id, error) !=
         sandbox::PreflightFailure::kNone)
-        return failure("plugin_load_failed", std::move(error));
+        return failure(Err::kPluginLoadFailed, std::move(error));
     std::uint32_t instance_id = 0;
-    if (!engine_.add_plugin(request.track_id, request.path, request.class_id,
-                            instance_id, error))
-        return failure("plugin_load_failed", std::move(error));
+    if (auto fail = engine_.add_plugin(request.track_id, request.path, request.class_id,
+                                       instance_id))
+        return failure(std::move(*fail));
     return success({{"instanceId", instance_id},
                     {"trackId", request.track_id},
                     {"tracks", session::tracks_json(engine_)}},
@@ -601,32 +615,21 @@ Router::Outcome Router::handle_add_plugin(const AddPluginRequest& request) {
 }
 
 Router::Outcome Router::handle_remove_plugin(const InstanceRequest& request) {
-    std::string error;
-    PluginMutationFailure mutation_failure = PluginMutationFailure::kNone;
-    if (!engine_.remove_plugin(request.instance_id, error, &mutation_failure))
-        return failure(plugin_mutation_error_code(mutation_failure), std::move(error));
+    if (auto fail = engine_.remove_plugin(request.instance_id))
+        return failure(std::move(*fail));
     return success({{"tracks", session::tracks_json(engine_)}}, Effect::kDirty);
 }
 
 Router::Outcome Router::handle_move_plugin(const MovePluginRequest& request) {
-    std::string error;
-    if (!engine_.move_plugin(request.instance_id, request.new_index, error))
-        return failure("bad_command", std::move(error));
+    if (auto fail = engine_.move_plugin(request.instance_id, request.new_index))
+        return failure(std::move(*fail));
     return success({{"tracks", session::tracks_json(engine_)}}, Effect::kDirty);
 }
 
 Router::Outcome Router::handle_bypass(const BypassRequest& request, bool monitor) {
-    std::string error;
-    PluginMutationFailure mutation_failure = PluginMutationFailure::kNone;
-    const bool changed = monitor
-                             ? engine_.set_monitor_bypass(request.instance_id,
-                                                          request.bypassed, error,
-                                                          &mutation_failure)
-                             : engine_.set_bypass(request.instance_id,
-                                                  request.bypassed, error,
-                                                  &mutation_failure);
-    if (!changed)
-        return failure(plugin_mutation_error_code(mutation_failure), std::move(error));
+    auto fail = monitor ? engine_.set_monitor_bypass(request.instance_id, request.bypassed)
+                        : engine_.set_bypass(request.instance_id, request.bypassed);
+    if (fail) return failure(std::move(*fail));
     return success({{"tracks", session::tracks_json(engine_)}}, Effect::kDirty);
 }
 
@@ -640,34 +643,32 @@ Router::Outcome Router::handle_set_monitor_bypass(const BypassRequest& request) 
 
 Router::Outcome Router::handle_retry_plugin(const RetryPluginRequest& request) {
     const auto* slot = engine_.find_slot(request.instance_id);
-    if (slot == nullptr) return failure("plugin_not_found", "unknown instanceId");
+    if (slot == nullptr) return failure(Err::kPluginNotFound, "unknown instanceId");
     if (!slot->is_placeholder())
-        return failure("bad_command", "instance is not a placeholder");
+        return failure(Err::kBadCommand, "instance is not a placeholder");
     const std::string module_path =
         request.path ? *request.path : slot->module_path;
     const std::string class_id = slot->class_id;
     std::string error;
     if (session::preflight_plugin(engine_, module_path, class_id, error) !=
         sandbox::PreflightFailure::kNone)
-        return failure("plugin_load_failed", std::move(error));
-    if (!engine_.load_placeholder(request.instance_id, module_path, class_id, error))
-        return failure("plugin_load_failed", std::move(error));
+        return failure(Err::kPluginLoadFailed, std::move(error));
+    if (auto fail = engine_.load_placeholder(request.instance_id, module_path, class_id))
+        return failure(std::move(*fail));
     return success({{"instanceId", request.instance_id},
                     {"tracks", session::tracks_json(engine_)}},
                    Effect::kDirty);
 }
 
 Router::Outcome Router::handle_set_param(const SetParamRequest& request) {
-    std::string error;
-    if (!engine_.set_param(request.instance_id, request.param_id, request.value,
-                           error))
-        return failure("param_not_found", std::move(error));
+    if (auto fail = engine_.set_param(request.instance_id, request.param_id, request.value))
+        return failure(std::move(*fail));
     return success(nlohmann::json::object(), Effect::kSilentDirty);
 }
 
 Router::Outcome Router::handle_get_params(const InstanceRequest& request) {
     const auto* slot = engine_.find_slot(request.instance_id);
-    if (slot == nullptr) return failure("plugin_not_found", "unknown instanceId");
+    if (slot == nullptr) return failure(Err::kPluginNotFound, "unknown instanceId");
     if (slot->plugin == nullptr)
         return success({{"instanceId", slot->instance_id},
                         {"params", nlohmann::json::array()}});
@@ -688,56 +689,50 @@ Router::Outcome Router::handle_get_params(const InstanceRequest& request) {
 
 Router::Outcome Router::handle_open_editor(const InstanceRequest& request) {
     const auto* slot = engine_.find_slot(request.instance_id);
-    if (slot == nullptr) return failure("plugin_not_found", "unknown instanceId");
+    if (slot == nullptr) return failure(Err::kPluginNotFound, "unknown instanceId");
     if (slot->plugin == nullptr)
-        return failure("plugin_no_editor", "plugin not loaded (placeholder)");
+        return failure(Err::kPluginNoEditor, "plugin not loaded (placeholder)");
     std::string error;
     if (!EditorHost::instance().open(request.instance_id, error))
-        return failure("plugin_no_editor", std::move(error));
+        return failure(Err::kPluginNoEditor, std::move(error));
     return success({{"instanceId", request.instance_id}, {"editor", true}});
 }
 
 Router::Outcome Router::handle_close_editor(const InstanceRequest& request) {
     const auto* slot = engine_.find_slot(request.instance_id);
-    if (slot == nullptr) return failure("plugin_not_found", "unknown instanceId");
+    if (slot == nullptr) return failure(Err::kPluginNotFound, "unknown instanceId");
     EditorHost::instance().close(slot->instance_id);
     return success();
 }
 
 Router::Outcome Router::handle_save_preset(const PresetRequest& request) {
     if (engine_.find_slot(request.instance_id) == nullptr)
-        return failure("plugin_not_found", "unknown instanceId");
-    std::string error;
-    if (!engine_.save_preset(request.instance_id,
-                             std::filesystem::path(request.path), error))
-        return failure("preset_io", std::move(error));
+        return failure(Err::kPluginNotFound, "unknown instanceId");
+    if (auto fail = engine_.save_preset(request.instance_id,
+                                        std::filesystem::path(request.path)))
+        return failure(std::move(*fail));
     return success({{"savedPath", request.path}});
 }
 
 Router::Outcome Router::handle_load_preset(const PresetRequest& request) {
-    std::string error;
-    PresetLoadFailure load_failure = PresetLoadFailure::kNone;
-    if (!engine_.load_preset(request.instance_id,
-                             std::filesystem::path(request.path), error,
-                             &load_failure))
-        return failure(preset_load_error_code(load_failure), std::move(error));
+    if (auto fail = engine_.load_preset(request.instance_id,
+                                        std::filesystem::path(request.path)))
+        return failure(std::move(*fail));
     return success({{"tracks", session::tracks_json(engine_)}}, Effect::kDirty);
 }
 
 Router::Outcome Router::handle_save_session(const SaveSessionRequest& request) {
     const auto file = request.path ? std::filesystem::path(*request.path)
                                    : session::default_path();
-    std::string error;
-    if (!session::save(engine_, file, error, request.overrides_json()))
-        return failure("session_io", std::move(error));
+    if (auto fail = session::save(engine_, file, request.overrides_json()))
+        return failure(std::move(*fail));
     return success({{"savedPath", file.string()}, {"revision", revision_}});
 }
 
 Router::Outcome Router::handle_load_session(const LoadSessionRequest& request) {
     nlohmann::json applied;
-    std::string error;
-    if (!session::load(engine_, request.path, applied, error))
-        return failure("session_io", std::move(error));
+    if (auto fail = session::load(engine_, request.path, applied))
+        return failure(std::move(*fail));
     applied["revision"] = revision_ + 1;
     return success(std::move(applied), Effect::kDirty);
 }
@@ -763,24 +758,23 @@ Router::Outcome Router::handle_shutdown_engine(const EmptyRequest&) {
 
 void Router::handle_host_command(const EditorHostCmd& command) {
     std::lock_guard<std::mutex> lock(engine_mutex_);
-    std::string error;
     Effect effect = Effect::kNone;
     if (command.kind == kHostBypass) {
         const auto* slot = engine_.find_slot(command.instance_id);
         if (slot == nullptr) return;
-        effect = engine_.set_bypass(command.instance_id, !slot->bypass, error)
+        effect = engine_.set_bypass(command.instance_id, !slot->bypass)
                      ? Effect::kDirty
                      : Effect::kStatus;
     } else if (command.kind == kHostPreset) {
         if (engine_.find_slot(command.instance_id) == nullptr) return;
         effect = engine_.load_preset(command.instance_id,
-                                     std::filesystem::path(command.path), error)
+                                     std::filesystem::path(command.path))
                      ? Effect::kDirty
                      : Effect::kStatus;
     } else if (command.kind == kHostSavePreset) {
         if (engine_.find_slot(command.instance_id) == nullptr) return;
         (void)engine_.save_preset(command.instance_id,
-                                  std::filesystem::path(command.path), error);
+                                  std::filesystem::path(command.path));
         effect = Effect::kStatus;
     } else {
         return;

@@ -391,8 +391,7 @@ struct EditorHost::Impl {
         // editor 內改參數 → performEdit → set_param 同語意(main thread,無並發)
         plugin->set_param_callback(
             [eng = engine, id](std::uint32_t param_id, double value) {
-                std::string e;
-                eng->set_param(id, param_id, value, e);
+                (void)eng->set_param(id, param_id, value);
             });
         int w = 0, h = 0;
         if (!plugin->attach_editor(client, frame.get(), w, h)) {

@@ -136,6 +136,16 @@ bool is_error_code(const std::string& code) {
 
 bool is_event_kind(const std::string& kind) { return find_kind("events", kind) != nullptr; }
 
+// 指令錯誤回覆的執法表:code 必須屬於該指令宣告的 errors 清單。
+// 未知 kind(contract 之外,如 dispatch 前 unsupported_version 路徑)= 跳過。
+bool is_declared_error(const std::string& kind, const std::string& code) {
+    const auto* command = find_kind("commands", kind);
+    if (command == nullptr) return true;
+    for (const auto& declared : command->at("errors"))
+        if (declared == code) return true;
+    return false;
+}
+
 void validate_command_payload(const std::string& kind, const nlohmann::json& payload) {
     const auto* command = find_kind("commands", kind);
     if (command == nullptr) invalid("kind", "is unknown: " + kind);

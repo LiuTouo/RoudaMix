@@ -261,6 +261,7 @@ add_test(NAME telemetry_strip_contract COMMAND telemetry_strip_contract_test)
 # Deterministic test-only VST3：可切 latency、送 kLatencyChanged、耗 CPU、process fail。
 add_library(rmx_latency_fixture MODULE
     tests/latency_fixture_vst3.cpp
+    ${VST3_SDK_DIR}/base/source/fdebug.cpp
     ${VST3_SDK_DIR}/base/source/fobject.cpp
     ${VST3_SDK_DIR}/base/source/fstring.cpp
     ${VST3_SDK_DIR}/base/source/updatehandler.cpp

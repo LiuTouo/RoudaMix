@@ -368,18 +368,14 @@ void AudioEngine::handle_track_failed(std::uint32_t track_id) {
     }
 }
 
-bool AudioEngine::start(const std::string& device_key,
-                        std::optional<std::uint32_t> sample_rate,
-                        std::optional<std::uint32_t> buffer_size, std::string& err) {
-    if (device_.running()) {
-        err = "already running";
-        return false;
-    }
+std::optional<Failure> AudioEngine::start(const std::string& device_key,
+                                          std::optional<std::uint32_t> sample_rate,
+                                          std::optional<std::uint32_t> buffer_size) {
+    if (device_.running())
+        return failure(Err::kAlreadyRunning, "already running");
     // 面板開著時 driver 不能重開(controlPanel 多為 modal,detach thread 還在裡面)
-    if (panel_open_.load(std::memory_order_acquire) > 0) {
-        err = "hardware panel is open; close it first";
-        return false;
-    }
+    if (panel_open_.load(std::memory_order_acquire) > 0)
+        return failure(Err::kDeviceOpenFailed, "hardware panel is open; close it first");
     // 換裝置或換取樣率:整個 driver 重開。部分 driver(SSL 實測)在已 init 的
     // instance 上 setSampleRate 回 OK 但 callback 從此不來 —— 重 init 才是真換率
     if (!device_.clsid().empty() &&
@@ -388,7 +384,8 @@ bool AudioEngine::start(const std::string& device_key,
           *sample_rate != device_.capability().current_sample_rate))) {
         device_.close();
     }
-    if (!device_.probe(device_key, err)) return false;
+    std::string err;
+    if (!device_.probe(device_key, err)) return failure(Err::kDeviceOpenFailed, std::move(err));
     const auto& cap = device_.capability();
     const std::uint32_t rate = sample_rate.value_or(cap.current_sample_rate);
     const std::uint32_t buffer = buffer_size.value_or(0);  // 0 = driver preferred
@@ -399,7 +396,7 @@ bool AudioEngine::start(const std::string& device_key,
 
     if (!device_.prepare(rate, in_chans, out_chans, buffer, err)) {
         device_.close();
-        return false;
+        return failure(Err::kDeviceOpenFailed, std::move(err));
     }
     device_.set_callback(this);
 
@@ -427,13 +424,11 @@ bool AudioEngine::start(const std::string& device_key,
     for (auto& t : tracks_) {
         if (t.source.type == TrackSource::kApp) {
             stop_capture(t);
-            std::string cap_err;
-            (void)ensure_capture(t, rate, cap_err);
+            (void)ensure_capture(t, rate);
         }
         if (t.output.type == TrackOutput::kWasapiRender) {
             stop_render(t);
-            std::string ren_err;
-            (void)ensure_render(t, rate, ren_err);
+            (void)ensure_render(t, rate);
         }
     }
 
@@ -446,45 +441,43 @@ bool AudioEngine::start(const std::string& device_key,
             if (!slot.plugin) continue;
             slot.plugin->terminate();
             if (!slot.plugin->initialize(static_cast<double>(rate), device_.block_size())) {
-                err = "plugin '" + slot.name + "' init failed: " + slot.plugin->last_error();
-                return false;  // rollback guard 收 capture/render/plugin/device
+                return failure(Err::kDeviceOpenFailed,
+                               "plugin '" + slot.name + "' init failed: " +
+                                   slot.plugin->last_error());  // rollback guard 收 capture/render/plugin/device
             }
             refresh_latency(slot);
             if (slot.monitor_shadow) {
                 slot.monitor_shadow->terminate();
                 if (!slot.monitor_shadow->initialize(static_cast<double>(rate),
                                                      device_.block_size())) {
-                    err = "monitor shadow '" + slot.name + "' init failed: " +
-                          slot.monitor_shadow->last_error();
-                    return false;
+                    return failure(Err::kDeviceOpenFailed,
+                                   "monitor shadow '" + slot.name + "' init failed: " +
+                                       slot.monitor_shadow->last_error());
                 }
                 if (!pre_roll_shadow(*slot.monitor_shadow, slot.param_values, rate,
                                      device_.block_size(), err))
-                    return false;
+                    return failure(Err::kDeviceOpenFailed, std::move(err));
                 slot.monitor_latency_samples = slot.monitor_shadow->latency_samples();
                 slot.monitor_latency_known = true;
             }
         }
     }
     rt_sample_rate_.store(rate, std::memory_order_relaxed);
-    if (!swap_graph()) {
-        err = "PDC plan exceeds latency or memory safety limits";
-        return false;
-    }
+    if (!swap_graph())
+        return failure(Err::kDeviceOpenFailed,
+                       "PDC plan exceeds latency or memory safety limits");
 
     const std::uint64_t callbacks_before = device_.callbacks();
-    if (!device_.start(err)) {
-        err = std::string("ASIO start failed after rack ready: ") + err;
-        return false;
-    }
+    if (!device_.start(err))
+        return failure(Err::kDeviceOpenFailed,
+                       std::string("ASIO start failed after rack ready: ") + err);
     // SSL 這類 driver:start() 回 OK 但硬體時脈沒換時 callback 從不來(死流)。
     // 短等驗證沒 callback 就明確失敗,引導用硬體面板改率(600ms:Start 鍵可感知延遲)
     Sleep(600);
-    if (device_.callbacks() == callbacks_before) {
-        err = "driver did not deliver audio callbacks at " + std::to_string(rate) +
-              " Hz; open hardware panel, set rate there, then Start again";
-        return false;
-    }
+    if (device_.callbacks() == callbacks_before)
+        return failure(Err::kDeviceOpenFailed,
+                       "driver did not deliver audio callbacks at " + std::to_string(rate) +
+                           " Hz; open hardware panel, set rate there, then Start again");
     rollback.armed = false;
 
     rt_sample_rate_.store(rate, std::memory_order_relaxed);
@@ -559,7 +552,7 @@ bool AudioEngine::start(const std::string& device_key,
             }
         });
     }
-    return true;
+    return std::nullopt;
 }
 
 void AudioEngine::stop() noexcept {
@@ -842,8 +835,7 @@ void AudioEngine::handle_latency_changed(std::uint32_t instance_id, bool monitor
         slot->monitor_latency_samples = slot->monitor_shadow->latency_samples();
         slot->monitor_latency_known = true;
         slot->monitor_state = RackSlot::RuntimeState::kActive;
-        std::string prepare_error;
-        if (!prepare_monitor_variants(prepare_error))
+        if (prepare_monitor_variants())
             slot->monitor_state = RackSlot::RuntimeState::kDegraded;
         if (!swap_graph()) {
             // Shadow-only 超限只讓 low-latency variant 走 dry；primary Stream 保留。
@@ -864,8 +856,7 @@ void AudioEngine::handle_latency_changed(std::uint32_t instance_id, bool monitor
     slot->latency_samples = slot->plugin->latency_samples();
     slot->latency_known = true;
     slot->primary_state = RackSlot::RuntimeState::kActive;
-    std::string prepare_error;
-    if (!prepare_monitor_variants(prepare_error))
+    if (prepare_monitor_variants())
         slot->primary_state = RackSlot::RuntimeState::kSuspended;
     if (!swap_graph()) {
         // Runtime primary 超限不是使用者 transaction：保留觀察值但 suspend
@@ -880,15 +871,14 @@ void AudioEngine::handle_latency_changed(std::uint32_t instance_id, bool monitor
     }
 }
 
-bool AudioEngine::ensure_monitor_shadows(std::string& err) {
+std::optional<Failure> AudioEngine::ensure_monitor_shadows() {
     const auto rate = rt_sample_rate_.load(std::memory_order_relaxed);
     const std::uint64_t plan_rate =
         rate > 0 ? rate : (last_sample_rate_ > 0 ? last_sample_rate_ : 48000u);
     const auto plan = route_plan_for_tracks(tracks_, plan_rate);
-    if (!plan.ok()) {
-        err = "PDC plan exceeds latency or memory safety limits";
-        return false;
-    }
+    if (!plan.ok())
+        return failure(Err::kPluginStateFailed,
+                       "PDC plan exceeds latency or memory safety limits");
     struct PendingShadow {
         RackSlot* slot{};
         std::shared_ptr<Vst3Plugin> plugin;
@@ -909,39 +899,37 @@ bool AudioEngine::ensure_monitor_shadows(std::string& err) {
             if (disposition != ShadowDisposition::kCreate || slot.plugin == nullptr)
                 continue;
             auto shadow = std::make_shared<Vst3Plugin>(slot.module_path, slot.class_id);
-            if (!shadow->loaded()) {
-                err = "monitor shadow load failed for '" + slot.name + "': " +
-                      shadow->last_error();
-                return false;
-            }
+            if (!shadow->loaded())
+                return failure(Err::kPluginStateFailed,
+                               "monitor shadow load failed for '" + slot.name + "': " +
+                                   shadow->last_error());
             Vst3RuntimeState state;
             std::string state_err;
-            if (!slot.plugin->capture_runtime_state(state, state_err)) {
-                err = "monitor shadow state capture failed for '" + slot.name + "': " + state_err;
-                return false;
-            }
-            if (!shadow->restore_runtime_state(state, state_err)) {
-                err = "monitor shadow state restore failed for '" + slot.name + "': " + state_err;
-                return false;
-            }
+            if (!slot.plugin->capture_runtime_state(state, state_err))
+                return failure(Err::kPluginStateFailed,
+                               "monitor shadow state capture failed for '" + slot.name +
+                                   "': " + state_err);
+            if (!shadow->restore_runtime_state(state, state_err))
+                return failure(Err::kPluginStateFailed,
+                               "monitor shadow state restore failed for '" + slot.name +
+                                   "': " + state_err);
             if (device_.running() &&
                 !shadow->initialize(
                     static_cast<double>(rt_sample_rate_.load(std::memory_order_relaxed)),
-                    device_.block_size())) {
-                err = "monitor shadow init failed for '" + slot.name + "': " +
-                      shadow->last_error();
-                return false;
-            }
+                    device_.block_size()))
+                return failure(Err::kPluginStateFailed,
+                               "monitor shadow init failed for '" + slot.name + "': " +
+                                   shadow->last_error());
             for (const auto& [id, value] : slot.param_values) {
                 shadow->set_param_normalized(id, value);
             }
             if (device_.running() &&
                 !pre_roll_shadow(*shadow, slot.param_values,
                                  rt_sample_rate_.load(std::memory_order_relaxed),
-                                 device_.block_size(), state_err)) {
-                err = "monitor shadow pre-roll failed for '" + slot.name + "': " + state_err;
-                return false;
-            }
+                                 device_.block_size(), state_err))
+                return failure(Err::kPluginStateFailed,
+                               "monitor shadow pre-roll failed for '" + slot.name + "': " +
+                                   state_err);
             const auto mailbox = slot.latency_change_mailbox;
             shadow->set_latency_changed_callback([mailbox] {
                 if (mailbox != nullptr)
@@ -966,10 +954,10 @@ bool AudioEngine::ensure_monitor_shadows(std::string& err) {
         for (const auto& [id, value] : item.slot->param_values)
             item.slot->monitor_ring->push({id, value});
     }
-    return true;
+    return std::nullopt;
 }
 
-bool AudioEngine::prepare_monitor_variants(std::string& err) {
+std::optional<Failure> AudioEngine::prepare_monitor_variants() {
     const auto rate = rt_sample_rate_.load(std::memory_order_relaxed);
     const std::uint64_t plan_rate =
         rate > 0 ? rate : (last_sample_rate_ > 0 ? last_sample_rate_ : 48000u);
@@ -984,17 +972,16 @@ bool AudioEngine::prepare_monitor_variants(std::string& err) {
     if (device_.running() && missing) {
         // 只在 RT snapshot 暫時 bypass；master/user intent 不變，失敗時不用
         // 回填整份 bypass vector，也不會污染 Session dirty 狀態。
-        if (!swap_safety_graph()) {
-            err = "cannot prepare monitor shadow safety graph";
-            return false;
-        }
+        if (!swap_safety_graph())
+            return failure(Err::kPluginStateFailed,
+                           "cannot prepare monitor shadow safety graph");
         Sleep(60);
     }
-    if (!ensure_monitor_shadows(err)) {
+    if (auto fail = ensure_monitor_shadows()) {
         if (device_.running()) (void)swap_graph();
-        return false;
+        return fail;
     }
-    return true;
+    return std::nullopt;
 }
 
 void AudioEngine::retire_graph() noexcept {
@@ -1082,8 +1069,8 @@ bool AudioEngine::asio_out_pair_busy(std::uint32_t ch, std::uint32_t except_trac
     return false;
 }
 
-bool AudioEngine::track_add(TrackKind kind, const std::string& name, std::uint32_t color,
-                            std::uint32_t& track_id, std::string& err) {
+std::optional<Failure> AudioEngine::track_add(TrackKind kind, const std::string& name,
+                                              std::uint32_t color, std::uint32_t& track_id) {
     TrackNode t;
     t.kind = kind;
     t.track_id = next_track_id_++;
@@ -1102,23 +1089,20 @@ bool AudioEngine::track_add(TrackKind kind, const std::string& name, std::uint32
     track_id = t.track_id;
     tracks_.push_back(std::move(t));
     swap_graph();
-    return true;
+    return std::nullopt;
 }
 
-bool AudioEngine::track_remove(std::uint32_t track_id, std::string& err) {
+std::optional<Failure> AudioEngine::track_remove(std::uint32_t track_id) {
     auto it = std::find_if(tracks_.begin(), tracks_.end(),
                            [&](const TrackNode& t) { return t.track_id == track_id; });
-    if (it == tracks_.end()) {
-        err = "unknown trackId " + std::to_string(track_id);
-        return false;
-    }
+    if (it == tracks_.end())
+        return failure(Err::kTrackNotFound, "unknown trackId " + std::to_string(track_id));
     // 系統輸出(monitor/stream)不可刪:每個 session 必須恰好各一條(engine 端
     // 權威驗證,不靠 UI);UI 也隱藏移除鈕
-    if (it->system_role != SystemRole::kNone) {
-        err = std::string("system ") + system_role_str(it->system_role) +
-              " output cannot be removed (rename or re-route it instead)";
-        return false;
-    }
+    if (it->system_role != SystemRole::kNone)
+        return failure(Err::kTrackNotFound,
+                       std::string("system ") + system_role_str(it->system_role) +
+                           " output cannot be removed (rename or re-route it instead)");
     // 該軌的 plugin editor 先收(editor 與 dispatch 同在 main thread,無並發)
     for (auto& slot : it->chain) {
         if (slot.plugin && slot.plugin->editor_open()) slot.plugin->close_editor();
@@ -1131,139 +1115,97 @@ bool AudioEngine::track_remove(std::uint32_t track_id, std::string& err) {
         t.dests.erase(std::remove(t.dests.begin(), t.dests.end(), track_id), t.dests.end());
     }
     swap_graph();
-    return true;
+    return std::nullopt;
 }
 
-bool AudioEngine::track_set(std::uint32_t track_id, std::optional<std::string> name,
-                            std::optional<std::uint32_t> color, std::optional<float> gain,
-                            std::optional<bool> mute, std::string& err) {
+std::optional<Failure> AudioEngine::track_set(std::uint32_t track_id, std::optional<std::string> name,
+                                              std::optional<std::uint32_t> color,
+                                              std::optional<float> gain,
+                                              std::optional<bool> mute) {
     TrackNode* t = find_track_mut(track_id);
-    if (t == nullptr) {
-        err = "unknown trackId " + std::to_string(track_id);
-        return false;
-    }
+    if (t == nullptr)
+        return failure(Err::kBadCommand, "unknown trackId " + std::to_string(track_id));
     if (name && !name->empty()) t->name = *name;
     if (color) t->color = *color & 0xFFFFFF;
     if (gain) {
-        if (!std::isfinite(*gain) || *gain < 0.0F || *gain > 4.0F) {
-            err = "gain must be in [0, 4]";
-            return false;
-        }
+        if (!std::isfinite(*gain) || *gain < 0.0F || *gain > 4.0F)
+            return failure(Err::kBadCommand, "gain must be in [0, 4]");
         t->gain = *gain;
     }
     if (mute) t->mute = *mute;
     swap_graph();
-    return true;
+    return std::nullopt;
 }
 
-bool AudioEngine::track_set_output_latency_policy(std::uint32_t track_id,
-                                           OutputLatencyPolicy policy,
-                                           std::string& err) {
+std::optional<Failure> AudioEngine::track_set_output_latency_policy(std::uint32_t track_id,
+                                                                    OutputLatencyPolicy policy) {
     TrackNode* t = find_track_mut(track_id);
-    if (t == nullptr) {
-        err = "unknown trackId " + std::to_string(track_id);
-        return false;
-    }
-    if (t->kind != TrackKind::kOutput) {
-        err = "latency policy applies only to output tracks";
-        return false;
-    }
-    if (t->latency_policy == policy) return true;
+    if (t == nullptr)
+        return failure(Err::kBadCommand, "unknown trackId " + std::to_string(track_id));
+    if (t->kind != TrackKind::kOutput)
+        return failure(Err::kBadCommand, "latency policy applies only to output tracks");
+    if (t->latency_policy == policy) return std::nullopt;
     const auto previous = t->latency_policy;
     t->latency_policy = policy;
-    if (!prepare_monitor_variants(err)) {
+    // 本指令 contract 只宣告 bad_command;prepare 的 plugin-state 失敗也歸此類
+    if (auto fail = prepare_monitor_variants()) {
         t->latency_policy = previous;
-        std::string cleanup_error;
-        (void)ensure_monitor_shadows(cleanup_error);
+        (void)ensure_monitor_shadows();
         (void)swap_graph();
-        return false;
+        return failure(Err::kBadCommand, std::move(fail->message));
     }
     if (!swap_graph()) {
         t->latency_policy = previous;
-        std::string cleanup_error;
-        (void)ensure_monitor_shadows(cleanup_error);
+        (void)ensure_monitor_shadows();
         (void)swap_graph();
-        err = "PDC plan exceeds latency or memory safety limits";
-        return false;
+        return failure(Err::kBadCommand, "PDC plan exceeds latency or memory safety limits");
     }
-    return true;
+    return std::nullopt;
 }
 
-bool AudioEngine::track_set_source(std::uint32_t track_id, const TrackSource& source,
-                                   std::string& err, std::string& code) {
+std::optional<Failure> AudioEngine::track_set_source(std::uint32_t track_id,
+                                                     const TrackSource& source) {
     TrackNode* t = find_track_mut(track_id);
-    if (t == nullptr) {
-        err = "unknown trackId " + std::to_string(track_id);
-        code = "track_not_found";
-        return false;
-    }
+    if (t == nullptr)
+        return failure(Err::kTrackNotFound, "unknown trackId " + std::to_string(track_id));
     if (source.type == TrackSource::kApp) {
-        if (t->kind != TrackKind::kApp) {
-            err = "only app tracks take an app source";
-            code = "bad_command";
-            return false;
-        }
-        if (source.pid == 0 && source.app_name.empty()) {
-            err = "app source needs pid or name";
-            code = "bad_command";
-            return false;
-        }
-        if (source.pid != 0 && !process_exists(source.pid)) {
-            err = "process " + std::to_string(source.pid) + " not found";
-            code = "app_not_found";
-            return false;
-        }
+        if (t->kind != TrackKind::kApp)
+            return failure(Err::kBadCommand, "only app tracks take an app source");
+        if (source.pid == 0 && source.app_name.empty())
+            return failure(Err::kBadCommand, "app source needs pid or name");
+        if (source.pid != 0 && !process_exists(source.pid))
+            return failure(Err::kAppNotFound,
+                           "process " + std::to_string(source.pid) + " not found");
         t->source = source;
         stop_capture(*t);
         t->track_error.clear();
         // running 中即時啟動;失敗 = 命令失敗 + 回滾(未啟動 = start 時再試,軟失敗)
         if (device_.running()) {
             const auto rate = rt_sample_rate_.load(std::memory_order_relaxed);
-            std::string cap_err;
-            if (!ensure_capture(*t, rate, cap_err)) {
+            if (auto fail = ensure_capture(*t, rate)) {
                 t->source = TrackSource{};
-                err = cap_err;
-                code = cap_err.find("process loopback") != std::string::npos
-                           ? "unsupported_windows"
-                           : (cap_err.find("process not found") != std::string::npos
-                                  ? "app_not_found"
-                                  : "bad_command");
-                return false;
+                return fail;  // pump 已回報分類(unsupported_windows / app_not_found / …)
             }
         }
         swap_graph();
-        return true;
+        return std::nullopt;
     }
-    if (t->kind == TrackKind::kApp && source.type != TrackSource::kNone) {
-        err = "app track takes an app source";
-        code = "bad_command";
-        return false;
-    }
+    if (t->kind == TrackKind::kApp && source.type != TrackSource::kNone)
+        return failure(Err::kBadCommand, "app track takes an app source");
     // fx/output 軌沒有來源選擇(insert 型:上游 dest 指進來)
     if ((t->kind == TrackKind::kFx || t->kind == TrackKind::kOutput) &&
-        source.type != TrackSource::kNone) {
-        err = track_kind_str(t->kind) + std::string(" track has no source");
-        code = "bad_command";
-        return false;
-    }
+        source.type != TrackSource::kNone)
+        return failure(Err::kBadCommand,
+                       track_kind_str(t->kind) + std::string(" track has no source"));
     if (source.type == TrackSource::kSine &&
-        (source.sine_freq < 20.0F || source.sine_freq > 20000.0F)) {
-        err = "sine freq out of range [20,20000]";
-        code = "bad_command";
-        return false;
-    }
+        (source.sine_freq < 20.0F || source.sine_freq > 20000.0F))
+        return failure(Err::kBadCommand, "sine freq out of range [20,20000]");
     if (source.type == TrackSource::kAsioIn) {
-        if (asio_in_pair_busy(source.asio_in_ch, track_id)) {
-            err = "asio input pair already used by another track";
-            code = "device_busy";
-            return false;
-        }
+        if (asio_in_pair_busy(source.asio_in_ch, track_id))
+            return failure(Err::kDeviceBusy, "asio input pair already used by another track");
         if (!device_.capability().input_types.empty() &&
-            source.asio_in_ch + 1 >= device_.capability().input_types.size()) {
-            err = "asio input channel out of range";
-            code = "bad_command";
-            return false;
-        }
+            source.asio_in_ch + 1 >= device_.capability().input_types.size())
+            return failure(Err::kBadCommand, "asio input channel out of range");
     }
     const TrackSource prev = t->source;
     t->source = source;
@@ -1275,47 +1217,42 @@ bool AudioEngine::track_set_source(std::uint32_t track_id, const TrackSource& so
         if (!rebuild_asio_channels(rerr)) {
             t->source = prev;  // 回滾;失敗時串流已停,UI 顯示錯誤、Start 恢復
             swap_graph();
-            err = rerr;
-            code = "device_busy";
-            return false;
+            return failure(Err::kDeviceBusy, std::move(rerr));
         }
     }
     if (!swap_graph()) {
         t->source = prev;
-        err = "PDC plan exceeds latency or memory safety limits";
-        code = "bad_command";
-        return false;
+        return failure(Err::kBadCommand, "PDC plan exceeds latency or memory safety limits");
     }
-    return true;
+    return std::nullopt;
 }
 
 // M5b:capture 生命週期(控制面)。P1-C:pid==0(session 載入只帶名)= needsRebind
 // —— engine 不依 exe 名猜 PID(同名多程序會綁錯);UI 用程序選擇器讓使用者選。
-bool AudioEngine::ensure_capture(TrackNode& t, std::uint32_t dst_rate, std::string& err) {
+std::optional<Failure> AudioEngine::ensure_capture(TrackNode& t, std::uint32_t dst_rate) {
     std::uint32_t pid = t.source.pid;
     if (pid == 0) {
         t.track_error = "app source not bound: pick a process for this track" +
                         (t.source.app_name.empty() ? ""
                                                    : " (saved source: " + t.source.app_name + ")");
-        err = t.track_error;
-        return false;
+        return failure(Err::kBadCommand, t.track_error);
     }
     if (!process_exists(pid)) {
         t.track_error = "app not running" +
                         (t.source.app_name.empty() ? "" : ": " + t.source.app_name);
-        err = t.track_error;
-        return false;
+        return failure(Err::kAppNotFound, t.track_error);
     }
+    Failure pump_failure{};
     auto cap = AppCapture::create(pid, dst_rate, [this, tid = t.track_id] {
         if (capture_failed_cb_) capture_failed_cb_(tid);
-    }, err);
+    }, pump_failure);
     if (cap == nullptr) {
-        t.track_error = err;
-        return false;
+        t.track_error = pump_failure.message;
+        return pump_failure;  // pump 自己分類(unsupported_windows)
     }
     t.track_error.clear();
     t.capture = std::move(cap);
-    return true;
+    return std::nullopt;
 }
 
 void AudioEngine::stop_capture(TrackNode& t) noexcept {
@@ -1328,19 +1265,20 @@ void AudioEngine::stop_captures() noexcept {
 }
 
 // M5c:wasapi render sink 生命週期(同 capture 語意)
-bool AudioEngine::ensure_render(TrackNode& t, std::uint32_t src_rate, std::string& err) {
+std::optional<Failure> AudioEngine::ensure_render(TrackNode& t, std::uint32_t src_rate) {
+    Failure pump_failure{};
     auto sink = RenderSink::create(t.output.wasapi_id, src_rate,
                                    [this, tid = t.track_id] {
                                        if (capture_failed_cb_) capture_failed_cb_(tid);
                                    },
-                                   err);
+                                   pump_failure);
     if (sink == nullptr) {
-        t.track_error = err;
-        return false;
+        t.track_error = pump_failure.message;
+        return pump_failure;  // sink 自己分類(device_busy)
     }
     t.track_error.clear();
     t.render = std::move(sink);
-    return true;
+    return std::nullopt;
 }
 
 void AudioEngine::stop_render(TrackNode& t) noexcept {
@@ -1352,25 +1290,16 @@ void AudioEngine::stop_renders() noexcept {
     for (auto& t : tracks_) stop_render(t);
 }
 
-bool AudioEngine::track_set_dests(std::uint32_t track_id, std::vector<std::uint32_t> dests,
-                                  std::string& err, std::string& code) {
+std::optional<Failure> AudioEngine::track_set_dests(std::uint32_t track_id,
+                                                    std::vector<std::uint32_t> dests) {
     TrackNode* t = find_track_mut(track_id);
-    if (t == nullptr) {
-        err = "unknown trackId " + std::to_string(track_id);
-        code = "track_not_found";
-        return false;
-    }
+    if (t == nullptr)
+        return failure(Err::kTrackNotFound, "unknown trackId " + std::to_string(track_id));
     for (const auto d : dests) {
-        if (d == track_id) {
-            err = "track cannot route to itself";
-            code = "bad_command";
-            return false;
-        }
-        if (find_track_mut(d) == nullptr) {
-            err = "unknown dest trackId " + std::to_string(d);
-            code = "track_not_found";
-            return false;
-        }
+        if (d == track_id)
+            return failure(Err::kBadCommand, "track cannot route to itself");
+        if (find_track_mut(d) == nullptr)
+            return failure(Err::kTrackNotFound, "unknown dest trackId " + std::to_string(d));
     }
     std::sort(dests.begin(), dests.end());
     dests.erase(std::unique(dests.begin(), dests.end()), dests.end());
@@ -1379,84 +1308,56 @@ bool AudioEngine::track_set_dests(std::uint32_t track_id, std::vector<std::uint3
     t->dests = std::move(dests);
     if (graph_has_cycle(tracks_)) {
         t->dests = std::move(old);
-        err = "routing would create a cycle";
-        code = "cycle_detected";
-        return false;
+        return failure(Err::kCycleDetected, "routing would create a cycle");
     }
-    if (!prepare_monitor_variants(err)) {
+    if (auto fail = prepare_monitor_variants()) {
         t->dests = old;
-        std::string cleanup_error;
-        (void)ensure_monitor_shadows(cleanup_error);
+        (void)ensure_monitor_shadows();
         (void)swap_graph();
-        code = "plugin_state_failed";
-        return false;
+        return failure(Err::kPluginStateFailed, std::move(fail->message));
     }
     if (!swap_graph()) {
         t->dests = old;
-        std::string cleanup_error;
-        (void)ensure_monitor_shadows(cleanup_error);
-        err = "PDC plan exceeds latency or memory safety limits";
-        code = "bad_command";
-        return false;
+        (void)ensure_monitor_shadows();
+        return failure(Err::kBadCommand, "PDC plan exceeds latency or memory safety limits");
     }
-    return true;
+    return std::nullopt;
 }
 
-bool AudioEngine::track_set_output(std::uint32_t track_id, const TrackOutput& output,
-                                   std::string& err, std::string& code) {
+std::optional<Failure> AudioEngine::track_set_output(std::uint32_t track_id,
+                                                     const TrackOutput& output) {
     TrackNode* t = find_track_mut(track_id);
-    if (t == nullptr) {
-        err = "unknown trackId " + std::to_string(track_id);
-        code = "track_not_found";
-        return false;
-    }
-    if (t->kind != TrackKind::kOutput && output.type != TrackOutput::kNone) {
-        err = "only output tracks take a sink";
-        code = "bad_command";
-        return false;
-    }
+    if (t == nullptr)
+        return failure(Err::kTrackNotFound, "unknown trackId " + std::to_string(track_id));
+    if (t->kind != TrackKind::kOutput && output.type != TrackOutput::kNone)
+        return failure(Err::kBadCommand, "only output tracks take a sink");
     if (output.type == TrackOutput::kWasapiRender) {
-        if (output.wasapi_id.empty()) {
-            err = "wasapi deviceId empty";
-            code = "bad_command";
-            return false;
-        }
+        if (output.wasapi_id.empty())
+            return failure(Err::kBadCommand, "wasapi deviceId empty");
         // 裝置存在性:endpoint id 對得起來(不開 stream;真正開在 start)
         bool known = false;
         for (const auto& d : list_render_devices()) known = known || d.id == output.wasapi_id;
-        if (!known) {
-            err = "wasapi device not found: " + output.wasapi_id;
-            code = "device_busy";
-            return false;
-        }
+        if (!known)
+            return failure(Err::kDeviceBusy, "wasapi device not found: " + output.wasapi_id);
         t->output = output;
         t->track_error.clear();
         stop_render(*t);
         if (device_.running()) {
             const auto rate = rt_sample_rate_.load(std::memory_order_relaxed);
-            std::string ren_err;
-            if (!ensure_render(*t, rate, ren_err)) {
+            if (auto fail = ensure_render(*t, rate)) {
                 t->output = TrackOutput{};
-                err = ren_err;
-                code = "device_busy";
-                return false;
+                return fail;  // sink 已回報分類(device_busy)
             }
         }
         swap_graph();
-        return true;
+        return std::nullopt;
     }
     if (output.type == TrackOutput::kAsioOut) {
-        if (asio_out_pair_busy(output.asio_out_ch, track_id)) {
-            err = "asio output pair already used by another track";
-            code = "device_busy";
-            return false;
-        }
+        if (asio_out_pair_busy(output.asio_out_ch, track_id))
+            return failure(Err::kDeviceBusy, "asio output pair already used by another track");
         if (!device_.capability().output_types.empty() &&
-            output.asio_out_ch + 1 >= device_.capability().output_types.size()) {
-            err = "asio output channel out of range";
-            code = "bad_command";
-            return false;
-        }
+            output.asio_out_ch + 1 >= device_.capability().output_types.size())
+            return failure(Err::kBadCommand, "asio output channel out of range");
     }
     const TrackOutput prev = t->output;
     t->output = output;
@@ -1468,32 +1369,28 @@ bool AudioEngine::track_set_output(std::uint32_t track_id, const TrackOutput& ou
         if (!rebuild_asio_channels(rerr)) {
             t->output = prev;
             swap_graph();
-            err = rerr;
-            code = "device_busy";
-            return false;
+            return failure(Err::kDeviceBusy, std::move(rerr));
         }
     }
     swap_graph();
-    return true;
+    return std::nullopt;
 }
 
-bool AudioEngine::track_move(std::uint32_t track_id, std::size_t new_index, std::string& err) {
+std::optional<Failure> AudioEngine::track_move(std::uint32_t track_id, std::size_t new_index) {
     // master 陣列絕對索引重排(UI 輸入/輸出帶內拖放;帶是 kind 過濾,各成連續相對序)
     const auto cur = static_cast<std::size_t>(
         std::find_if(tracks_.begin(), tracks_.end(),
                      [&](const TrackNode& t) { return t.track_id == track_id; }) -
         tracks_.begin());
-    if (cur >= tracks_.size()) {
-        err = "unknown trackId " + std::to_string(track_id);
-        return false;
-    }
-    if (cur == new_index) return true;
+    if (cur >= tracks_.size())
+        return failure(Err::kBadCommand, "unknown trackId " + std::to_string(track_id));
+    if (cur == new_index) return std::nullopt;
     TrackNode moved = std::move(tracks_[cur]);  // move 保住 shared_ptr buf(gain_state 延續)
     tracks_.erase(tracks_.begin() + static_cast<std::ptrdiff_t>(cur));
     const auto pos = (std::min)(new_index, tracks_.size());  // erase 後插入位 [0, N-1];超尾 = 移到尾端
     tracks_.insert(tracks_.begin() + static_cast<std::ptrdiff_t>(pos), std::move(moved));
     swap_graph();
-    return true;
+    return std::nullopt;
 }
 
 RackSlot* AudioEngine::find_slot_mut(std::uint32_t instance_id) noexcept {
@@ -1529,26 +1426,20 @@ std::vector<AudioEngine::PluginTabInfo> AudioEngine::plugin_tabs() const {
     return tabs;
 }
 
-bool AudioEngine::add_plugin(std::uint32_t track_id, const std::string& module_path,
-                             const std::string& class_id, std::uint32_t& instance_id,
-                             std::string& err) {
+std::optional<Failure> AudioEngine::add_plugin(std::uint32_t track_id, const std::string& module_path,
+                                               const std::string& class_id,
+                                               std::uint32_t& instance_id) {
     TrackNode* t = find_track_mut(track_id);
-    if (t == nullptr) {
-        err = "unknown trackId " + std::to_string(track_id);
-        return false;
-    }
+    if (t == nullptr)
+        return failure(Err::kPluginLoadFailed, "unknown trackId " + std::to_string(track_id));
     RackSlot slot;
     slot.plugin = std::make_shared<Vst3Plugin>(module_path, class_id);
-    if (!slot.plugin->loaded()) {
-        err = slot.plugin->last_error();
-        return false;
-    }
+    if (!slot.plugin->loaded())
+        return failure(Err::kPluginLoadFailed, slot.plugin->last_error());
     if (device_.running() &&
         !slot.plugin->initialize(static_cast<double>(rt_sample_rate_.load(std::memory_order_relaxed)),
-                                 device_.block_size())) {
-        err = slot.plugin->last_error();
-        return false;
-    }
+                                 device_.block_size()))
+        return failure(Err::kPluginLoadFailed, slot.plugin->last_error());
     slot.instance_id = next_instance_id_++;
     slot.module_path = module_path;
     slot.class_id = slot.plugin->class_uid();
@@ -1559,32 +1450,31 @@ bool AudioEngine::add_plugin(std::uint32_t track_id, const std::string& module_p
         slot.param_values.push_back({p.id, p.default_normalized});
     instance_id = slot.instance_id;
     t->chain.push_back(std::move(slot));
-    if (!prepare_monitor_variants(err)) {
+    // 本指令 contract 只宣告 plugin_load_failed;prepare 的 plugin-state 失敗也歸此類
+    if (auto fail = prepare_monitor_variants()) {
         t->chain.pop_back();
         (void)swap_graph();
-        return false;
+        return failure(Err::kPluginLoadFailed, std::move(fail->message));
     }
     if (!swap_graph()) {
         t->chain.pop_back();
-        std::string cleanup_error;
-        (void)ensure_monitor_shadows(cleanup_error);
-        err = "PDC plan exceeds latency or memory safety limits";
-        return false;
+        (void)ensure_monitor_shadows();
+        return failure(Err::kPluginLoadFailed, "PDC plan exceeds latency or memory safety limits");
     }
-    return true;
+    return std::nullopt;
 }
 
-bool AudioEngine::add_placeholder_plugin(std::uint32_t track_id, const std::string& module_path,
-                                         const std::string& class_id, const std::string& name,
-                                         bool bypassed, RackSlot::Availability why,
-                                         const std::string& load_error,
-                                         const std::vector<std::pair<std::uint32_t, double>>& params,
-                                         std::uint32_t& instance_id, std::string& err) {
+std::optional<Failure> AudioEngine::add_placeholder_plugin(std::uint32_t track_id,
+                                                           const std::string& module_path,
+                                                           const std::string& class_id,
+                                                           const std::string& name,
+                                                           bool bypassed, RackSlot::Availability why,
+                                                           const std::string& load_error,
+                                                           const std::vector<std::pair<std::uint32_t, double>>& params,
+                                                           std::uint32_t& instance_id) {
     TrackNode* t = find_track_mut(track_id);
-    if (t == nullptr) {
-        err = "unknown trackId " + std::to_string(track_id);
-        return false;
-    }
+    if (t == nullptr)
+        return failure(Err::kBadCommand, "unknown trackId " + std::to_string(track_id));
     RackSlot slot;
     slot.instance_id = next_instance_id_++;
     slot.module_path = module_path;
@@ -1597,33 +1487,26 @@ bool AudioEngine::add_placeholder_plugin(std::uint32_t track_id, const std::stri
     instance_id = slot.instance_id;
     t->chain.push_back(std::move(slot));
     swap_graph();
-    return true;
+    return std::nullopt;
 }
 
-bool AudioEngine::load_placeholder(std::uint32_t instance_id, const std::string& module_path,
-                                   const std::string& class_id, std::string& err) {
+std::optional<Failure> AudioEngine::load_placeholder(std::uint32_t instance_id,
+                                                     const std::string& module_path,
+                                                     const std::string& class_id) {
     RackSlot* s = find_slot_mut(instance_id);
-    if (s == nullptr) {
-        err = "unknown instanceId " + std::to_string(instance_id);
-        return false;
-    }
-    if (!s->is_placeholder()) {
-        err = "instance is not a placeholder";
-        return false;
-    }
+    if (s == nullptr)
+        return failure(Err::kPluginLoadFailed, "unknown instanceId " + std::to_string(instance_id));
+    if (!s->is_placeholder())
+        return failure(Err::kPluginLoadFailed, "instance is not a placeholder");
     const RackSlot previous = *s;
     // 原位置/instanceId/params/bypass 全保留:只把 plugin 補上、狀態轉 ok
     auto plugin = std::make_shared<Vst3Plugin>(module_path, class_id);
-    if (!plugin->loaded()) {
-        err = plugin->last_error();
-        return false;
-    }
+    if (!plugin->loaded())
+        return failure(Err::kPluginLoadFailed, plugin->last_error());
     if (device_.running() &&
         !plugin->initialize(static_cast<double>(rt_sample_rate_.load(std::memory_order_relaxed)),
-                            device_.block_size())) {
-        err = plugin->last_error();
-        return false;
-    }
+                            device_.block_size()))
+        return failure(Err::kPluginLoadFailed, plugin->last_error());
     s->plugin = std::move(plugin);
     s->module_path = module_path;
     s->class_id = class_id;
@@ -1632,10 +1515,11 @@ bool AudioEngine::load_placeholder(std::uint32_t instance_id, const std::string&
     s->load_error.clear();
     refresh_latency(*s);
     bind_latency_callback(*s);
-    if (!prepare_monitor_variants(err)) {
+    // 本指令 contract 只宣告 plugin_load_failed;prepare 的 plugin-state 失敗也歸此類
+    if (auto fail = prepare_monitor_variants()) {
         *s = previous;
         (void)swap_graph();
-        return false;
+        return failure(Err::kPluginLoadFailed, std::move(fail->message));
     }
     // session 帶回來的 host 權威值推 RT + controller(同 load_preset 三路同步)
     for (const auto& [id, v] : s->param_values) {
@@ -1644,17 +1528,13 @@ bool AudioEngine::load_placeholder(std::uint32_t instance_id, const std::string&
     }
     if (!swap_graph()) {
         *s = previous;
-        std::string cleanup_error;
-        (void)ensure_monitor_shadows(cleanup_error);
-        err = "PDC plan exceeds latency or memory safety limits";
-        return false;
+        (void)ensure_monitor_shadows();
+        return failure(Err::kPluginLoadFailed, "PDC plan exceeds latency or memory safety limits");
     }
-    return true;
+    return std::nullopt;
 }
 
-bool AudioEngine::remove_plugin(std::uint32_t instance_id, std::string& err,
-                                PluginMutationFailure* failure) {
-    if (failure != nullptr) *failure = PluginMutationFailure::kNone;
+std::optional<Failure> AudioEngine::remove_plugin(std::uint32_t instance_id) {
     for (auto& t : tracks_) {
         for (auto it = t.chain.begin(); it != t.chain.end(); ++it) {
             if (it->instance_id == instance_id) {
@@ -1663,17 +1543,14 @@ bool AudioEngine::remove_plugin(std::uint32_t instance_id, std::string& err,
                 if (it->plugin && it->plugin->editor_open()) it->plugin->close_editor();
                 t.chain.erase(it);
                 swap_graph();
-                return true;
+                return std::nullopt;
             }
         }
     }
-    if (failure != nullptr) *failure = PluginMutationFailure::kNotFound;
-    err = "unknown instanceId " + std::to_string(instance_id);
-    return false;
+    return failure(Err::kPluginNotFound, "unknown instanceId " + std::to_string(instance_id));
 }
 
-bool AudioEngine::move_plugin(std::uint32_t instance_id, std::size_t to_index,
-                              std::string& err) {
+std::optional<Failure> AudioEngine::move_plugin(std::uint32_t instance_id, std::size_t to_index) {
     for (auto& t : tracks_) {
         auto& chain = t.chain;
         if (to_index >= chain.size() &&
@@ -1683,78 +1560,58 @@ bool AudioEngine::move_plugin(std::uint32_t instance_id, std::size_t to_index,
         const auto from = std::find_if(chain.begin(), chain.end(),
                                        [&](const RackSlot& s) { return s.instance_id == instance_id; });
         if (from == chain.end()) continue;
-        if (to_index >= chain.size()) {
-            err = "toIndex out of range";
-            return false;
-        }
+        if (to_index >= chain.size())
+            return failure(Err::kBadCommand, "toIndex out of range");
         RackSlot moved = std::move(*from);
         chain.erase(from);
         chain.insert(chain.begin() + static_cast<std::ptrdiff_t>(to_index), std::move(moved));
         swap_graph();
-        return true;
+        return std::nullopt;
     }
-    err = "unknown instanceId " + std::to_string(instance_id);
-    return false;
+    return failure(Err::kBadCommand, "unknown instanceId " + std::to_string(instance_id));
 }
 
 // bypass 旗標的交易式提交:兩個命令只剩旗標成員指標的差異。
-bool AudioEngine::commit_bypass_flag(bool RackSlot::* flag, std::uint32_t instance_id,
-                                     bool value, std::string& err,
-                                     PluginMutationFailure* failure) {
-    if (failure != nullptr) *failure = PluginMutationFailure::kNone;
+std::optional<Failure> AudioEngine::commit_bypass_flag(bool RackSlot::* flag,
+                                                       std::uint32_t instance_id, bool value) {
     RackSlot* s = find_slot_mut(instance_id);
-    if (s == nullptr) {
-        if (failure != nullptr) *failure = PluginMutationFailure::kNotFound;
-        err = "unknown instanceId " + std::to_string(instance_id);
-        return false;
-    }
-    if (s->*flag == value) return true;
+    if (s == nullptr)
+        return failure(Err::kPluginNotFound, "unknown instanceId " + std::to_string(instance_id));
+    if (s->*flag == value) return std::nullopt;
     const bool previous = s->*flag;
     s->*flag = value;
     const auto rollback = [&] {
         s->*flag = previous;
-        std::string cleanup_error;
-        (void)ensure_monitor_shadows(cleanup_error);
+        (void)ensure_monitor_shadows();
         // running 時先前的 bypass 過渡 graph 必須還原
         (void)swap_graph();
     };
-    if (!prepare_monitor_variants(err)) {
-        if (failure != nullptr) *failure = PluginMutationFailure::kStateFailed;
+    if (auto fail = prepare_monitor_variants()) {
         rollback();
-        return false;
+        return fail;
     }
     if (!swap_graph()) {
-        if (failure != nullptr) *failure = PluginMutationFailure::kBadCommand;
         rollback();
-        err = "PDC plan exceeds latency or memory safety limits";
-        return false;
+        return failure(Err::kBadCommand, "PDC plan exceeds latency or memory safety limits");
     }
-    return true;
+    return std::nullopt;
 }
 
-bool AudioEngine::set_bypass(std::uint32_t instance_id, bool bypass, std::string& err,
-                             PluginMutationFailure* failure) {
-    return commit_bypass_flag(&RackSlot::bypass, instance_id, bypass, err, failure);
+std::optional<Failure> AudioEngine::set_bypass(std::uint32_t instance_id, bool bypass) {
+    return commit_bypass_flag(&RackSlot::bypass, instance_id, bypass);
 }
 
-bool AudioEngine::set_monitor_bypass(std::uint32_t instance_id, bool bypass,
-                                     std::string& err,
-                                     PluginMutationFailure* failure) {
-    return commit_bypass_flag(&RackSlot::monitor_bypass, instance_id, bypass, err,
-                              failure);
+std::optional<Failure> AudioEngine::set_monitor_bypass(std::uint32_t instance_id, bool bypass) {
+    return commit_bypass_flag(&RackSlot::monitor_bypass, instance_id, bypass);
 }
 
-bool AudioEngine::set_param(std::uint32_t instance_id, std::uint32_t param_id, double value,
-                            std::string& err) {
+std::optional<Failure> AudioEngine::set_param(std::uint32_t instance_id, std::uint32_t param_id,
+                                              double value) {
     RackSlot* s = find_slot_mut(instance_id);
-    if (s == nullptr) {
-        err = "unknown instanceId " + std::to_string(instance_id);
-        return false;
-    }
-    if (!std::isfinite(value) || value < 0.0 || value > 1.0) {
-        err = "param value must be normalized [0,1]";
-        return false;
-    }
+    if (s == nullptr)
+        return failure(Err::kParamNotFound, "unknown instanceId " + std::to_string(instance_id));
+    if (!std::isfinite(value) || value < 0.0 || value > 1.0)
+        return failure(Err::kParamNotFound, "param value must be normalized [0,1]");
     bool found = false;
     for (auto& [id, v] : s->param_values) {
         if (id == param_id) {
@@ -1763,29 +1620,23 @@ bool AudioEngine::set_param(std::uint32_t instance_id, std::uint32_t param_id, d
             break;
         }
     }
-    if (!found) {
-        err = "unknown paramId " + std::to_string(param_id);
-        return false;
-    }
+    if (!found)
+        return failure(Err::kParamNotFound, "unknown paramId " + std::to_string(param_id));
     s->ring->push({param_id, value});  // 滿 = drop;權威值已更新,UI 重送冪等
     if (s->monitor_shadow) {
         s->monitor_ring->push({param_id, value});
         s->monitor_shadow->set_param_normalized(param_id, value);
     }
-    return true;
+    return std::nullopt;
 }
 
-bool AudioEngine::save_preset(std::uint32_t instance_id, const std::filesystem::path& file,
-                              std::string& err) {
+std::optional<Failure> AudioEngine::save_preset(std::uint32_t instance_id,
+                                                const std::filesystem::path& file) {
     const RackSlot* s = find_slot(instance_id);
-    if (s == nullptr) {
-        err = "unknown instanceId " + std::to_string(instance_id);
-        return false;
-    }
-    if (s->plugin == nullptr) {
-        err = "plugin not loaded (placeholder)";
-        return false;
-    }
+    if (s == nullptr)
+        return failure(Err::kPluginNotFound, "unknown instanceId " + std::to_string(instance_id));
+    if (s->plugin == nullptr)
+        return failure(Err::kPresetIo, "plugin not loaded (placeholder)");
     // getState 與 RT process 不得併發(VST3 契約):掛 bypass 讓 RT 放掉 plugin,
     // 等在飛的舊 graph block 跑完再 IO,做完還原
     RackSlot* mut = find_slot_mut(instance_id);
@@ -1793,25 +1644,27 @@ bool AudioEngine::save_preset(std::uint32_t instance_id, const std::filesystem::
     mut->bypass = true;
     swap_graph();
     Sleep(60);  // > 2 個最大 ASIO block:RT 不再持舊鏈
+    std::string err;
     const bool ok = mut->plugin->save_preset(file, mut->param_values, err);
     mut->bypass = orig_bypass;
     swap_graph();
-    return ok;
+    if (!ok) return failure(Err::kPresetIo, std::move(err));
+    return std::nullopt;
 }
 
-bool AudioEngine::load_preset(std::uint32_t instance_id, const std::filesystem::path& file,
-                              std::string& err, PresetLoadFailure* failure) {
-    if (failure != nullptr) *failure = PresetLoadFailure::kPresetIo;
+std::optional<Failure> AudioEngine::load_preset(std::uint32_t instance_id,
+                                                const std::filesystem::path& file) {
+    // 預設分類 = preset_io;state 拒絕時改 plugin_state_failed(load 途徑覆寫)
+    Failure result{Err::kPresetIo, {}};
     RackSlot* s = find_slot_mut(instance_id);
     if (s == nullptr) {
-        if (failure != nullptr) *failure = PresetLoadFailure::kNotFound;
-        err = "unknown instanceId " + std::to_string(instance_id);
-        return false;
+        result.code = Err::kPluginNotFound;
+        result.message = "unknown instanceId " + std::to_string(instance_id);
+        return result;
     }
-    if (s->plugin == nullptr) {
-        err = "plugin not loaded (placeholder)";
-        return false;
-    }
+    if (s->plugin == nullptr)
+        return failure(Err::kPresetIo, "plugin not loaded (placeholder)");
+    std::string err;
     // setState 與 RT process 不得併發:同 save_preset,先掛 bypass
     const bool orig_bypass = s->bypass;
     const auto original_params = s->param_values;
@@ -1829,23 +1682,23 @@ bool AudioEngine::load_preset(std::uint32_t instance_id, const std::filesystem::
     if (!s->plugin->capture_runtime_state(original_primary, err)) {
         s->bypass = orig_bypass;
         (void)swap_graph();
-        return false;
+        result.message = std::move(err);
+        return result;
     }
     if (s->monitor_shadow) {
         std::string capture_error;
         if (!s->monitor_shadow->capture_runtime_state(original_shadow, capture_error)) {
             s->bypass = orig_bypass;
             (void)swap_graph();
-            err = "monitor shadow state capture failed: " + capture_error;
-            return false;
+            return failure(Err::kPluginStateFailed,
+                           "monitor shadow state capture failed: " + capture_error);
         }
     }
     bool host_values_from_file = false;
     bool state_rejected = false;
     bool ok = s->plugin->load_preset(file, s->param_values, err,
                                      host_values_from_file, state_rejected);
-    if (state_rejected && failure != nullptr)
-        *failure = PresetLoadFailure::kPluginStateFailed;
+    if (state_rejected) result.code = Err::kPluginStateFailed;
     // 檔案無 RmxP(外部 host 存的 preset)時，以 primary controller 回報重建
     // host 權威參數；shadow 永遠跟隨這份權威值。
     if (ok && !host_values_from_file) {
@@ -1862,8 +1715,7 @@ bool AudioEngine::load_preset(std::uint32_t instance_id, const std::filesystem::
         if (!s->monitor_shadow->load_preset(file, shadow_params, shadow_err,
                                             shadow_values_from_file,
                                             shadow_state_rejected)) {
-            if (shadow_state_rejected && failure != nullptr)
-                *failure = PresetLoadFailure::kPluginStateFailed;
+            if (shadow_state_rejected) result.code = Err::kPluginStateFailed;
             err = "monitor shadow preset sync failed: " + shadow_err;
             ok = false;
         } else {
@@ -1885,7 +1737,11 @@ bool AudioEngine::load_preset(std::uint32_t instance_id, const std::filesystem::
     if (ok) {
         refresh_latency(*s);
         s->primary_state = RackSlot::RuntimeState::kActive;
-        if (!prepare_monitor_variants(err)) ok = false;
+        if (auto fail = prepare_monitor_variants()) {
+            result.code = fail->code;
+            err = std::move(fail->message);
+            ok = false;
+        }
     }
     if (ok) {
         ok = swap_graph();
@@ -1917,7 +1773,8 @@ bool AudioEngine::load_preset(std::uint32_t instance_id, const std::filesystem::
         (void)swap_graph();
         if (!primary_restored || !shadow_restored)
             err += "; rollback failed: " + rollback_error;
-        return false;
+        result.message = std::move(err);
+        return result;
     }
     // commit 後三路同步：host 權威表、RT ring、controller/editor。
     for (const auto& [id, value] : s->param_values) {
@@ -1928,8 +1785,7 @@ bool AudioEngine::load_preset(std::uint32_t instance_id, const std::filesystem::
             s->monitor_shadow->set_param_normalized(id, value);
         }
     }
-    if (failure != nullptr) *failure = PresetLoadFailure::kNone;
-    return true;
+    return std::nullopt;
 }
 
 void AudioEngine::sync_controller_params(std::uint32_t instance_id) {
@@ -1968,15 +1824,14 @@ void AudioEngine::clear_all_tracks() {
 
 // controlPanel() 多數 driver 是 modal(關面板才返回)— 呼叫端(detach thread)
 // 會在裡面待到面板關閉;panel_open_ 期間 start() 拒絕(driver 銷毀 race)
-bool AudioEngine::open_control_panel(std::string& err) {
-    if (!device_.running()) {
-        err = "not running";
-        return false;
-    }
+std::optional<Failure> AudioEngine::open_control_panel() {
+    if (!device_.running()) return failure(Err::kNotRunning, "not running");
+    std::string err;
     panel_open_.fetch_add(1, std::memory_order_acq_rel);
     const bool okp = device_.open_control_panel(err);
     panel_open_.fetch_sub(1, std::memory_order_acq_rel);
-    return okp;
+    if (!okp) return failure(Err::kDeviceOpenFailed, std::move(err));
+    return std::nullopt;
 }
 
 EngineStatusInfo AudioEngine::status() const {

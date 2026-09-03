@@ -60,30 +60,27 @@ int main() {
 
     // 2. 軌道結構 roundtrip:audio(sine)→fx→output 監聽,dests 鏈 + gain/mute
     {
-        std::string err;
         std::uint32_t a = 0, fx = 0, o = 0;
-        CHECK(e.track_add(rmx::TrackKind::kAudio, "Mic", 0x3ddc84, a, err));
-        CHECK(e.track_add(rmx::TrackKind::kFx, "FX", 0, fx, err));
-        CHECK(e.track_add(rmx::TrackKind::kOutput, "監聽", 0, o, err));
+        CHECK(!e.track_add(rmx::TrackKind::kAudio, "Mic", 0x3ddc84, a));
+        CHECK(!e.track_add(rmx::TrackKind::kFx, "FX", 0, fx));
+        CHECK(!e.track_add(rmx::TrackKind::kOutput, "監聽", 0, o));
         rmx::TrackSource src;
         src.type = rmx::TrackSource::kSine;
         src.sine_freq = 880.0F;
-        std::string err2, code;
-        CHECK(e.track_set_source(a, src, err2, code));
-        CHECK(e.track_set_dests(a, {fx}, err2, code));
-        CHECK(e.track_set_dests(fx, {o}, err2, code));
+        CHECK(!e.track_set_source(a, src));
+        CHECK(!e.track_set_dests(a, {fx}));
+        CHECK(!e.track_set_dests(fx, {o}));
         rmx::TrackOutput out;
         out.type = rmx::TrackOutput::kAsioOut;
-        CHECK(e.track_set_output(o, out, err2, code));
-        CHECK(e.track_set(a, std::nullopt, std::nullopt, 0.5F, true, err));
-        CHECK(rmx::session::save(e, file, err));
+        CHECK(!e.track_set_output(o, out));
+        CHECK(!e.track_set(a, std::nullopt, std::nullopt, 0.5F, true));
+        CHECK(!rmx::session::save(e, file));
 
         // 改掉 → load 復原
-        std::string err3, code3;
-        CHECK(e.track_set_dests(a, {}, err3, code3));
-        CHECK(e.track_set(a, std::nullopt, std::nullopt, 1.0F, false, err3));
+        CHECK(!e.track_set_dests(a, {}));
+        CHECK(!e.track_set(a, std::nullopt, std::nullopt, 1.0F, false));
         nlohmann::json applied;
-        CHECK(rmx::session::load(e, file, applied, err));
+        CHECK(!rmx::session::load(e, file, applied));
         // 3 條(存檔內容)+ 自動補回的 stream 系統輸出 = 4
         CHECK(e.tracks().size() == 4);
         // 新 id != 舊 id,但 dests 鏈已重接;找 kind 對應驗
@@ -111,9 +108,8 @@ int main() {
     // 3b. save overrides:UI 帶 deviceKey/sampleRate 蓋寫(免 start 過)
     {
         const auto ov = tmp / "ov.rmsession";
-        std::string err;
         const nlohmann::json overrides{{"deviceKey", "asio:dev1"}, {"sampleRate", 48000u}};
-        CHECK(rmx::session::save(e, ov, err, overrides));
+        CHECK(!rmx::session::save(e, ov, overrides));
         const auto j = nlohmann::json::parse(read_text(ov), nullptr, false);
         CHECK(!j.is_discarded());
         CHECK(j["deviceKey"] == "asio:dev1");
@@ -125,8 +121,7 @@ int main() {
         const auto bad = tmp / "bad.rmsession";
         write_text(bad, "not json{");
         nlohmann::json applied;
-        std::string err;
-        CHECK(!rmx::session::load(e, bad, applied, err));
+        CHECK(rmx::session::load(e, bad, applied));
     }
     // 5. v1 檔(舊 rack 格式)→ 一律拒載
     {
@@ -135,8 +130,7 @@ int main() {
                    R"({"roudamixSession":1,"rack":[{"pluginPath":"C:\\nope\\x.vst3"}],)"
                    R"("sineFreq":220.0,"source":"sine"})");
         nlohmann::json applied;
-        std::string err;
-        CHECK(!rmx::session::load(e, bad, applied, err));
+        CHECK(rmx::session::load(e, bad, applied));
         // 拒載 = 狀態不動(第 2 案的 3+1 條軌還在)
         CHECK(e.tracks().size() == 4);
     }
@@ -155,8 +149,7 @@ int main() {
                    R"("classId":"ABCD","name":"XComp","bypassed":true,"monitorBypassed":true,)"
                    R"("params":[{"paramId":1,"normalized":0.75}]}]}]})");
         nlohmann::json applied;
-        std::string err;
-        CHECK(rmx::session::load(e, f2, applied, err));
+        CHECK(!rmx::session::load(e, f2, applied));
         // 1(Mic)+ 自動補回 monitor/stream 系統輸出 = 3
         CHECK(e.tracks().size() == 3);
         CHECK(e.tracks()[0].chain.size() == 1);  // placeholder 佔住原鏈位
@@ -195,14 +188,13 @@ int main() {
     // 6b. placeholder roundtrip:含 placeholder 的 session 存檔 → load,metadata
     //     與 params/availability/loadError 原樣保留(重新儲存不得丟 placeholder)
     {
-        std::string err;
-        CHECK(rmx::session::save(e, file, err));  // 上一步載入的 1 軌 + placeholder
+        CHECK(!rmx::session::save(e, file));  // 上一步載入的 1 軌 + placeholder
         const auto j = nlohmann::json::parse(read_text(file), nullptr, false);
         CHECK(!j.is_discarded());
         CHECK(j["tracks"][0]["plugins"][0]["availability"] == "loadFailed");
         CHECK(j["tracks"][0]["plugins"][0]["monitorBypassed"] == true);
         nlohmann::json applied;
-        CHECK(rmx::session::load(e, file, applied, err));
+        CHECK(!rmx::session::load(e, file, applied));
         CHECK(e.tracks().size() == 3);  // Mic + monitor + stream(role 已寫進檔)
         CHECK(e.tracks()[0].chain.size() == 1);
         const auto& slot = e.tracks()[0].chain[0];
@@ -229,8 +221,7 @@ int main() {
                    R"({"trackId":3,"kind":"audio","name":"Mic","color":3,"source":null,)"
                    R"("dests":[],"output":null,"gain":1,"mute":false,"plugins":[]}]})");
         nlohmann::json applied;
-        std::string err;
-        CHECK(rmx::session::load(e, f3, applied, err));
+        CHECK(!rmx::session::load(e, f3, applied));
         CHECK(e.tracks().size() == 3);  // 不多建:兩條 output 軌剛好指派完
         CHECK(e.tracks()[0].name == "Out1" &&
               e.tracks()[0].system_role == rmx::SystemRole::kMonitor);
@@ -252,7 +243,7 @@ int main() {
                    R"("systemRole":"monitor"},)"
                    R"({"trackId":3,"kind":"audio","name":"C","color":3,"source":null,)"
                    R"("dests":[],"output":null,"gain":1,"mute":false,"plugins":[]}]})");
-        CHECK(rmx::session::load(e, f4, applied, err));
+        CHECK(!rmx::session::load(e, f4, applied));
         // B 降級後被確定性指派成 stream(優先用現有軌,不新建)
         CHECK(e.tracks().size() == 3);
         int monitors = 0, streams = 0;
@@ -267,7 +258,7 @@ int main() {
               e.tracks()[1].system_role == rmx::SystemRole::kStream);  // 降級後轉任 stream
 
         // 7c. 存檔寫出 role
-        CHECK(rmx::session::save(e, file, err));
+        CHECK(!rmx::session::save(e, file));
         const auto j = nlohmann::json::parse(read_text(file), nullptr, false);
         CHECK(!j.is_discarded());
         int with_role = 0;
@@ -284,7 +275,7 @@ int main() {
                    R"({"trackId":2,"kind":"output","name":"Aux","color":2,"source":null,)"
                    R"("dests":[],"output":null,"gain":1,"mute":false,"plugins":[],)"
                    R"("systemRole":"stream","latencyPolicy":"lowLatency"}]})");
-        CHECK(rmx::session::load(e, f5, applied, err));
+        CHECK(!rmx::session::load(e, f5, applied));
         CHECK(e.tracks().size() == 2);
         CHECK(e.tracks()[0].latency_policy == rmx::OutputLatencyPolicy::kFullPdc);
         CHECK(e.tracks()[1].latency_policy == rmx::OutputLatencyPolicy::kLowLatency);
@@ -292,16 +283,15 @@ int main() {
 
     // 8. 系統輸出不可刪(engine 端權威;UI 只是第一道防線)
     {
-        std::string err;
         const rmx::TrackNode* sys = nullptr;
         for (const auto& t : e.tracks())
             if (t.system_role == rmx::SystemRole::kMonitor) sys = &t;
         CHECK(sys != nullptr);
-        CHECK(!e.track_remove(sys->track_id, err));
+        CHECK(e.track_remove(sys->track_id));
         // 一般軌照刪
         std::uint32_t plain = 0;
-        CHECK(e.track_add(rmx::TrackKind::kAudio, "Plain", 0, plain, err));
-        CHECK(e.track_remove(plain, err));
+        CHECK(!e.track_add(rmx::TrackKind::kAudio, "Plain", 0, plain));
+        CHECK(!e.track_remove(plain));
     }
 
     // 9. P1-F 原子寫入:temp → bak → replace;成功無 .tmp 殘留、保留一份 .bak;
@@ -313,8 +303,7 @@ int main() {
         std::filesystem::remove(f9);
         std::filesystem::remove(f9bak);
         std::filesystem::remove(f9tmp);
-        std::string err;
-        CHECK(rmx::session::save(e, f9, err));
+        CHECK(!rmx::session::save(e, f9));
         CHECK(std::filesystem::exists(f9));
         CHECK(!std::filesystem::exists(f9tmp));  // temp 已隨 rename 消失
         CHECK(!std::filesystem::exists(f9bak));  // 首次:無舊檔可備份
@@ -322,23 +311,24 @@ int main() {
 
         // 改場景再存:.bak = 上一版(完整可恢復)
         std::uint32_t extra = 0;
-        CHECK(e.track_add(rmx::TrackKind::kAudio, "Extra", 0, extra, err));
-        CHECK(rmx::session::save(e, f9, err));
+        CHECK(!e.track_add(rmx::TrackKind::kAudio, "Extra", 0, extra));
+        CHECK(!rmx::session::save(e, f9));
         CHECK(std::filesystem::exists(f9bak));
         CHECK(read_text(f9bak) == v1);  // .bak = 舊版內容
         CHECK(read_text(f9) != v1);     // 正式檔 = 新版
 
         // save 失敗(路徑指向不存在的目錄):原檔不動、err 帶原因
         const auto nowhere = tmp / "no_such_dir" / "x.rmsession";
-        CHECK(!rmx::session::save(e, nowhere, err));
-        CHECK(!err.empty());
+        const auto save_fail = rmx::session::save(e, nowhere);
+        CHECK(save_fail.has_value());
+        CHECK(!save_fail->message.empty());
         CHECK(read_text(f9) != v1);
 
         // recovery:.bak 搬回正式檔位置 → load 得回舊場景(Extra 不在)
         std::filesystem::remove(f9);
         std::filesystem::rename(f9bak, f9);
         nlohmann::json applied;
-        CHECK(rmx::session::load(e, f9, applied, err));
+        CHECK(!rmx::session::load(e, f9, applied));
         bool has_extra = false;
         for (const auto& t : e.tracks()) has_extra = has_extra || t.name == "Extra";
         CHECK(!has_extra);
@@ -348,17 +338,16 @@ int main() {
         std::vector<std::uint32_t> ids;
         for (int i = 0; i < 100; ++i) {
             std::uint32_t id = 0;
-            CHECK(e.track_add(rmx::TrackKind::kApp, "App" + std::to_string(i), 0, id, err));
+            CHECK(!e.track_add(rmx::TrackKind::kApp, "App" + std::to_string(i), 0, id));
             ids.push_back(id);
         }
         CHECK(e.tracks().size() >= 100);
         // 鏈狀 dests:id[i] → id[i+1](100 節點鏈,無環)
         {
-            std::string derr, dcode;
             for (std::size_t i = 0; i + 1 < ids.size(); ++i)
-                CHECK(e.track_set_dests(ids[i], {ids[i + 1]}, derr, dcode));
+                CHECK(!e.track_set_dests(ids[i], {ids[i + 1]}));
             // 環偵測:頭接到尾必須擋
-            CHECK(!e.track_set_dests(ids.back(), {ids.front()}, derr, dcode));
+            CHECK(e.track_set_dests(ids.back(), {ids.front()}));
         }
         // strip 預算:100 app 軌 + 系統輸出 → 只有前 63 條(master 序)有錶
         {
@@ -372,16 +361,16 @@ int main() {
         {
             const auto last_id = ids.back();
             const auto was_first = e.tracks().front().track_id;
-            CHECK(e.track_move(last_id, 0, err));
+            CHECK(!e.track_move(last_id, 0));
             CHECK(e.tracks().front().track_id == last_id);
             CHECK(e.tracks()[1].track_id == was_first);
         }
         // 存檔/載入 100 軌 roundtrip(原子寫入路徑 + 大檔)
         {
             const auto f100 = tmp / "big100.rmsession";
-            CHECK(rmx::session::save(e, f100, err));
+            CHECK(!rmx::session::save(e, f100));
             nlohmann::json applied100;
-            CHECK(rmx::session::load(e, f100, applied100, err));
+            CHECK(!rmx::session::load(e, f100, applied100));
             CHECK(e.tracks().size() >= 100);
             int app_count = 0;
             for (const auto& t : e.tracks()) app_count += t.name.rfind("App", 0) == 0;

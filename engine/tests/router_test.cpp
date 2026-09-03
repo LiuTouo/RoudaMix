@@ -10,6 +10,8 @@
 
 #include "router.hpp"
 
+#include "command_contract.hpp"
+
 namespace fs = std::filesystem;
 
 namespace {
@@ -147,6 +149,48 @@ void session_rebuild_advances_revision_once() {
     fs::remove(session_path, ignored);
 }
 
+void error_replies_carry_declared_codes() {
+    rmx::Router router;
+    std::vector<nlohmann::json> frames;
+    router.connect(1, [&](const nlohmann::json& frame) { frames.push_back(frame); });
+    frames.clear();
+
+    // track_set 未知軌 = bad_command(宣告集內);回覆只帶 error、不帶 result
+    (void)router.dispatch_guarded(
+        1, rmx::Command{rmx::kProtocolVersion, 301, "track_set",
+                        {{"trackId", 999}, {"gain", 1.5}}});
+    (void)router.dispatch_guarded(
+        1, rmx::Command{rmx::kProtocolVersion, 302, "track_remove", {{"trackId", 999}}});
+
+    const auto* bad = find_reply(frames, 301);
+    const auto* missing = find_reply(frames, 302);
+    if (bad == nullptr || missing == nullptr) {
+        std::fprintf(stderr, "FAIL: error reply test replies are missing\n");
+        ++failures;
+        return;
+    }
+    expect_equal(bad->at("ok"), false, "track_set unknown track fails");
+    expect_equal(bad->at("error").at("code"), "bad_command",
+                 "error reply carries the produced code");
+    expect_equal(missing->at("error").at("code"), "track_not_found",
+                 "track_remove unknown track classifies as track_not_found");
+    expect_equal(bad->contains("result"), false, "error reply carries no result");
+}
+
+void contract_error_declared_set_is_enforced() {
+    // 執法表本身:宣告集內 = true、集外 = false(反例)、未知 kind 跳過
+    expect_equal(rmx::contract::is_declared_error("start", "already_running"), true,
+                 "start declares already_running");
+    expect_equal(rmx::contract::is_declared_error("track_set_source", "unsupported_windows"),
+                 true, "track_set_source declares unsupported_windows");
+    expect_equal(rmx::contract::is_declared_error("start", "plugin_not_found"), false,
+                 "start must not emit plugin_not_found (negative case)");
+    expect_equal(rmx::contract::is_declared_error("ping", "bad_command"), false,
+                 "ping declares no errors (negative case)");
+    expect_equal(rmx::contract::is_declared_error("no_such_command", "internal"), true,
+                 "unknown kinds skip the declared-set check");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -157,6 +201,8 @@ int main(int argc, char** argv) {
     connection_snapshot_fixture(fixture_root / "connect.json");
     concurrent_commands_match_a_serial_sequence();
     session_rebuild_advances_revision_once();
+    error_replies_carry_declared_codes();
+    contract_error_declared_set_is_enforced();
     if (failures == 0) {
         std::puts("router: all pass");
         return 0;

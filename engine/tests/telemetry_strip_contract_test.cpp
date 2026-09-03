@@ -14,13 +14,12 @@
 
 int main() {
     rmx::AudioEngine engine;
-    std::string err;
     std::uint32_t track_id = 0;
-    CHECK(engine.track_add(rmx::TrackKind::kAudio, "Metered", 0, track_id, err));
+    CHECK(!engine.track_add(rmx::TrackKind::kAudio, "Metered", 0, track_id));
     std::uint32_t instance_id = 0;
-    CHECK(engine.add_placeholder_plugin(
+    CHECK(!engine.add_placeholder_plugin(
         track_id, "missing.vst3", "fixture", "Fixture", false,
-        rmx::RackSlot::Availability::kMissing, "missing", {}, instance_id, err));
+        rmx::RackSlot::Availability::kMissing, "missing", {}, instance_id));
 
     // 公開 seam 取自 swap_graph 已提交的 active graph；publisher 也讀此 table。
     const auto plan = engine.telemetry_strip_plan();

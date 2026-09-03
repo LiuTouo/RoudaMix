@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 
+#include "failure.hpp"
 #include "resampler.hpp"
 #include "spsc_fifo.hpp"
 
@@ -28,11 +29,10 @@ class AppCapture final {
 public:
     using FailCallback = std::function<void()>;
 
-    // 啟動(阻塞);失敗回 nullptr,err 帶原因(錯誤碼由呼叫端對應:
-    // "process loopback not supported" → unsupported_windows、"process not found"
-    // → app_not_found,其餘 internal)
+    // 啟動(阻塞);失敗回 nullptr,failure 帶分類與原因(本層自行分類,
+    // activation/format/init 失敗 = unsupported_windows)
     static std::shared_ptr<AppCapture> create(std::uint32_t pid, std::uint32_t dst_rate,
-                                              FailCallback on_fail, std::string& err);
+                                              FailCallback on_fail, Failure& failure);
     ~AppCapture();
     void stop() noexcept;
 

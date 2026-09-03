@@ -15,6 +15,7 @@ public:
 const nlohmann::json& table();
 bool is_command_kind(const std::string& kind);
 bool is_error_code(const std::string& code);
+bool is_declared_error(const std::string& kind, const std::string& code);
 bool is_event_kind(const std::string& kind);
 void validate_command_payload(const std::string& kind, const nlohmann::json& payload);
 

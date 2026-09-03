@@ -60,8 +60,7 @@ private:
     struct Outcome {
         bool ok{true};
         nlohmann::json result = nlohmann::json::object();
-        std::string error_code;
-        std::string error_message;
+        Failure error;  // !ok 時有效;code 分類由失敗產生層決定(enum,非字串)
         Effect effect{Effect::kNone};
         bool push_status_on_error{};
         bool shutdown{};
@@ -112,8 +111,8 @@ private:
     void publish_effect(Effect effect);
     static Outcome success(nlohmann::json result = nlohmann::json::object(),
                            Effect effect = Effect::kNone);
-    static Outcome failure(std::string code, std::string message,
-                           bool push_status = false);
+    static Outcome failure(Failure failure_value, bool push_status = false);
+    static Outcome failure(Err code, std::string message, bool push_status = false);
     static EffectPolicy policy_for(Effect effect);
     static std::vector<std::filesystem::path> default_vst_roots();
     void scan_job_thread(std::uint64_t job_id,
