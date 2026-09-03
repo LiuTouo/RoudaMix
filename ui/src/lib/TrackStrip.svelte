@@ -7,7 +7,7 @@
   import { mountDragGhost, removeDragGhost } from "./ghost";
   import { open as openFile } from "@tauri-apps/plugin-dialog";
   import { engineCommand } from "./protocol-commands.generated";
-  import { cssColor, parseColor, stripOfTrack, type MeterStripView } from "./tracks";
+  import { cssColor, destCandidates, parseColor, stripOfTrack, type MeterStripView } from "./tracks";
   import { MutationQueue, mutKey } from "./mutations";
   import { reorderLane } from "./laneOrder";
   import { pluginMenuItems } from "./pluginMenu";
@@ -870,7 +870,7 @@
   <button
     class="destsbtn"
     onclick={() => destDlg?.showModal()}
-    data-tooltip="設定此軌道的輸出路由；勾選目的地後立即套用。"
+    data-tooltip="設定此軌道的輸出路由；勾選目的地後立即套用。清單僅含 FX 與輸出軌。"
   >
     輸出到 ({shownDests.length}){destsLocal !== null ? " …" : ""}
   </button>
@@ -1084,7 +1084,8 @@
       >
     </div>
     <div class="destlist">
-      {#each tracks.filter((t) => t.trackId !== track.trackId) as t (t.trackId)}
+      <p class="dim desthint">清單僅列出可接收路由的軌道：FX 軌與輸出軌。</p>
+      {#each destCandidates(tracks, track.trackId) as t (t.trackId)}
         <label class="dest">
           <input
             type="checkbox"
@@ -1095,7 +1096,7 @@
           {t.name}
         </label>
       {:else}
-        <span class="dim">沒有其他軌道</span>
+        <span class="dim">沒有可接收路由的軌道（清單僅含 FX 與輸出軌）</span>
       {/each}
     </div>
   </dialog>
@@ -1682,6 +1683,9 @@
     gap: 6px;
     max-height: 320px;
     overflow-y: auto;
+  }
+  .desthint {
+    margin: 0;
   }
   .scanlist {
     display: flex;

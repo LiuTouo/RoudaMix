@@ -1,7 +1,7 @@
 import assert from "node:assert";
 import { test } from "node:test";
-import { stripEngineOut, stripOfPlugin, stripOfTrack } from "./tracks.ts";
-import type { MeterStrip, TelemetryStripIdentity } from "./types.ts";
+import { destCandidates, stripEngineOut, stripOfPlugin, stripOfTrack } from "./tracks.ts";
+import type { MeterStrip, TelemetryStripIdentity, Track } from "./types.ts";
 
 const meter = (peakL: number, instanceId: number, kind: number): MeterStrip => ({
   instanceId,
@@ -51,4 +51,35 @@ test("graph mutation 後丟棄與新 table 身分不符的舊 meter frame", () =
 
   assert.equal(stripOfTrack(8, view), undefined);
   assert.equal(stripOfPlugin(12, view), undefined);
+});
+
+// #11 路由目的地限縮:清單只列可接收路由的軌道(fx / output)
+const mkTrack = (trackId: number, kind: Track["kind"]): Track => ({
+  trackId,
+  kind,
+  name: "T" + trackId,
+  color: 0,
+  source: null,
+  dests: [],
+  output: null,
+  gain: 1,
+  mute: false,
+  plugins: [],
+});
+
+test("#11 路由目的地清單排除來源軌(audio/app)與自身,保留 fx/output 與 master 順序", () => {
+  const tracks: Track[] = [
+    mkTrack(1, "audio"),
+    mkTrack(2, "app"),
+    mkTrack(3, "fx"),
+    mkTrack(4, "output"),
+    mkTrack(5, "output"),
+  ];
+  const candidates = destCandidates(tracks, 4);
+  assert.deepEqual(candidates.map((t) => t.trackId), [3, 5]);
+});
+
+test("#11 全為來源軌時清單為空(驅動空狀態說明)", () => {
+  const tracks: Track[] = [mkTrack(1, "audio"), mkTrack(2, "app")];
+  assert.deepEqual(destCandidates(tracks, 1), []);
 });

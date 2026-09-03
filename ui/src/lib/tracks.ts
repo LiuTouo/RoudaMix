@@ -58,3 +58,11 @@ export function parseColor(css: string): number {
 }
 
 export const inputTrack = (t: Track): boolean => t.kind !== "output";
+
+// #11 路由目的地限縮:來源軌(audio/app)覆寫輸入匯流、路由進去的訊號會被丟棄,
+// 「輸出到」清單只列可接收路由的軌道(fx / output),排除自身;順序維持 master 序
+export function destCandidates(tracks: Track[], selfId: number): Track[] {
+  return tracks.filter(
+    (t) => t.trackId !== selfId && t.kind !== "audio" && t.kind !== "app",
+  );
+}
