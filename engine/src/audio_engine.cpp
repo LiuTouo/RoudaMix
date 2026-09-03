@@ -1052,23 +1052,6 @@ TrackNode* AudioEngine::find_track_mut(std::uint32_t track_id) noexcept {
     return nullptr;
 }
 
-// ponytail:mono 來源也佔整組 pair(不做 ch 級拆用:兩軌共用 pair 的 L/R 屬日後需求)
-bool AudioEngine::asio_in_pair_busy(std::uint32_t ch, std::uint32_t except_track) const noexcept {
-    for (const auto& t : tracks_)
-        if (t.track_id != except_track && t.source.type == TrackSource::kAsioIn &&
-            t.source.asio_in_ch == ch)
-            return true;
-    return false;
-}
-
-bool AudioEngine::asio_out_pair_busy(std::uint32_t ch, std::uint32_t except_track) const noexcept {
-    for (const auto& t : tracks_)
-        if (t.track_id != except_track && t.output.type == TrackOutput::kAsioOut &&
-            t.output.asio_out_ch == ch)
-            return true;
-    return false;
-}
-
 std::optional<Failure> AudioEngine::track_add(TrackKind kind, const std::string& name,
                                               std::uint32_t color, std::uint32_t& track_id) {
     TrackNode t;
@@ -1201,8 +1184,7 @@ std::optional<Failure> AudioEngine::track_set_source(std::uint32_t track_id,
         (source.sine_freq < 20.0F || source.sine_freq > 20000.0F))
         return failure(Err::kBadCommand, "sine freq out of range [20,20000]");
     if (source.type == TrackSource::kAsioIn) {
-        if (asio_in_pair_busy(source.asio_in_ch, track_id))
-            return failure(Err::kDeviceBusy, "asio input pair already used by another track");
+        // #12:pair 共用合法(多軌 fan-out 讀同一 scratch);只剩 range 檢查
         if (!device_.capability().input_types.empty() &&
             source.asio_in_ch + 1 >= device_.capability().input_types.size())
             return failure(Err::kBadCommand, "asio input channel out of range");
@@ -1357,8 +1339,7 @@ std::optional<Failure> AudioEngine::track_set_output(std::uint32_t track_id,
         return std::nullopt;
     }
     if (output.type == TrackOutput::kAsioOut) {
-        if (asio_out_pair_busy(output.asio_out_ch, track_id))
-            return failure(Err::kDeviceBusy, "asio output pair already used by another track");
+        // #12:同 pair 多條 output 軌 = 疊加(bus_add 累加語意);只剩 range 檢查
         if (!device_.capability().output_types.empty() &&
             output.asio_out_ch + 1 >= device_.capability().output_types.size())
             return failure(Err::kBadCommand, "asio output channel out of range");

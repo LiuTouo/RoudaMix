@@ -15,7 +15,7 @@ export const ENGINE_ERROR_MESSAGES = {
   device_lost: "音訊裝置已失效 — 請重新選擇裝置",
   track_not_found: "找不到該軌道(可能已被刪除)",
   cycle_detected: "這樣接會形成迴圈 — 路由未套用",
-  device_busy: "裝置/聲道已被其他軌道使用 — 換一組或先停用原軌",
+  device_busy: "音訊裝置忙碌或無法啟動 — 檢查裝置設定或先停用相關軌道",
   app_not_found: "找不到該程序 — 程式可能已關閉,請重新選擇",
   unsupported_windows: "此 Windows 版本不支援抓取應用程式音訊(process loopback 需 Win10 2004+)",
   plugin_not_found: "找不到該 plugin(可能已被移除)",

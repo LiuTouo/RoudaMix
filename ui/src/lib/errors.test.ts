@@ -16,8 +16,8 @@ test("friendlyError:已知 code → 繁中主訊息,raw 保留技術細節", () 
 
 test("errorText:code + message 的顯示字串", () => {
   assert.equal(
-    errorText({ code: "device_busy", message: "asio input pair already used" }),
-    "device_busy: asio input pair already used",
+    errorText({ code: "device_busy", message: "wasapi device not found: x" }),
+    "device_busy: wasapi device not found: x",
   );
 });
 

@@ -227,9 +227,6 @@ private:
     std::optional<Failure> commit_bypass_flag(bool RackSlot::* flag, std::uint32_t instance_id,
                                               bool value);
     TrackNode* find_track_mut(std::uint32_t track_id) noexcept;
-    // 同 ASIO pair 全 engine 只能一軌用(source 與 output 各自方向內查重)
-    bool asio_in_pair_busy(std::uint32_t ch, std::uint32_t except_track) const noexcept;
-    bool asio_out_pair_busy(std::uint32_t ch, std::uint32_t except_track) const noexcept;
     // M5b:app capture 生命週期(控制面)。ensure 失敗 = t.track_error 帶原因
     std::optional<Failure> ensure_capture(TrackNode& t, std::uint32_t dst_rate);
     void stop_capture(TrackNode& t) noexcept;

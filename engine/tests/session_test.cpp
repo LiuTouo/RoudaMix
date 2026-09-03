@@ -447,6 +447,56 @@ int main() {
         CHECK(f10n->dests.size() == 1 && f10n->dests[0] == o10->track_id);
     }
 
+    // 11. #12 ASIO pair 多軌共用:獨佔檢查已移除,同 asioIn/asioOut pair 可多軌
+    //     綁定(講話/唱歌雙鏈工作流);session round-trip 原樣恢復共用狀態
+    {
+        rmx::AudioEngine e3;
+        std::uint32_t vox = 0, sing = 0;
+        CHECK(!e3.track_add(rmx::TrackKind::kAudio, "Vox", 0, vox));
+        CHECK(!e3.track_add(rmx::TrackKind::kAudio, "Sing", 0, sing));
+        rmx::TrackSource src;
+        src.type = rmx::TrackSource::kAsioIn;
+        src.asio_in_ch = 0;
+        CHECK(!e3.track_set_source(vox, src));
+        src.mono = true;  // mono 共用:第二軌同 pair 帶 mono 格式照常
+        CHECK(!e3.track_set_source(sing, src));
+
+        std::uint32_t mon = 0, strm = 0;
+        CHECK(!e3.track_add(rmx::TrackKind::kOutput, "Mon", 0, mon));
+        CHECK(!e3.track_add(rmx::TrackKind::kOutput, "Strm", 0, strm));
+        rmx::TrackOutput out;
+        out.type = rmx::TrackOutput::kAsioOut;
+        out.asio_out_ch = 0;
+        CHECK(!e3.track_set_output(mon, out));
+        CHECK(!e3.track_set_output(strm, out));  // 同 pair 疊加語意(#12)
+
+        // round-trip:兩條共用輸入 + 兩條共用輸出原樣恢復
+        CHECK(!rmx::session::save(e3, file));
+        rmx::AudioEngine e4;
+        nlohmann::json applied;
+        CHECK(!rmx::session::load(e4, file, applied));
+        int in0 = 0, out0 = 0;
+        for (const auto& t : e4.tracks()) {
+            if (t.kind == rmx::TrackKind::kAudio &&
+                t.source.type == rmx::TrackSource::kAsioIn && t.source.asio_in_ch == 0)
+                ++in0;
+            if (t.kind == rmx::TrackKind::kOutput &&
+                t.output.type == rmx::TrackOutput::kAsioOut && t.output.asio_out_ch == 0)
+                ++out0;
+        }
+        CHECK(in0 == 2 && out0 == 2);
+
+        // fan-out 解除:一軌改走他源,另一軌共用不受影響
+        rmx::TrackSource sine;
+        sine.type = rmx::TrackSource::kSine;
+        CHECK(!e4.track_set_source(e4.tracks()[0].track_id, sine));
+        const rmx::TrackNode* sing_n = nullptr;
+        for (const auto& t : e4.tracks())
+            if (t.kind == rmx::TrackKind::kAudio && t.source.type == rmx::TrackSource::kAsioIn)
+                sing_n = &t;
+        CHECK(sing_n != nullptr && sing_n->source.asio_in_ch == 0 && sing_n->source.mono);
+    }
+
     std::filesystem::remove_all(tmp);
     std::printf("session_test PASSED\n");
     return 0;
