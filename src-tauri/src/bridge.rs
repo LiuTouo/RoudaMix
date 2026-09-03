@@ -49,6 +49,35 @@ impl SharedState {
     }
 }
 
+/// 指令失敗的結構化 rejection(UI 端以 code 分支,不再解析字串)。
+/// code = engine 的 protocol error code,或 bridge 本地傳輸碼
+/// not_connected / disconnected / timeout。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CommandError {
+    pub code: String,
+    pub message: String,
+}
+
+impl CommandError {
+    fn new(code: &str, message: impl Into<String>) -> Self {
+        Self {
+            code: code.into(),
+            message: message.into(),
+        }
+    }
+}
+
+/// engine error reply(JSON)→ 結構化 rejection;缺欄位時 fallback internal。
+fn command_error_from_reply(rep: &Value) -> CommandError {
+    CommandError {
+        code: rep["error"]["code"]
+            .as_str()
+            .unwrap_or("internal")
+            .to_string(),
+        message: rep["error"]["message"].as_str().unwrap_or("").to_string(),
+    }
+}
+
 /// pending reply correlation(G 測試標的):register → resolve(reply id 對上)或
 /// fail_all(斷線)。逾時後晚到的 reply 在 send 端已 remove → resolve 回 false 丟棄,
 /// 不會誤寫新連線狀態。
@@ -135,10 +164,12 @@ impl Bridge {
     }
 
     /// 送 command 等 reply。斷線/逾時即失敗,不重發(契約 §7)。
-    pub async fn send(&self, kind: &str, payload: Value) -> Result<Value, String> {
+    /// rejection 為結構化 CommandError {code, message},UI 直接以 code 分支。
+    pub async fn send(&self, kind: &str, payload: Value) -> Result<Value, CommandError> {
         let id = self.inner.next_id.fetch_add(1, Ordering::Relaxed) + 1;
-        let frame = make_command(id, kind, payload)
-            .map_err(|error| format!("{}: {error}", error.code()))?;
+        let frame = make_command(id, kind, payload).map_err(|error| {
+            CommandError::new(error.code(), error.to_string())
+        })?;
         let (tx, rx) = oneshot::channel();
         self.inner.pending.register(id, tx);
 
@@ -146,12 +177,12 @@ impl Bridge {
             Ok(b) => b,
             Err(e) => {
                 self.inner.pending.take(id);
-                return Err(format!("serialize: {e}"));
+                return Err(CommandError::new("internal", format!("serialize: {e}")));
             }
         };
         if buf.len() > MAX_FRAME_BYTES {
             self.inner.pending.take(id);
-            return Err("frame too large".into());
+            return Err(CommandError::new("bad_frame", "frame too large"));
         }
 
         let w = {
@@ -174,7 +205,7 @@ impl Bridge {
             Some(()) => {}
             None => {
                 self.inner.pending.take(id);
-                return Err("not connected".into());
+                return Err(CommandError::new("not_connected", "not connected"));
             }
         }
 
@@ -183,15 +214,13 @@ impl Bridge {
                 if rep["ok"].as_bool().unwrap_or(false) {
                     Ok(rep["result"].clone())
                 } else {
-                    let code = rep["error"]["code"].as_str().unwrap_or("internal");
-                    let msg = rep["error"]["message"].as_str().unwrap_or("");
-                    Err(format!("{code}: {msg}"))
+                    Err(command_error_from_reply(&rep))
                 }
             }
-            Ok(Err(_)) => Err("disconnected".into()),
+            Ok(Err(_)) => Err(CommandError::new("disconnected", "engine pipe closed")),
             Err(_) => {
                 self.inner.pending.take(id); // 晚到 reply 由此丟棄(resolve 不到)
-                Err("timeout".into())
+                Err(CommandError::new("timeout", "no reply in time"))
             }
         }
     }
@@ -379,5 +408,30 @@ mod tests {
         let rep = rx.try_recv().expect("reply delivered");
         assert_eq!(rep["result"]["x"], json!(1));
         assert_eq!(rep["epoch"], json!(3));
+    }
+
+    /// 錯誤回覆 → 結構化 CommandError:code 與 message 原樣帶出,不拼成字串。
+    #[test]
+    fn error_reply_maps_to_structured_command_error() {
+        let rep = json!({
+            "id": 5, "ok": false, "epoch": 2,
+            "error": {"code": "cycle_detected", "message": "routing would create a cycle"}
+        });
+        let err = command_error_from_reply(&rep);
+        assert_eq!(err.code, "cycle_detected");
+        assert_eq!(err.message, "routing would create a cycle");
+
+        let malformed = json!({"id": 6, "ok": false, "epoch": 2});
+        let fallback = command_error_from_reply(&malformed);
+        assert_eq!(fallback.code, "internal");
+        assert_eq!(fallback.message, "");
+    }
+
+    /// CommandError 序列化形狀:UI 消費的 {code, message} JSON 物件。
+    #[test]
+    fn command_error_serializes_flat_object() {
+        let value = serde_json::to_value(CommandError::new("timeout", "no reply in time"))
+            .expect("serializable");
+        assert_eq!(value, json!({"code": "timeout", "message": "no reply in time"}));
     }
 }

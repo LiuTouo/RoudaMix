@@ -5,7 +5,7 @@
 use serde_json::Value;
 use tauri::State;
 
-use crate::bridge::{Bridge, SharedState};
+use crate::bridge::{Bridge, CommandError, SharedState};
 
 #[tauri::command]
 pub fn connect_status(b: State<Bridge>) -> SharedState {
@@ -17,7 +17,7 @@ pub async fn engine_command(
     b: State<'_, Bridge>,
     kind: String,
     payload: Value,
-) -> Result<Value, String> {
+) -> Result<Value, CommandError> {
     b.send(&kind, payload).await
 }
 
