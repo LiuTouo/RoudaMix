@@ -193,6 +193,69 @@ int main() {
         CHECK(plan5.table.empty());
     }
 
+    // 6. TrackSource/TrackOutput JSON codec(protocol §8 兩形):
+    //    持久形(session 檔)app 存名不存 pid;狀態形(status.tracks)app 帶 pid;
+    //    解碼寬鬆:未知 type/缺欄/型別不符 = 回 kNone,不丟例外。
+    {
+        using nlohmann::json;
+        // sine / asioIn(+mono)round-trip(兩形同形)
+        rmx::TrackSource sine;
+        sine.type = rmx::TrackSource::kSine;
+        sine.sine_freq = 123.5F;
+        CHECK(rmx::source_from_json(rmx::source_to_json(sine)) == sine);
+        CHECK(rmx::source_from_json(rmx::source_to_status_json(sine)) == sine);
+        rmx::TrackSource in;
+        in.type = rmx::TrackSource::kAsioIn;
+        in.asio_in_ch = 4;
+        in.mono = true;
+        CHECK(rmx::source_from_json(rmx::source_to_json(in)) == in);
+        // app:狀態形帶 pid、round-trip 全等;持久形只存名(pid 歸零 = needsRebind)
+        rmx::TrackSource app;
+        app.type = rmx::TrackSource::kApp;
+        app.pid = 4242;
+        app.app_name = "foobar2000";
+        const auto app_status = rmx::source_to_status_json(app);
+        CHECK(app_status.at("pid") == 4242 && app_status.at("name") == "foobar2000");
+        CHECK(rmx::source_from_json(app_status) == app);
+        const auto app_file = rmx::source_to_json(app);
+        CHECK(app_file.at("type") == "app" && app_file.contains("pid") == false);
+        const auto app_loaded = rmx::source_from_json(app_file);
+        CHECK(app_loaded.type == rmx::TrackSource::kApp && app_loaded.pid == 0 &&
+              app_loaded.app_name == "foobar2000");
+        // 指令形(只帶 pid,name 可省)也解得回(u32 欄位只吃 unsigned,C++ 側字面值須帶 u)
+        CHECK(rmx::source_from_json(json{{"type", "app"}, {"pid", 7u}}).pid == 7u);
+        // output round-trip;wasapi 持久形空 deviceId → null(= 不落地)
+        rmx::TrackOutput aout;
+        aout.type = rmx::TrackOutput::kAsioOut;
+        aout.asio_out_ch = 2;
+        CHECK(rmx::output_from_json(rmx::output_to_json(aout)) == aout);
+        CHECK(rmx::output_from_json(rmx::output_to_status_json(aout)) == aout);
+        rmx::TrackOutput wasapi;
+        wasapi.type = rmx::TrackOutput::kWasapiRender;
+        wasapi.wasapi_id = "{0.0.0.00000000}.device";
+        CHECK(rmx::output_from_json(rmx::output_to_status_json(wasapi)) == wasapi);
+        CHECK(rmx::output_from_json(rmx::output_to_json(wasapi)) == wasapi);
+        rmx::TrackOutput wasapi_empty = wasapi;
+        wasapi_empty.wasapi_id.clear();
+        CHECK(rmx::output_to_json(wasapi_empty).is_null());
+        // kNone ↔ null round-trip
+        CHECK(rmx::source_from_json(rmx::source_to_json(rmx::TrackSource{})).type ==
+              rmx::TrackSource::kNone);
+        CHECK(rmx::output_from_json(rmx::output_to_json(rmx::TrackOutput{})).type ==
+              rmx::TrackOutput::kNone);
+        // 拒絕:未知 type、缺欄、非物件、null → kNone(不丟例外)
+        CHECK(rmx::source_from_json(json{{"type", "midi"}}).type == rmx::TrackSource::kNone);
+        CHECK(rmx::source_from_json(json{{"type", "sine"}}).type == rmx::TrackSource::kNone);
+        CHECK(rmx::source_from_json(json{{"type", "asioIn"}}).type == rmx::TrackSource::kNone);
+        CHECK(rmx::source_from_json(json(false)).type == rmx::TrackSource::kNone);
+        CHECK(rmx::source_from_json(json(nullptr)).type == rmx::TrackSource::kNone);
+        CHECK(rmx::output_from_json(json{{"type", "midi"}}).type == rmx::TrackOutput::kNone);
+        CHECK(rmx::output_from_json(json{{"type", "asioOut"}}).type == rmx::TrackOutput::kNone);
+        CHECK(rmx::output_from_json(json{{"type", "wasapi"},
+                                         {"deviceId", 3}})
+                  .type == rmx::TrackOutput::kNone);
+    }
+
     std::printf("track_graph_test PASSED\n");
     return 0;
 }

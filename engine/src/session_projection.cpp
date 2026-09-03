@@ -8,35 +8,8 @@ namespace rmx::session {
 
 namespace {
 
-nlohmann::json source_json(const TrackSource& source) {
-    switch (source.type) {
-        case TrackSource::kSine:
-            return nlohmann::json{{"type", "sine"}, {"freq", source.sine_freq}};
-        case TrackSource::kAsioIn:
-            return nlohmann::json{{"type", "asioIn"},
-                                  {"channel", source.asio_in_ch},
-                                  {"mono", source.mono}};
-        case TrackSource::kApp:
-            return nlohmann::json{{"type", "app"},
-                                  {"pid", source.pid},
-                                  {"name", source.app_name.empty()
-                                               ? nlohmann::json(nullptr)
-                                               : nlohmann::json(source.app_name)}};
-        case TrackSource::kNone: return nullptr;
-    }
-    return nullptr;
-}
-
-nlohmann::json output_json(const TrackOutput& output) {
-    switch (output.type) {
-        case TrackOutput::kAsioOut:
-            return nlohmann::json{{"type", "asioOut"}, {"channel", output.asio_out_ch}};
-        case TrackOutput::kWasapiRender:
-            return nlohmann::json{{"type", "wasapi"}, {"deviceId", output.wasapi_id}};
-        case TrackOutput::kNone: return nullptr;
-    }
-    return nullptr;
-}
+// source/output JSON 走 rmx::source_to_status_json 等(track_graph.hpp;與
+// session 檔 codec、router 請求解碼共用的唯一 codec)
 
 const char* pdc_error_string(PdcPlanError error) {
     switch (error) {
@@ -118,9 +91,9 @@ static nlohmann::json tracks_json_with_strips(const AudioEngine& engine,
             {"latencyPolicy", output_latency_policy_str(track.latency_policy)},
             {"name", track.name},
             {"color", track.color},
-            {"source", source_json(track.source)},
+            {"source", source_to_status_json(track.source)},
             {"dests", track.dests},
-            {"output", output_json(track.output)},
+            {"output", output_to_status_json(track.output)},
             {"gain", track.gain},
             {"mute", track.mute},
             {"plugins", std::move(plugins)},

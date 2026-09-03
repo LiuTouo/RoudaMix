@@ -4,6 +4,94 @@
 
 namespace rmx {
 
+// ---- TrackSource/TrackOutput ↔ JSON(唯一 codec;契約見 track_graph.hpp)----
+
+nlohmann::json source_to_json(const TrackSource& src) {
+    switch (src.type) {
+        case TrackSource::kSine:
+            return nlohmann::json{{"type", "sine"}, {"freq", src.sine_freq}};
+        case TrackSource::kAsioIn:
+            return nlohmann::json{{"type", "asioIn"},
+                                  {"channel", src.asio_in_ch},
+                                  {"mono", src.mono}};
+        // app 存名不存 pid(pid 跨載入無意義;load 對不到 = 該軌靜音不 fail)
+        case TrackSource::kApp:
+            return src.app_name.empty()
+                       ? nlohmann::json(nullptr)
+                       : nlohmann::json{{"type", "app"}, {"name", src.app_name}};
+        case TrackSource::kNone: return nullptr;
+    }
+    return nullptr;
+}
+
+nlohmann::json source_to_status_json(const TrackSource& src) {
+    if (src.type == TrackSource::kApp)
+        return nlohmann::json{{"type", "app"},
+                              {"pid", src.pid},
+                              {"name", src.app_name.empty()
+                                           ? nlohmann::json(nullptr)
+                                           : nlohmann::json(src.app_name)}};
+    return source_to_json(src);
+}
+
+nlohmann::json output_to_json(const TrackOutput& out) {
+    switch (out.type) {
+        case TrackOutput::kAsioOut:
+            return nlohmann::json{{"type", "asioOut"}, {"channel", out.asio_out_ch}};
+        case TrackOutput::kWasapiRender:
+            return out.wasapi_id.empty()
+                       ? nlohmann::json(nullptr)
+                       : nlohmann::json{{"type", "wasapi"}, {"deviceId", out.wasapi_id}};
+        case TrackOutput::kNone: return nullptr;
+    }
+    return nullptr;
+}
+
+nlohmann::json output_to_status_json(const TrackOutput& out) {
+    if (out.type == TrackOutput::kWasapiRender)  // 狀態形一律帶 deviceId(即使空)
+        return nlohmann::json{{"type", "wasapi"}, {"deviceId", out.wasapi_id}};
+    return output_to_json(out);
+}
+
+TrackSource source_from_json(const nlohmann::json& j) {
+    TrackSource src;
+    if (!j.is_object() || !j.contains("type") || !j["type"].is_string()) return src;
+    const auto t = j["type"].get<std::string>();
+    if (t == "sine" && j.contains("freq") && j["freq"].is_number()) {
+        src.type = TrackSource::kSine;
+        src.sine_freq = j["freq"].get<float>();
+    } else if (t == "asioIn" && j.contains("channel") && j["channel"].is_number_unsigned()) {
+        src.type = TrackSource::kAsioIn;
+        src.asio_in_ch = j["channel"].get<std::uint32_t>();
+        if (j.contains("mono") && j["mono"].is_boolean()) src.mono = j["mono"].get<bool>();
+    } else if (t == "app") {
+        // 指令路徑:pid 必有(contract 已驗 u32);session 檔:只存名(pid = 0 =
+        // needsRebind)。兩者擇一成立即採用,皆缺 = 拒絕(kNone)
+        const bool has_pid = j.contains("pid") && j["pid"].is_number_unsigned();
+        const bool has_name = j.contains("name") && j["name"].is_string();
+        if (has_pid || has_name) {
+            src.type = TrackSource::kApp;
+            if (has_pid) src.pid = j["pid"].get<std::uint32_t>();
+            if (has_name) src.app_name = j["name"].get<std::string>();
+        }
+    }
+    return src;
+}
+
+TrackOutput output_from_json(const nlohmann::json& j) {
+    TrackOutput out;
+    if (!j.is_object() || !j.contains("type") || !j["type"].is_string()) return out;
+    const auto t = j["type"].get<std::string>();
+    if (t == "asioOut" && j.contains("channel") && j["channel"].is_number_unsigned()) {
+        out.type = TrackOutput::kAsioOut;
+        out.asio_out_ch = j["channel"].get<std::uint32_t>();
+    } else if (t == "wasapi" && j.contains("deviceId") && j["deviceId"].is_string()) {
+        out.type = TrackOutput::kWasapiRender;
+        out.wasapi_id = j["deviceId"].get<std::string>();
+    }
+    return out;
+}
+
 namespace {
 // id → node index(每次呼叫重建:軌數小,mutation 頻率低)
 std::vector<std::uint32_t> id_to_index(const std::vector<TrackNode>& nodes) {

@@ -79,23 +79,8 @@ struct TrackSourceSet {
     TrackSource source;
 
     explicit TrackSourceSet(const nlohmann::json& payload)
-        : track_id(payload.at("trackId").get<std::uint32_t>()) {
-        const auto& value = payload.at("source");
-        if (value.is_null()) return;
-        const auto type = value.at("type").get<std::string>();
-        if (type == "sine") {
-            source.type = TrackSource::kSine;
-            source.sine_freq = value.at("freq").get<float>();
-        } else if (type == "asioIn") {
-            source.type = TrackSource::kAsioIn;
-            source.asio_in_ch = value.at("channel").get<std::uint32_t>();
-            if (value.contains("mono")) source.mono = value.at("mono").get<bool>();
-        } else if (type == "app") {
-            source.type = TrackSource::kApp;
-            source.pid = value.at("pid").get<std::uint32_t>();
-            if (value.contains("name")) source.app_name = value.at("name").get<std::string>();
-        }
-    }
+        : track_id(payload.at("trackId").get<std::uint32_t>()),
+          source(source_from_json(payload.at("source"))) {}
 };
 
 struct TrackDestsSet {
@@ -114,18 +99,8 @@ struct TrackOutputSet {
     TrackOutput output;
 
     explicit TrackOutputSet(const nlohmann::json& payload)
-        : track_id(payload.at("trackId").get<std::uint32_t>()) {
-        const auto& value = payload.at("output");
-        if (value.is_null()) return;
-        const auto type = value.at("type").get<std::string>();
-        if (type == "asioOut") {
-            output.type = TrackOutput::kAsioOut;
-            output.asio_out_ch = value.at("channel").get<std::uint32_t>();
-        } else if (type == "wasapi") {
-            output.type = TrackOutput::kWasapiRender;
-            output.wasapi_id = value.at("deviceId").get<std::string>();
-        }
-    }
+        : track_id(payload.at("trackId").get<std::uint32_t>()),
+          output(output_from_json(payload.at("output"))) {}
 };
 
 struct TrackOutputLatencyPolicySet {

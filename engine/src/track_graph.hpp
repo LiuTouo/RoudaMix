@@ -10,6 +10,8 @@
 #include <string>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
 #include "rack.hpp"
 #include "pdc_delay_line.hpp"
 #include "route_planner.hpp"
@@ -65,6 +67,23 @@ struct TrackOutput {
     std::string wasapi_id;        // M5c
     bool operator==(const TrackOutput&) const = default;
 };
+
+// ---- TrackSource/TrackOutput ↔ JSON 的唯一 codec(格式 = contracts/protocol.md §8)----
+// 新增來源/輸出類型只需在此補 case + contract 一列;session 存取、status 投影、
+// router 請求解碼共用,不再各持一份欄位搬運。
+// 持久形(session 檔 §8 SessionTrack):app 存名不存 pid(pid 跨載入無意義);
+//   空名/空 deviceId 編碼為 null(載入即 kNone,該軌靜音不 fail)。
+nlohmann::json source_to_json(const TrackSource& src);
+nlohmann::json output_to_json(const TrackOutput& out);
+// 狀態形(status.tracks §8 Track):app 帶 pid(pid 0 = needsRebind,UI 走程序
+// 選擇器)、wasapi 一律帶 deviceId;其餘類型與持久形相同。
+nlohmann::json source_to_status_json(const TrackSource& src);
+nlohmann::json output_to_status_json(const TrackOutput& out);
+// 解碼(session 載入與 router 請求共用,失敗語義 = session 載入:缺欄/型別不符/
+// 未知 type 回 kNone 預設值,不丟例外;未知類型維持拒絕不採用)。app 帶 pid 時
+// 採用(指令路徑 contract 已驗 u32),session 檔無 pid = 0(needsRebind)。
+TrackSource source_from_json(const nlohmann::json& j);
+TrackOutput output_from_json(const nlohmann::json& j);
 
 // 每軌 RT buffer:track 建立時配一次,mutation 淺拷貝只 bump refcount。
 // gain_state = RT 端平滑增益現值(block 間線性斜坡,防推桿爆音)、sine_phase =
