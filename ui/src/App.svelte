@@ -74,7 +74,7 @@
   let connProbeErr = $state<CommandError | null>(null); // 主動 get_snapshot 的錯誤(version mismatch 等)
   let snap = $state<unknown>(null);
   let status = $state<EngineStatus | null>(null);
-  let latencyEnabled = $state(false);
+  let latencyEnabled = $state(false); // legacy view prop；實際 gate = pluginLatencyPdcV1 capability
   let latencyDrawerOpen = $state(false);
   let meters = $state<MetersFrame | null>(null);
   let devices = $state<DeviceInfo[]>([]);
@@ -226,7 +226,7 @@
     const applied = applyStatus(
       {
         status,
-        latencyEnabled,
+        pluginLatencyPdcSupported: latencyEnabled,
         scanModules,
         revisionDirty,
         deviceStream,
@@ -237,7 +237,7 @@
     );
 
     status = applied.state.status;
-    latencyEnabled = applied.state.latencyEnabled;
+    latencyEnabled = applied.state.pluginLatencyPdcSupported;
     scanModules = applied.state.scanModules;
     revisionDirty = applied.state.revisionDirty;
     deviceStream = applied.state.deviceStream;

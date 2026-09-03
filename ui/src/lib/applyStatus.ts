@@ -13,7 +13,7 @@ import type { EngineStatus, ScanModule, Track } from "./types.ts";
 
 export interface AppliedStatusState {
   status: EngineStatus | null;
-  latencyEnabled: boolean;
+  pluginLatencyPdcSupported: boolean;
   scanModules: ScanModule[];
   revisionDirty: RevisionDirtyState;
   deviceStream: DeviceStreamState;
@@ -46,7 +46,7 @@ export interface ApplyStatusResult {
 export function initialAppliedStatus(): AppliedStatusState {
   return {
     status: null,
-    latencyEnabled: false,
+    pluginLatencyPdcSupported: false,
     scanModules: [],
     revisionDirty: initialRevisionDirty(),
     deviceStream: initialDeviceStream(),
@@ -83,9 +83,9 @@ export function applyStatus(
     !context.scanRunning && Array.isArray(payload.lastScan)
       ? payload.lastScan
       : state.scanModules;
-  const latencyEnabled =
+  const pluginLatencyPdcSupported =
     payload.capabilities === undefined
-      ? state.latencyEnabled
+      ? state.pluginLatencyPdcSupported
       : payload.capabilities.includes("pluginLatencyPdcV1");
   const status =
     stream.accepted || !state.status
@@ -106,7 +106,7 @@ export function applyStatus(
     deviceAccepted: stream.accepted,
     state: {
       status,
-      latencyEnabled,
+      pluginLatencyPdcSupported,
       scanModules,
       revisionDirty,
       deviceStream: stream.state,

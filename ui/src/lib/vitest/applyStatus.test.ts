@@ -46,7 +46,7 @@ test("權威 payload 一次縮減 status、capability、掃描清單、dirty 與
 
   assert.equal(applied.deviceAccepted, true);
   assert.equal(applied.state.status, status);
-  assert.equal(applied.state.latencyEnabled, true);
+  assert.equal(applied.state.pluginLatencyPdcSupported, true);
   assert.equal(applied.state.scanModules, scan);
   assert.equal(isRevisionDirty(applied.state.revisionDirty), true);
   assert.equal(applied.state.deviceStream.phase, "running");
@@ -69,7 +69,7 @@ test("status-only 事件保留 capability，掃描進行中不覆寫既有 regis
   const previousScan: ScanModule[] = [{ path: "existing.vst3", classes: [] }];
   const initial = {
     ...initialAppliedStatus(),
-    latencyEnabled: true,
+    pluginLatencyPdcSupported: true,
     scanModules: previousScan,
   };
   const applied = applyStatus(
@@ -78,7 +78,7 @@ test("status-only 事件保留 capability，掃描進行中不覆寫既有 regis
     { scanRunning: true, devicesLoaded: true },
   );
 
-  assert.equal(applied.state.latencyEnabled, true);
+  assert.equal(applied.state.pluginLatencyPdcSupported, true);
   assert.equal(applied.state.scanModules, previousScan);
   assert.equal(applied.effects.refreshDevices, false);
   assert.equal(applied.effects.ensureDefaults, true);
