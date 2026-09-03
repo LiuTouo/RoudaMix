@@ -227,6 +227,15 @@ if(MSVC)
 endif()
 add_test(NAME rt_crossfade COMMAND rt_crossfade_test)
 
+# DriftReader 漂移校正讀頭:純值物件 + 腳本化 fifo 事件(無裝置/執行緒/時鐘;
+# spec #10 —— header-only,只需 include path)
+add_executable(drift_reader_test tests/drift_reader_test.cpp)
+target_include_directories(drift_reader_test PRIVATE src)
+if(MSVC)
+    target_compile_options(drift_reader_test PRIVATE /W4 /utf-8)
+endif()
+add_test(NAME drift_reader COMMAND drift_reader_test)
+
 add_executable(pdc_audio_path_test tests/pdc_audio_path_test.cpp
     src/route_planner.cpp src/pdc_planner.cpp src/pdc_delay_line.cpp)
 target_include_directories(pdc_audio_path_test PRIVATE src)
