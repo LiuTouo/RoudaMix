@@ -101,7 +101,6 @@ struct RackSlot {
 
 inline const char* runtime_state_str(RackSlot::RuntimeState state) noexcept {
     switch (state) {
-        case RackSlot::RuntimeState::kPreparing: return "preparing";
         case RackSlot::RuntimeState::kDegraded: return "degraded";
         case RackSlot::RuntimeState::kSuspended: return "suspended";
         case RackSlot::RuntimeState::kActive: return "active";

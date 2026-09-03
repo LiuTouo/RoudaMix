@@ -11,7 +11,6 @@ namespace rmx {
 
 enum class RouteRuntimeState : std::uint8_t {
     kActive,
-    kPreparing,
     kDegraded,
     kSuspended,
 };
