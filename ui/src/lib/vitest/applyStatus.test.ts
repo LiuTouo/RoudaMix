@@ -1,9 +1,9 @@
 import assert from "node:assert";
-import { test } from "node:test";
-import { applyStatus, initialAppliedStatus } from "./applyStatus.ts";
-import { transitionDeviceStream } from "./deviceStream.ts";
-import { isRevisionDirty, transitionRevisionDirty } from "./revisionDirty.ts";
-import type { EngineStatus, ScanModule } from "./types.ts";
+import { test } from "vitest";
+import { applyStatus, initialAppliedStatus } from "../applyStatus.ts";
+import { transitionDeviceStream } from "../deviceStream.ts";
+import { isRevisionDirty, transitionRevisionDirty } from "../revisionDirty.ts";
+import type { EngineStatus, ScanModule } from "../types.ts";
 
 function engineStatus(overrides: Partial<EngineStatus> = {}): EngineStatus {
   return {
@@ -44,7 +44,7 @@ test("權威 payload 一次縮減 status、capability、掃描清單、dirty 與
     { scanRunning: false, devicesLoaded: false },
   );
 
-  assert.equal(applied.accepted, true);
+  assert.equal(applied.deviceAccepted, true);
   assert.equal(applied.state.status, status);
   assert.equal(applied.state.latencyEnabled, true);
   assert.equal(applied.state.scanModules, scan);
@@ -102,12 +102,24 @@ test("裝置狀態機拒絕遲到 payload 時，權威縮減不覆寫較新的 U
       target: { deviceKey: "asio:preferred", bufferSize: 512 },
     }).state,
   };
+  const lateStatus = engineStatus({
+    running: true,
+    deviceKey: "asio:late",
+    bufferSize: 512,
+    revision: 9,
+    trackCount: 4,
+  });
   const late = applyStatus(
     pending,
-    { status: current },
+    { status: lateStatus },
     { scanRunning: false, devicesLoaded: true },
   );
 
-  assert.equal(late.accepted, false);
-  assert.equal(late.state, pending);
+  assert.equal(late.deviceAccepted, false);
+  assert.equal(late.state.deviceStream, pending.deviceStream);
+  assert.equal(late.state.status?.deviceKey, "asio:first");
+  assert.equal(late.state.status?.bufferSize, 128);
+  assert.equal(late.state.status?.trackCount, 4);
+  assert.equal(late.state.status?.revision, 9);
+  assert.equal(late.effects.latencyTracks, lateStatus.tracks);
 });

@@ -1,11 +1,11 @@
 import assert from "node:assert";
-import { test } from "node:test";
+import { test } from "vitest";
 import {
   initialDeviceStream,
   isDeviceStreamBusy,
   transitionDeviceStream,
   type DeviceStreamDevice,
-} from "./deviceStream.ts";
+} from "../deviceStream.ts";
 
 const devices: DeviceStreamDevice[] = [
   {
@@ -231,5 +231,20 @@ test("停止請求的狀態事件可先於回覆完成，reset 會清除連線�
   const reset = transitionDeviceStream(pending, { type: "reset" });
 
   assert.equal(reset.accepted, true);
-  assert.deepEqual(reset.state, initialDeviceStream());
+  assert.deepEqual(reset.state, {
+    ...initialDeviceStream(),
+    requestSerial: pending.requestSerial,
+  });
+
+  const afterReconnect = transitionDeviceStream(reset.state, {
+    type: "startRequested",
+    target: original,
+  }).state;
+  const previousEpochReply = transitionDeviceStream(afterReconnect, {
+    type: "startSucceeded",
+    requestId: pending.request!.id,
+    actual: pending.request!.target!,
+  });
+  assert.equal(previousEpochReply.accepted, false);
+  assert.equal(previousEpochReply.state, afterReconnect);
 });

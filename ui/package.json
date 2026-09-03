@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "check": "svelte-check --tsconfig ./tsconfig.json",
-    "test": "node --test \"src/lib/*.test.ts\""
+    "test": "npm run test:node && npm run test:modules",
+    "test:node": "node --test \"src/lib/*.test.ts\"",
+    "test:modules": "vitest run src/lib/vitest/applyStatus.test.ts src/lib/vitest/deviceStream.test.ts"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^5",
@@ -15,7 +17,8 @@
     "svelte": "^5",
     "svelte-check": "^4",
     "typescript": "^5",
-    "vite": "^6"
+    "vite": "^6",
+    "vitest": "^4.1.6"
   },
   "dependencies": {
     "@tauri-apps/plugin-autostart": "^2.5.1"

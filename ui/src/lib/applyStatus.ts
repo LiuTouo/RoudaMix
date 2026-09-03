@@ -40,7 +40,7 @@ export interface ApplyStatusEffects {
 export interface ApplyStatusResult {
   state: AppliedStatusState;
   effects: ApplyStatusEffects;
-  accepted: boolean;
+  deviceAccepted: boolean;
 }
 
 export function initialAppliedStatus(): AppliedStatusState {
@@ -71,17 +71,6 @@ export function applyStatus(
     running: payload.status.running,
     actual,
   });
-  if (!stream.accepted) {
-    return {
-      state,
-      accepted: false,
-      effects: {
-        refreshDevices: false,
-        ensureDefaults: false,
-        latencyTracks: [],
-      },
-    };
-  }
 
   let revisionDirty = state.revisionDirty;
   if (typeof payload.status.revision === "number") {
@@ -98,16 +87,30 @@ export function applyStatus(
     payload.capabilities === undefined
       ? state.latencyEnabled
       : payload.capabilities.includes("pluginLatencyPdcV1");
+  const status =
+    stream.accepted || !state.status
+      ? payload.status
+      : {
+          ...payload.status,
+          running: state.status.running,
+          deviceKey: state.status.deviceKey,
+          sampleRate: state.status.sampleRate,
+          bufferSize: state.status.bufferSize,
+          inputLatency: state.status.inputLatency,
+          outputLatency: state.status.outputLatency,
+          xruns: state.status.xruns,
+          error: state.status.error,
+        };
 
   return {
-    accepted: true,
+    deviceAccepted: stream.accepted,
     state: {
-      status: payload.status,
+      status,
       latencyEnabled,
       scanModules,
       revisionDirty,
       deviceStream: stream.state,
-      selection: actual ?? state.selection,
+      selection: stream.accepted && actual ? actual : state.selection,
     },
     effects: {
       refreshDevices: !context.devicesLoaded,

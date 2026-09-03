@@ -106,6 +106,8 @@ function sameConfig(
   return left.deviceKey === right.deviceKey && left.bufferSize === right.bufferSize;
 }
 
+export { sameConfig as sameDeviceStreamConfig };
+
 function autoStartCandidates(
   devices: DeviceStreamDevice[],
   preferredDeviceKey: string | null,
@@ -130,7 +132,11 @@ export function transitionDeviceStream(
   state: DeviceStreamState,
   event: DeviceStreamEvent,
 ): DeviceStreamTransition {
-  if (event.type === "reset") return { state: initialDeviceStream(), accepted: true };
+  if (event.type === "reset")
+    return {
+      state: { ...initialDeviceStream(), requestSerial: state.requestSerial },
+      accepted: true,
+    };
 
   if (event.type === "devicesChanged") {
     return { state: { ...state, devices: [...event.devices] }, accepted: true };

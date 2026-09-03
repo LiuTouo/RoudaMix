@@ -23,6 +23,7 @@
   import {
     initialDeviceStream,
     isDeviceStreamBusy,
+    sameDeviceStreamConfig,
     transitionDeviceStream,
     type DeviceStreamConfig,
     type DeviceStreamRequest,
@@ -221,7 +222,7 @@
   const scanProgress = $derived(scanJob.progress);
   const scanNotice = $derived(scanJob.error);
   /** 快照事件、status 事件與主動 get_snapshot 共用的唯一權威縮減入口。 */
-  function applyAuthoritativeStatus(payload: AuthoritativeStatusPayload): boolean {
+  function applyAuthoritativeStatus(payload: AuthoritativeStatusPayload): void {
     const applied = applyStatus(
       {
         status,
@@ -234,7 +235,6 @@
       payload,
       { scanRunning, devicesLoaded: devices.length > 0 },
     );
-    if (!applied.accepted) return false;
 
     status = applied.state.status;
     latencyEnabled = applied.state.latencyEnabled;
@@ -248,7 +248,6 @@
     observeLatencyRuntime(applied.effects.latencyTracks);
     if (applied.effects.refreshDevices) void refreshDevices();
     if (applied.effects.ensureDefaults) void ensureDefaults();
-    return true;
   }
   // ---- A:load_session 的 missing diagnostics 摘要(頂欄)----
   let missing = $state<MissingPlugin[]>([]);
@@ -327,6 +326,10 @@
         if (epochChanged(conn.epoch, c.epoch)) {
           ensuredDefaults = false;
           deviceStream = transitionDeviceStream(deviceStream, { type: "reset" }).state;
+          devices = [];
+          selected = "";
+          bufSize = null;
+          restoreError = "";
           currentSessionPath = null; // 新 engine 尚未成功恢復任何檔案，不得覆寫上一代 Session
           scanJob = transitionScanJob(scanJob, { type: "reset" }).state;
         }
@@ -514,8 +517,14 @@
       addNotice("error", "設定有部分值不合法,已回復預設", reply.warnings.join("\n"));
   }
 
+  type SettingsMutationTag =
+    | "close-behavior"
+    | "preferences"
+    | "last-session"
+    | "last-working"
+    | "start-minimized";
   function writeSettings(
-    tag: string,
+    tag: SettingsMutationTag,
     patch: Partial<AppSettings>,
   ): Promise<MutationRunResult<SettingsReply>> {
     return mutations.run(mutKey.settings, tag, () => setSettings(patch));
@@ -659,19 +668,22 @@
   }
 
   let restoreError = $state(""); // 啟動恢復失敗(檔案不存在/損壞)→ 頂列提示
-  function restoreSession(tag: string, path: string) {
+  type SessionMutationTag = "startup-restore" | "manual-restore";
+  function restoreSession(tag: SessionMutationTag, path: string) {
     return mutations.run(mutKey.session, tag, () => engineCommand("load_session", { path }));
   }
 
   async function startupRestore(): Promise<void> {
+    const path = restorePath();
+    if (!path || currentSessionPath !== null || restoreError) return;
     // 併發觸發只等待目前 restore；不再排第二次 load_session。
     if (mutations.busy(mutKey.session)) {
       await mutations.whenIdle(mutKey.session);
-      return;
+      return startupRestore();
     }
-    const path = restorePath();
-    if (!path) return;
+    const restoreEpoch = conn.epoch;
     const result = await restoreSession("startup-restore", path);
+    if (conn.epoch !== restoreEpoch) return;
     if (result.status === "completed") {
       applyLoadedSession(result.value);
       currentSessionPath = path;
@@ -751,10 +763,6 @@
     }
   }
 
-  function sameDeviceConfig(left: DeviceStreamConfig | null, right: DeviceStreamConfig | null) {
-    return left?.deviceKey === right?.deviceKey && left?.bufferSize === right?.bufferSize;
-  }
-
   function statusDeviceConfig(value: EngineStatus): DeviceStreamConfig | null {
     return value.running && value.deviceKey
       ? { deviceKey: value.deviceKey, bufferSize: value.bufferSize }
@@ -778,12 +786,14 @@
     tag: "auto-start" | "switch" | "transport",
   ): Promise<boolean> {
     if (deviceStream.request?.id !== request.id) return false;
+    const requestEpoch = conn.epoch;
     if (request.kind === "auto-start" && request.target) {
       selected = request.target.deviceKey;
       bufSize = request.target.bufferSize;
     }
     const rollbackFailure = request.kind === "rollback" ? deviceStream.lastStartError : null;
     const result = await mutations.run(mutKey.device, tag, () => executeDeviceRequest(request));
+    if (conn.epoch !== requestEpoch) return false;
     if (result.status === "superseded") return false;
 
     if (result.status === "failed") {
@@ -806,6 +816,12 @@
     }
 
     const actual = statusDeviceConfig(result.value) ?? request.target;
+    const alreadyObserved =
+      request.kind === "stop"
+        ? deviceStream.phase === "idle" && deviceStream.request === null
+        : deviceStream.phase === "running" &&
+          deviceStream.request === null &&
+          sameDeviceStreamConfig(deviceStream.lastGood, actual);
     const transition = transitionDeviceStream(
       deviceStream,
       request.kind === "stop"
@@ -813,6 +829,7 @@
         : { type: "startSucceeded", requestId: request.id, actual: actual! },
     );
     if (transition.accepted) deviceStream = transition.state;
+    else if (!alreadyObserved) return false;
     applyAuthoritativeStatus({ status: result.value });
 
     const reached =
@@ -820,7 +837,7 @@
         ? deviceStream.phase === "idle" && deviceStream.request === null
         : deviceStream.phase === "running" &&
           deviceStream.request === null &&
-          sameDeviceConfig(deviceStream.lastGood, actual);
+          sameDeviceStreamConfig(deviceStream.lastGood, actual);
     if (!reached) return false;
     if (request.kind !== "stop" && actual) persistLastWorking(actual.deviceKey, actual.bufferSize);
     if (request.kind === "rollback" && rollbackFailure) {
