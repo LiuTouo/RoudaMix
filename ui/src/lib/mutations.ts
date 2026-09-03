@@ -4,6 +4,9 @@
 // 序列化(g_engine_mutex),client 端只需要:(1) 同資源命令依序送(不平行)、
 // (2) 同資源同性質的新意圖覆蓋還沒開始跑的舊意圖(latest-wins)。
 // 失敗不回滾本地 —— engine 權威 status event 會把實際值帶回(onError 只顯示)。
+// rejection 傳遞結構化 CommandError(onError 端以 code 分支,不做字串解析)。
+
+import { toCommandError, type CommandError } from "./protocol-commands.generated.ts";
 
 export interface MutationJob {
   tag?: string; // 同 key 內同性質(bypass/mute/dests...)才互蓋;undefined = 不可蓋
@@ -22,9 +25,9 @@ export function supersedeQueued(jobs: MutationJob[], tag: string | undefined): M
 export class MutationQueue {
   private queues = new Map<string, MutationJob[]>();
   private running = new Set<string>();
-  private onError: (key: string, err: string) => void;
+  private onError: (key: string, err: CommandError) => void;
 
-  constructor(onError: (key: string, err: string) => void) {
+  constructor(onError: (key: string, err: CommandError) => void) {
     this.onError = onError;
   }
 
@@ -58,7 +61,7 @@ export class MutationQueue {
         try {
           await job.fn();
         } catch (e) {
-          this.onError(key, String(e));
+          this.onError(key, toCommandError(e));
         }
       }
     } finally {

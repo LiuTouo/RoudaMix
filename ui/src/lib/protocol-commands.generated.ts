@@ -6,6 +6,20 @@ export type CommandKind = "ping" | "get_snapshot" | "get_latency_report" | "list
 export type ErrorCode = "unsupported_version" | "bad_frame" | "bad_command" | "not_running" | "already_running" | "device_open_failed" | "device_lost" | "track_not_found" | "cycle_detected" | "device_busy" | "app_not_found" | "unsupported_windows" | "plugin_not_found" | "plugin_load_failed" | "plugin_no_editor" | "param_not_found" | "session_io" | "preset_io" | "plugin_state_failed" | "internal";
 type EmptyCommandKind = "ping" | "get_snapshot" | "get_latency_report" | "list_devices" | "list_audio_apps" | "list_render_devices" | "stop" | "open_device_panel" | "cancel_scan" | "ensure_system_outputs" | "shutdown_engine";
 
+/** bridge rejection 的結構化形狀(code = engine 錯誤碼或 not_connected/disconnected/timeout) */
+export interface CommandError {
+  code: string;
+  message: string;
+}
+
+export function toCommandError(raw: unknown): CommandError {
+  if (typeof raw === "object" && raw !== null &&
+      typeof (raw as CommandError).code === "string" &&
+      typeof (raw as CommandError).message === "string")
+    return raw as CommandError;
+  return { code: "internal", message: raw instanceof Error ? raw.message : String(raw) };
+}
+
 export interface CommandPayloads {
   "ping": Record<string, never>;
   "get_snapshot": Record<string, never>;
@@ -129,5 +143,9 @@ export function engineCommand<K extends CommandKind>(
     ? [payload?: CommandPayloads[K]]
     : [payload: CommandPayloads[K]]
 ): Promise<CommandResults[K]> {
-  return invoke<CommandResults[K]>("engine_command", { kind, payload: args[0] ?? {} });
+  return invoke<CommandResults[K]>("engine_command", { kind, payload: args[0] ?? {} }).catch(
+    (raw: unknown) => {
+      throw toCommandError(raw);
+    },
+  );
 }

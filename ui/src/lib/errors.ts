@@ -1,6 +1,8 @@
-// P1-O:raw backend error("code: message")→ 繁中主訊息 + 技術細節保留可複製。
-// 映射集中在這;UI 只顯示 friendly + 展開 raw。
+// P1-O:結構化錯誤 {code, message} → 繁中主訊息 + 技術細節保留可複製。
+// 映射以 code 直接索引(bridge rejection 已帶型別化 code,無字串解析);
+// UI 只顯示 friendly + 展開 raw。
 
+import { toCommandError, type CommandError } from "./protocol-commands.generated.ts";
 import type { ErrorCode } from "./error-codes.generated.ts";
 
 export const ENGINE_ERROR_MESSAGES = {
@@ -34,19 +36,24 @@ const MESSAGES: Record<string, string> = {
 };
 
 export interface FriendlyError {
-  /** 繁中主訊息(未知的 code = 原字串) */
+  /** 繁中主訊息(未知的 code = 原 message) */
   friendly: string;
-  /** 原始字串(可複製、可展開的技術細節) */
+  /** code + 原 message(可複製、可展開的技術細節) */
   raw: string;
 }
 
-/** "code: message" 或任意錯誤字串 → 顯示模型 */
-export function friendlyError(err: string): FriendlyError {
-  const m = /^([a-z_]+):\s*(.*)$/i.exec(err);
-  if (m && MESSAGES[m[1]]) {
-    return { friendly: MESSAGES[m[1]], raw: m[2] ? `${m[1]}: ${m[2]}` : m[1] };
-  }
-  return { friendly: err, raw: err };
+/** 錯誤物件(或任意 rejected value)→ "code: message" 顯示字串 */
+export function errorText(err: unknown): string {
+  const e = toCommandError(err);
+  return `${e.code}: ${e.message}`;
+}
+
+/** 結構化錯誤 → 顯示模型 */
+export function friendlyError(err: unknown): FriendlyError {
+  const e = toCommandError(err);
+  const raw = errorText(e);
+  const known = MESSAGES[e.code];
+  return { friendly: known ?? (e.message || raw), raw };
 }
 
 /** P1-J/P1-O:負載/過載警示 debounce —— 連續 N 次超標才算持續過載

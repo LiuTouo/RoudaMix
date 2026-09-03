@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import { engineCommand } from "./protocol-commands.generated";
+  import { errorText } from "./errors";
   import { samplesToMs } from "./format";
   import type { EngineStatus, LatencyReport, MetersFrame, RackSlot, Track } from "./types";
 
@@ -63,7 +64,7 @@
       report = result.report;
       loadedGeneration = report.generation;
     } catch (e) {
-      error = String(e);
+      error = errorText(e);
       loadedGeneration = generation;
     } finally {
       loading = false;

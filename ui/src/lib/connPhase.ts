@@ -1,8 +1,10 @@
 // P1-A/P1-L:連線狀態的 UI 模型(純邏輯,App.svelte 呼)。
 // bridge SharedState.phase 涵蓋 connecting/spawning/connected/spawn_failed/disconnected;
 // version mismatch 不在 bridge 知識內(engine reply unsupported_version)→ 由命令
-// 錯誤分類補上。標籤/原因對應集中在這,App 只負責顯示。
+// 錯誤的 code 分類補上。標籤/原因對應集中在這,App 只負責顯示。
 
+import type { CommandError } from "./protocol-commands.generated.ts";
+import { errorText } from "./errors.ts";
 import type { ConnectionStatus } from "./types";
 
 export type ConnPhase =
@@ -40,18 +42,18 @@ const TONES: Record<ConnPhase, ConnView["tone"]> = {
   version_mismatch: "err",
 };
 
-/** engineCommand 錯誤字串 → 連線分類(unsupported_version = 版本不符) */
-export function classifyConnError(err: string): ConnPhase | null {
-  if (err.includes("unsupported_version")) return "version_mismatch";
+/** engineCommand 錯誤 → 連線分類(code 直接比對;unsupported_version = 版本不符) */
+export function classifyConnError(err: CommandError): ConnPhase | null {
+  if (err.code === "unsupported_version") return "version_mismatch";
   return null;
 }
 
 /** bridge 狀態 → UI 顯示模型。phase 未知(舊 bridge)= connected 判斷 fallback。 */
-export function connView(s: ConnectionStatus, probeErr?: string | null): ConnView {
+export function connView(s: ConnectionStatus, probeErr?: CommandError | null): ConnView {
   let phase: ConnPhase;
   if (probeErr) {
     const cls = classifyConnError(probeErr);
-    if (cls) return { phase: cls, label: LABELS[cls], detail: probeErr, tone: TONES[cls] };
+    if (cls) return { phase: cls, label: LABELS[cls], detail: errorText(probeErr), tone: TONES[cls] };
   }
   const raw = (s.phase ?? (s.connected ? "connected" : "connecting")) as ConnPhase;
   phase = raw in LABELS ? raw : "connecting";

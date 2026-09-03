@@ -41,7 +41,7 @@
       const r = await engineCommand("list_audio_apps", {});
       apps = (r.apps as AudioApp[]) ?? [];
     } catch (e) {
-      err = friendlyError(String(e)).friendly;
+      err = friendlyError(e).friendly;
     }
     loading = false;
   }

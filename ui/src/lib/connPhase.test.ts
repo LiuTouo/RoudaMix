@@ -25,16 +25,23 @@ test("connView:未知 phase 防禦 → connecting", () => {
   assert.equal(connView({ ...base, phase: "warp" }).phase, "connecting");
 });
 
-test("classifyConnError:unsupported_version 分類", () => {
-  assert.equal(classifyConnError("unsupported_version: server speaks protocol v2"), "version_mismatch");
-  assert.equal(classifyConnError("timeout"), null);
-  assert.equal(classifyConnError(""), null);
+test("classifyConnError:unsupported_version 分類(code 直接比對)", () => {
+  assert.equal(
+    classifyConnError({ code: "unsupported_version", message: "server speaks protocol v2" }),
+    "version_mismatch",
+  );
+  assert.equal(classifyConnError({ code: "timeout", message: "no reply in time" }), null);
+  assert.equal(classifyConnError({ code: "device_busy", message: "x" }), null);
 });
 
 test("connView:命令錯誤帶 unsupported_version → version_mismatch 顯示", () => {
-  const v = connView({ connected: true, epoch: 1, engineVersion: "" }, "unsupported_version: server speaks protocol v2");
+  const v = connView(
+    { connected: true, epoch: 1, engineVersion: "" },
+    { code: "unsupported_version", message: "server speaks protocol v2" },
+  );
   assert.equal(v.phase, "version_mismatch");
   assert.equal(v.tone, "err");
+  assert.match(v.detail, /unsupported_version/);
 });
 
 test("needsActiveSnapshot:listener 掛好後永遠主動拉(snapshot 事件可能早已錯過)", () => {

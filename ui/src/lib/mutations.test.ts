@@ -47,7 +47,7 @@ test("MutationQueue:latest-wins —— 等待中的同 tag job 被覆蓋不執�
 });
 
 test("MutationQueue:失敗交 onError、佇列續跑;busy 反映等待中", async () => {
-  const errs: Array<[string, string]> = [];
+  const errs: Array<[string, { code: string; message: string }]> = [];
   const q = new MutationQueue((k, e) => errs.push([k, e]));
   const p = new Promise<void>((r) => setTimeout(r, 10));
   q.run("k", undefined, async () => {
@@ -59,7 +59,9 @@ test("MutationQueue:失敗交 onError、佇列續跑;busy 反映等待中", asyn
   await new Promise((r) => setTimeout(r, 40));
   assert.equal(errs.length, 1);
   assert.equal(errs[0][0], "k");
-  assert.match(errs[0][1], /boom/);
+  // rejection 一律正規化成 {code, message}:非 bridge rejection 也帶 fallback code
+  assert.match(errs[0][1].message, /boom/);
+  assert.equal(typeof errs[0][1].code, "string");
   assert.equal(q.busy("k"), false);
   // busy:等待中(未開始)也算
   q.run("k2", undefined, async () => {});

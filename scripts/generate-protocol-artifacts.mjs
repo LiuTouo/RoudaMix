@@ -156,6 +156,15 @@ function generateTypeScriptCommands() {
     `\nexport type CommandKind = ${contract.commands.map(({ kind }) => JSON.stringify(kind)).join(" | ")};\n` +
     `export type ErrorCode = ${contract.errorCodes.map(({ code }) => JSON.stringify(code)).join(" | ")};\n` +
     `type EmptyCommandKind = ${emptyKinds.join(" | ")};\n\n` +
+    `/** bridge rejection 的結構化形狀(code = engine 錯誤碼或 not_connected/disconnected/timeout) */\n` +
+    `export interface CommandError {\n  code: string;\n  message: string;\n}\n\n` +
+    `export function toCommandError(raw: unknown): CommandError {\n` +
+    `  if (typeof raw === "object" && raw !== null &&\n` +
+    `      typeof (raw as CommandError).code === "string" &&\n` +
+    `      typeof (raw as CommandError).message === "string")\n` +
+    `    return raw as CommandError;\n` +
+    `  return { code: "internal", message: raw instanceof Error ? raw.message : String(raw) };\n` +
+    `}\n\n` +
     `export interface CommandPayloads {\n${payloadLines.join("\n")}\n}\n\n` +
     `export interface CommandResults {\n${resultLines.join("\n")}\n}\n\n` +
     `export interface CommandErrors {\n${errorLines.join("\n")}\n}\n\n` +
@@ -165,7 +174,11 @@ function generateTypeScriptCommands() {
     `    ? [payload?: CommandPayloads[K]]\n` +
     `    : [payload: CommandPayloads[K]]\n` +
     `): Promise<CommandResults[K]> {\n` +
-    `  return invoke<CommandResults[K]>("engine_command", { kind, payload: args[0] ?? {} });\n` +
+    `  return invoke<CommandResults[K]>("engine_command", { kind, payload: args[0] ?? {} }).catch(\n` +
+    `    (raw: unknown) => {\n` +
+    `      throw toCommandError(raw);\n` +
+    `    },\n` +
+    `  );\n` +
     `}\n`;
 }
 

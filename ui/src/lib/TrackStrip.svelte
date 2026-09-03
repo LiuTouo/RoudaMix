@@ -28,7 +28,7 @@
     type MonitorBypassState,
     type OutputLatencyPolicy,
   } from "./latencyControls";
-  import { friendlyError } from "./errors";
+  import { errorText, friendlyError } from "./errors";
   import AppPicker from "./AppPicker.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import type {
@@ -96,7 +96,7 @@
 
   // P1-B:本軌命令序列化 + latest-wins(連點 mute/bypass/dests 不會用 stale
   // props 互蓋);錯誤進 err 顯示,engine 權威 status event 會把實際值帶回
-  const mq = new MutationQueue((_, e) => (err = friendlyError(String(e)).friendly));
+  const mq = new MutationQueue((_, e) => (err = friendlyError(e).friendly));
 
   // placeholder(missing/broken)槽:黯淡顯示 + 重試/重新定位/移除
   const isPh = (s: RackSlot) => s.availability !== undefined && s.availability !== "ok";
@@ -154,7 +154,7 @@
         });
       }
     } catch (e) {
-      err = String(e);
+      err = errorText(e);
     }
   }
 
@@ -163,7 +163,7 @@
       const r = await engineCommand("list_render_devices", {});
       renderDevices = (r.devices as RenderDevice[]) ?? [];
     } catch (e) {
-      err = String(e);
+      err = errorText(e);
     }
   }
 
@@ -204,7 +204,7 @@
         });
       }
     } catch (e) {
-      err = String(e);
+      err = errorText(e);
     }
   }
 
@@ -234,7 +234,7 @@
     try {
       await engineCommand("track_set", { trackId: track.trackId, color: parseColor(css) });
     } catch (e) {
-      err = String(e);
+      err = errorText(e);
     }
   }
 
@@ -248,7 +248,7 @@
     try {
       await engineCommand("track_set", { trackId: track.trackId, gain: v });
     } catch (e) {
-      err = String(e);
+      err = errorText(e);
     }
   }
 
@@ -342,7 +342,7 @@
     if (n && n !== track.name) {
       err = "";
       engineCommand("track_set", { trackId: track.trackId, name: n }).catch(
-        (e) => (err = String(e)),
+        (e) => (err = errorText(e)),
       );
     }
   }
@@ -370,7 +370,7 @@
         console.info("[undo-snapshot] track_remove", JSON.stringify(track));
         await engineCommand("track_remove", { trackId: track.trackId });
       } catch (e) {
-        err = friendlyError(String(e)).friendly;
+        err = friendlyError(e).friendly;
       }
     };
     confirmBox = { title: "刪除軌道?", impact, confirmLabel: "刪除" };
@@ -388,7 +388,7 @@
         if (slot) console.info("[undo-snapshot] remove_plugin", JSON.stringify(slot));
         await engineCommand("remove_plugin", { instanceId: id });
       } catch (e) {
-        err = friendlyError(String(e)).friendly;
+        err = friendlyError(e).friendly;
       }
     };
     confirmBox = { title: "移除 plugin?", impact, confirmLabel: "移除" };
@@ -427,7 +427,7 @@
       await engineCommand("set_monitor_bypass", request.command);
     } catch (e) {
       outcome = "rejected";
-      err = friendlyError(String(e)).friendly;
+      err = friendlyError(e).friendly;
     } finally {
       monitorBypassState = finishMonitorBypass(
         monitorBypassState,
@@ -454,7 +454,7 @@
       });
     } catch (e) {
       outcome = "rejected";
-      err = friendlyError(String(e)).friendly;
+      err = friendlyError(e).friendly;
     } finally {
       latencyPolicyState = finishLatencyPolicy(latencyPolicyState, outcome);
     }
@@ -466,7 +466,7 @@
     try {
       await engineCommand("open_editor", { instanceId: slot.instanceId });
     } catch (e) {
-      err = String(e);
+      err = errorText(e);
     }
   }
 
@@ -505,7 +505,7 @@
       if (ni !== from) {
         err = "";
         engineCommand("move_plugin", { instanceId: plugDrag, newIndex: ni }).catch(
-          (e2) => (err = String(e2)),
+          (e2) => (err = errorText(e2)),
         );
       }
     }
@@ -525,7 +525,7 @@
     try {
       await engineCommand("retry_plugin", { instanceId: slot.instanceId });
     } catch (e) {
-      err = String(e);
+      err = errorText(e);
     }
   }
   async function relocatePlugin(slot: RackSlot) {
@@ -540,7 +540,7 @@
       if (!p) return;
       await engineCommand("retry_plugin", { instanceId: slot.instanceId, path: p });
     } catch (e) {
-      err = String(e);
+      err = errorText(e);
     }
   }
 
@@ -594,7 +594,7 @@
       await engineCommand("add_plugin", { trackId: track.trackId, path, classId });
       scanDlg?.close(); // registry 共用,不清(別條軌直接用)
     } catch (e) {
-      err = friendlyError(String(e)).friendly;
+      err = friendlyError(e).friendly;
     }
   }
 

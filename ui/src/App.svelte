@@ -20,7 +20,7 @@
     type RevisionDirtyState,
   } from "./lib/revisionDirty";
   import { connView, epochChanged } from "./lib/connPhase";
-  import { friendlyError, OverloadDetector } from "./lib/errors";
+  import { errorText, friendlyError, OverloadDetector } from "./lib/errors";
   import { visibleRange, spacerWidths, dropPosFromX } from "./lib/laneView";
   import { reorderLane } from "./lib/laneOrder";
   import {
@@ -46,7 +46,7 @@
     respawnEngine,
     type AppSettings,
   } from "./lib/ipc";
-  import { engineCommand } from "./lib/protocol-commands.generated";
+  import { engineCommand, toCommandError, type CommandError } from "./lib/protocol-commands.generated";
   import { samplesToMs } from "./lib/format";
   import type {
     ConnectionStatus,
@@ -60,7 +60,7 @@
   } from "./lib/types";
 
   let conn = $state<ConnectionStatus>({ connected: false, epoch: 0, engineVersion: "" });
-  let connProbeErr = $state<string | null>(null); // 主動 get_snapshot 的錯誤(version mismatch 等)
+  let connProbeErr = $state<CommandError | null>(null); // 主動 get_snapshot 的錯誤(version mismatch 等)
   let snap = $state<unknown>(null);
   let status = $state<EngineStatus | null>(null);
   let latencyEnabled = $state(false);
@@ -320,7 +320,12 @@
           observeEngineRevision(st.revision);
           observeLatencyRuntime(st.tracks);
           // stream 狀態的權威對齊:engine 跑著時 UI 選擇跟著實際值(失敗回滾後也正確)
-          if (st.running && st.deviceKey) selected = st.deviceKey;
+          if (st.running && st.deviceKey) {
+            selected = st.deviceKey;
+            // buffer 同步:啟動競態(session 恢復覆寫 bufSize 後 start 撞 busy 被吞)會把
+            // dropdown 留成 stale 值;權威 echo 在這裡帶回現實,否則顯示 ≠ 實際直到手動更改
+            if (st.bufferSize != null && st.bufferSize > 0) bufSize = st.bufferSize;
+          }
           void ensureDefaults();
         }
         // 硬體面板關閉:driver 設定可能變(率),且 SSL 這類 driver 在面板動 buffer 後
@@ -441,7 +446,7 @@
       // 每次程式啟動主動跑一次；持久 fingerprint 讓未變更 VST 不重新載入。
       await startScan();
     } catch (e) {
-      connProbeErr = String(e); // version mismatch 等分類顯示(connView)
+      connProbeErr = toCommandError(e); // version mismatch 等分類顯示(connView)
     }
       settingsReady();
       void refreshDevices();
@@ -487,7 +492,7 @@
       if (result.warnings.length > 0)
         addNotice("error", "設定有部分值不合法,已回復預設", result.warnings.join("\n"));
     } catch (e) {
-      addNotice("error", "關閉視窗偏好儲存失敗，下次仍會再次詢問", String(e));
+      addNotice("error", "關閉視窗偏好儲存失敗，下次仍會再次詢問", errorText(e));
     }
   }
 
@@ -506,7 +511,7 @@
       }
       await quitApp();
     } catch (e) {
-      addNotice("error", "程式結束失敗", String(e));
+      addNotice("error", "程式結束失敗", errorText(e));
     } finally {
       exitFlowActive = false;
     }
@@ -526,7 +531,7 @@
       if (behavior === "tray") await getCurrentWindow().hide();
       else await requestAppExit();
     } catch (e) {
-      addNotice("error", "關閉視窗動作失敗", String(e));
+      addNotice("error", "關閉視窗動作失敗", errorText(e));
     } finally {
       closeFlowActive = false;
     }
@@ -563,8 +568,8 @@
     } catch (e) {
       rejectRevisionBaseline();
       // P1-F:存檔失敗 dirty 不清(cleanRevision 沒動)、原檔仍在(原子寫入)
-      notice = String(e);
-      addNotice("error", "Session 儲存失敗 —— 未儲存的變更仍在", String(e));
+      showNotice(e);
+      addNotice("error", "Session 儲存失敗 —— 未儲存的變更仍在", errorText(e));
       return false;
     }
   }
@@ -594,7 +599,7 @@
         addNotice("error", "設定有部分值不合法,已回復預設", r.warnings.join("\n"));
     } catch (e) {
       // 存失敗不擋 UI;下次啟動退回舊值(原子寫入:舊檔完整保留)
-      addNotice("error", "設定儲存失敗(下次啟動沿用舊值)", String(e));
+      addNotice("error", "設定儲存失敗(下次啟動沿用舊值)", errorText(e));
     }
   }
 
@@ -626,7 +631,7 @@
       } catch (e) {
         rejectRevisionBaseline();
         // 檔案不存在/損壞 = 開空白 + 頂列提示,不擋啟動
-        restoreError = String(e);
+        restoreError = errorText(e);
       }
     })();
     return restoreP;
@@ -660,6 +665,13 @@
       : (dev.bufferSizes[0] ?? null);
   }
 
+  // 錯誤提示:結構化錯誤進 notice;「啟動競態殘留」的清理以 bridge 提供的 code 判斷
+  let lastNoticeErr: CommandError | null = null;
+  function showNotice(e: unknown) {
+    lastNoticeErr = toCommandError(e);
+    notice = errorText(e);
+  }
+
   // 硬體面板關閉後:重掃 + 重建 stream(面板期間動過率/緩衝都會讓現有 stream 失效)
   async function onPanelClosed() {
     panelOpen = false;
@@ -676,9 +688,12 @@
         // 否則依列舉序逐個嘗試到成功(不是 devices[0] 失敗即停)
         await autoStart();
       }
-      if (notice === "not connected") notice = ""; // 啟動競態殘留,成功即清
+      if (lastNoticeErr?.code === "not_connected") {
+        lastNoticeErr = null;
+        notice = ""; // 啟動競態殘留,成功即清(code 判斷,非訊息字面值)
+      }
     } catch (e) {
-      notice = String(e);
+      showNotice(e);
     }
   }
 
@@ -757,9 +772,9 @@
       persistLastWorking(key, bufSize); // P1-D:成功才寫偏好
       return true;
     } catch (e) {
-      lastStartErr = friendlyError(String(e)).friendly;
+      lastStartErr = friendlyError(e).friendly;
       audioStale = true;
-      if (!quiet) notice = String(e);
+      if (!quiet) showNotice(e);
       return false;
     } finally {
       busy = false;
@@ -798,7 +813,7 @@
       persistLastWorking(key, wantBuf); // P1-D:成功才寫偏好
     } catch (e) {
       // 新設定失敗:回滾到最後可工作設定(成功 = UI 回權威值 + 顯示原因)
-      notice = String(e);
+      showNotice(e);
       if (lastGood && (lastGood.key !== key || lastGood.buf !== wantBuf)) {
         try {
           await engineCommand("stop");
@@ -809,13 +824,13 @@
           });
           selected = lastGood.key; // UI 回到實際權威值
           bufSize = lastGood.buf;
-          notice = `切換失敗,已恢復原裝置/Buffer — ${String(e)}`;
+          notice = `切換失敗,已恢復原裝置/Buffer — ${errorText(e)}`;
           audioStale = false;
           persistLastWorking(lastGood.key, lastGood.buf);
         } catch (e2) {
           audioStale = true;
-          notice = `切換與回滾都失敗,音訊已停止 — ${String(e2)}`;
-          addNotice("error", "裝置切換與回滾都失敗,音訊已停止", String(e2));
+          notice = `切換與回滾都失敗,音訊已停止 — ${errorText(e2)}`;
+          addNotice("error", "裝置切換與回滾都失敗,音訊已停止", errorText(e2));
         }
       } else {
         audioStale = true;
@@ -829,7 +844,7 @@
       await engineCommand("open_device_panel", {});
       panelOpen = true; // devices_changed 回來 = 面板關閉,清旗標並重建
     } catch (e) {
-      notice = String(e);
+      showNotice(e);
     }
   }
 
@@ -840,7 +855,7 @@
       audioStale = false; // 主動停 = 預期不跑,警示該滅
       lastGood = null; // 使用者主動停:沒有「最後可工作」可回滾
     } catch (e) {
-      notice = String(e);
+      showNotice(e);
     }
     busy = false;
   }
@@ -859,7 +874,7 @@
       }).state;
       return true;
     } catch (e) {
-      const message = String(e);
+      const message = errorText(e);
       scanJob = transitionScanJob(scanJob, {
         type: "startRejected",
         error: message,
@@ -876,7 +891,7 @@
     try {
       await engineCommand("cancel_scan", {});
     } catch (e) {
-      const message = String(e);
+      const message = errorText(e);
       scanJob = transitionScanJob(scanJob, {
         type: "cancelRejected",
         error: message,
@@ -897,7 +912,7 @@
     try {
       await engineCommand("track_add", { kind });
     } catch (e) {
-      notice = String(e);
+      showNotice(e);
     }
   }
 
@@ -1015,8 +1030,8 @@
       restoreError = ""; // 手動救回 = 啟動失敗警示該滅
     } catch (e) {
       rejectRevisionBaseline();
-      notice = String(e);
-      addNotice("error", "Session 儲存失敗", String(e));
+      showNotice(e);
+      addNotice("error", "Session 儲存失敗", errorText(e));
     }
   }
 
@@ -1042,8 +1057,8 @@
       restoreError = "";
     } catch (e) {
       rejectRevisionBaseline();
-      notice = String(e);
-      addNotice("error", "Session 載入失敗", String(e));
+      showNotice(e);
+      addNotice("error", "Session 載入失敗", errorText(e));
     }
   }
 
@@ -1092,8 +1107,8 @@
       restoreError = "";
     } catch (e) {
       rejectRevisionBaseline();
-      notice = String(e);
-      addNotice("error", "Session 載入失敗", String(e));
+      showNotice(e);
+      addNotice("error", "Session 載入失敗", errorText(e));
     }
   }
 
@@ -1114,7 +1129,7 @@
       autostartEnabled = await isAutostartEnabled();
     } catch (e) {
       autostartEnabled = null;
-      addNotice("error", "無法讀取 Windows 自動啟動狀態", String(e));
+      addNotice("error", "無法讀取 Windows 自動啟動狀態", errorText(e));
     } finally {
       autostartBusy = false;
     }
@@ -1135,7 +1150,7 @@
       } catch {
         autostartEnabled = null;
       }
-      addNotice("error", enabled ? "開啟自動啟動失敗" : "關閉自動啟動失敗", String(e));
+      addNotice("error", enabled ? "開啟自動啟動失敗" : "關閉自動啟動失敗", errorText(e));
     } finally {
       autostartBusy = false;
     }
@@ -1153,7 +1168,7 @@
         addNotice("error", "設定有部分值不合法,已回復預設", result.warnings.join("\n"));
     } catch (e) {
       appSettings.startMinimizedOnAutostart = previous;
-      addNotice("error", "自動啟動縮小偏好儲存失敗", String(e));
+      addNotice("error", "自動啟動縮小偏好儲存失敗", errorText(e));
     } finally {
       startMinimizedBusy = false;
     }
@@ -1186,7 +1201,7 @@
       await persistSettings();
       await refreshFolderFiles();
     } catch (e) {
-      notice = String(e);
+      showNotice(e);
     }
   }
 
