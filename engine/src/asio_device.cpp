@@ -421,19 +421,11 @@ bool AsioDevice::prepare(std::uint32_t sample_rate,
         return false;
     }
 
+    // createBuffers 用的要求值(0 = driver preferred)。driver 是最終權威:建完緩衝
+    // 後讀回實際授予大小(getBufferSize 此時回單一現行值;granularity 不合時部分
+    // driver 會 clamp),scratch 一併以授予值配置 —— 否則 RT 複製以 block_size_ 為
+    // 步距,driver 緩衝比要求小時會越界。
     const std::uint32_t frames = buffer_size != 0 ? buffer_size : cap_.preferred_buffer;
-    const std::size_t actual_in = impl->input_types_.size();
-    const std::size_t actual_out = impl->output_types_.size();
-    impl->input_scratch_.assign(actual_in * frames, 0.0F);
-    impl->output_scratch_.assign(actual_out * frames, 0.0F);
-    impl->input_channels_.resize(actual_in);
-    impl->output_channels_.resize(actual_out);
-    for (std::size_t i = 0; i < actual_in; ++i)
-        impl->input_channels_[i] = impl->input_scratch_.data() + i * frames;
-    for (std::size_t o = 0; o < actual_out; ++o)
-        impl->output_channels_[o] = impl->output_scratch_.data() + o * frames;
-    impl->in_count_ = actual_in;
-    impl->out_count_ = actual_out;
 
     // 單例 gate:同 process 一條 ASIO stream
     AsioDevice::Impl* expected{};
@@ -455,12 +447,31 @@ bool AsioDevice::prepare(std::uint32_t sample_rate,
         return false;
     }
     impl->buffers_created_ = true;
-    block_size_ = frames;
+
+    long amin{}, amax{}, agranted{}, agran{};
+    std::uint32_t granted = frames;
+    if (asio_ok(impl_->driver_->getBufferSize(&amin, &amax, &agranted, &agran)) &&
+        agranted > 0)
+        granted = static_cast<std::uint32_t>(agranted);
+    block_size_ = granted;
+
+    const std::size_t actual_in = impl->input_types_.size();
+    const std::size_t actual_out = impl->output_types_.size();
+    impl->input_scratch_.assign(actual_in * granted, 0.0F);
+    impl->output_scratch_.assign(actual_out * granted, 0.0F);
+    impl->input_channels_.resize(actual_in);
+    impl->output_channels_.resize(actual_out);
+    for (std::size_t i = 0; i < actual_in; ++i)
+        impl->input_channels_[i] = impl->input_scratch_.data() + i * granted;
+    for (std::size_t o = 0; o < actual_out; ++o)
+        impl->output_channels_[o] = impl->output_scratch_.data() + o * granted;
+    impl->in_count_ = actual_in;
+    impl->out_count_ = actual_out;
 
     // 輸出緩衝清零(防啟動爆音)
     std::fill(impl->output_scratch_.begin(), impl->output_scratch_.end(), 0.0F);
     for (std::size_t o = 0; o < actual_out; ++o) {
-        const std::size_t bytes = pcm_bytes_per_sample(impl->output_types_[o]) * frames;
+        const std::size_t bytes = pcm_bytes_per_sample(impl->output_types_[o]) * granted;
         for (std::size_t half = 0; half < 2; ++half) {
             auto* buffer =
                 static_cast<std::byte*>(impl->buffer_infos_[actual_in + o].buffers[half]);
@@ -573,6 +584,17 @@ void AsioDevice::close() noexcept {
     driver_dll_path_.clear();
     cap_ = DeviceCapability{};
     block_size_ = 0;
+}
+
+void AsioDevice::attach_driver_for_test(IASIO* driver, DeviceCapability cap) {
+    close();
+    auto* impl = new Impl();
+    impl->owner = this;
+    impl->driver_ = driver;
+    impl_ = impl;
+    cap_ = std::move(cap);
+    clsid_ = "test";
+    name_ = "Test Driver";
 }
 
 std::uint64_t AsioDevice::xruns() const noexcept { return xruns_.load(std::memory_order_acquire); }

@@ -12,3 +12,6 @@ node_modules/
 
 # Rust
 **/*.rs.bk
+
+# CTest 局部狀態
+/engine/Testing/

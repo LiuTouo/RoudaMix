@@ -142,6 +142,16 @@ add_test(NAME protocol_parity
     COMMAND node "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/protocol-parity.mjs")
 
 # 轉換表 round-trip + meter accumulate 離線測試
+add_executable(asio_device_test tests/asio_device_test.cpp src/asio_device.cpp src/pcm_convert.cpp)
+target_include_directories(asio_device_test PRIVATE src)
+target_include_directories(asio_device_test SYSTEM PRIVATE third_party)
+target_link_libraries(asio_device_test PRIVATE asio_sdk ole32 user32)
+if(MSVC)
+    # /utf-8:原始碼含中文註解;缺了會被 CP950 誤讀吞換行(行號飄移+假語法錯)
+    target_compile_options(asio_device_test PRIVATE /W4 /utf-8)
+endif()
+add_test(NAME asio_device COMMAND asio_device_test)
+
 add_executable(audio_test tests/audio_test.cpp src/pcm_convert.cpp)
 target_include_directories(audio_test PRIVATE src)
 if(MSVC)

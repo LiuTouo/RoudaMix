@@ -11,6 +11,8 @@
 
 #include "pcm_convert.hpp"
 
+struct IASIO;  // asio SDK(asiodrvr/iasiodrv);測試掛鉤用
+
 namespace rmx {
 
 struct DriverEntry {
@@ -78,6 +80,10 @@ public:
     // 開 driver 自帶控制面板(硬體設定視窗);須 probe 過。driver 面板是硬體
     // 設定最終權威(取樣率/緩衝 driver 拒絕時,使用者從面板改)
     bool open_control_panel(std::string& err);
+
+    // 測試掛鉤:跳過 registry 列舉/asioOpenDriver,直接掛假 IASIO 與能力,
+    // prepare/start/stop/RT 路徑走真程式碼。生產碼不呼叫;driver 生命週期歸呼叫端。
+    void attach_driver_for_test(IASIO* driver, DeviceCapability cap);
 
     [[nodiscard]] bool running() const noexcept { return running_; }
     [[nodiscard]] std::uint64_t xruns() const noexcept;
