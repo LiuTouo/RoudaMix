@@ -146,8 +146,9 @@ Track        { trackId: u32, kind: "audio"|"app"|"fx"|"output", systemRole: "mon
                 metered = telemetry strip 預算內有錶(false = 錶不可用,UI 顯示
                 「無錶」狀態而非靜音;預算 64,track 先領、剩餘才輪 plugin —— 見
                 track_graph.cpp plan_telemetry_strips,音訊不受影響))
-TrackSource  = null | { type: "sine", freq: f32 } | { type: "asioIn", channel: u32 } | { type: "app", pid: u32, name: str? }
-               (null = 無來源/FX 軌;asioIn channel = pair 基底,取 ch 與 ch+1;
+TrackSource  = null | { type: "sine", freq: f32 } | { type: "asioIn", channel: u32, mono?: bool } | { type: "app", pid: u32, name: str? }
+               (null = 無來源/FX 軌;asioIn channel = pair 基底,取 ch 與 ch+1,mono =
+                單聲道來源(ch 複製到 L/R;session 檔與 status 都會帶,缺 = false);
                 app = process loopback 抓該程序樹的音訊。**pid 0 = needsRebind**:
                 session 載入只還原 name,engine 不依 exe 名猜 PID(同名多程序會綁
                 錯)—— UI 以程序選擇器讓使用者選(list_audio_apps),選定後

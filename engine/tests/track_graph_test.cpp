@@ -238,6 +238,14 @@ int main() {
         rmx::TrackOutput wasapi_empty = wasapi;
         wasapi_empty.wasapi_id.clear();
         CHECK(rmx::output_to_json(wasapi_empty).is_null());
+        // 狀態形例外:空 deviceId 也一律帶 deviceId 欄
+        CHECK(rmx::output_to_status_json(wasapi_empty).at("deviceId") == "");
+        // 持久形例外:app 空名 → null(= 載入即 kNone);狀態形仍帶 pid
+        rmx::TrackSource app_empty = app;
+        app_empty.app_name.clear();
+        CHECK(rmx::source_to_json(app_empty).is_null());
+        const auto app_empty_status = rmx::source_to_status_json(app_empty);
+        CHECK(app_empty_status.at("pid") == 4242 && app_empty_status.at("name").is_null());
         // kNone ↔ null round-trip
         CHECK(rmx::source_from_json(rmx::source_to_json(rmx::TrackSource{})).type ==
               rmx::TrackSource::kNone);
@@ -249,6 +257,15 @@ int main() {
         CHECK(rmx::source_from_json(json{{"type", "asioIn"}}).type == rmx::TrackSource::kNone);
         CHECK(rmx::source_from_json(json(false)).type == rmx::TrackSource::kNone);
         CHECK(rmx::source_from_json(json(nullptr)).type == rmx::TrackSource::kNone);
+        // 欄位型別不符同樣拒絕;可省欄位缺 = 預設值
+        CHECK(rmx::source_from_json(json{{"type", "sine"}, {"freq", "123"}}).type ==
+              rmx::TrackSource::kNone);
+        CHECK(rmx::source_from_json(json{{"type", "asioIn"}, {"channel", 4.5}}).type ==
+              rmx::TrackSource::kNone);
+        CHECK(rmx::source_from_json(json{{"type", "asioIn"}, {"channel", 4u}}).mono == false);
+        CHECK(rmx::source_from_json(
+                  json{{"type", "asioIn"}, {"channel", 4u}, {"mono", "yes"}})
+                  .mono == false);
         CHECK(rmx::output_from_json(json{{"type", "midi"}}).type == rmx::TrackOutput::kNone);
         CHECK(rmx::output_from_json(json{{"type", "asioOut"}}).type == rmx::TrackOutput::kNone);
         CHECK(rmx::output_from_json(json{{"type", "wasapi"},
