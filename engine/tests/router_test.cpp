@@ -53,6 +53,21 @@ void request_reply_fixture(const fs::path& fixture_path) {
     (void)router.dispatch_guarded(1, command);
 
     expect_equal(frames, fixture.at("frames"), "router request/reply fixture");
+    bool validated = false;
+    for (const auto& frame : frames) {
+        if (!frame.contains("id") || frame.at("id") != command.id || !frame.at("ok")) continue;
+        try {
+            rmx::contract::validate_result(command.kind, frame.at("result"));
+            validated = true;
+        } catch (const rmx::contract::ValidationError& error) {
+            std::fprintf(stderr, "FAIL: router result contract: %s\n", error.what());
+            ++failures;
+        }
+    }
+    if (!validated) {
+        std::fprintf(stderr, "FAIL: router fixture has no valid success reply\n");
+        ++failures;
+    }
 }
 
 void connection_snapshot_fixture(const fs::path& fixture_path) {

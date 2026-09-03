@@ -114,6 +114,13 @@ const nlohmann::json* find_kind(const char* collection, const std::string& kind)
     return nullptr;
 }
 
+void validate_command_member(const std::string& kind, const nlohmann::json& value,
+                             const char* schema_key) {
+    const auto* command = find_kind("commands", kind);
+    if (command == nullptr) invalid("kind", "is unknown: " + kind);
+    validate(value, command->at(schema_key), table(), schema_key);
+}
+
 }  // namespace
 
 const nlohmann::json& table() {
@@ -147,9 +154,11 @@ bool is_declared_error(const std::string& kind, const std::string& code) {
 }
 
 void validate_command_payload(const std::string& kind, const nlohmann::json& payload) {
-    const auto* command = find_kind("commands", kind);
-    if (command == nullptr) invalid("kind", "is unknown: " + kind);
-    validate(payload, command->at("payload"), table(), "payload");
+    validate_command_member(kind, payload, "payload");
+}
+
+void validate_result(const std::string& kind, const nlohmann::json& result) {
+    validate_command_member(kind, result, "result");
 }
 
 }  // namespace rmx::contract

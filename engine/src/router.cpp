@@ -250,6 +250,17 @@ void Router::complete(std::uint64_t generation, const Command& command,
         return;
     }
 
+#ifndef NDEBUG
+    try {
+        contract::validate_result(command.kind, outcome.result);
+    } catch (const contract::ValidationError& error) {
+        std::fprintf(stderr, "result contract violation for %s: %s\n",
+                     command.kind.c_str(), error.what());
+        assert(false &&
+               "result does not match command contract (see contracts/command_contract.json)");
+    }
+#endif
+
     const auto policy = policy_for(outcome.effect);
     if (policy.advances_revision) ++revision_;
     if (policy.broadcasts_status) {
