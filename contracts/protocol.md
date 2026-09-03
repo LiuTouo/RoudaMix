@@ -83,7 +83,7 @@ render 裝置,`list_render_devices` 列 endpoints)。每軌一條 VST 鏈
 | `track_remove` | 其他軌 dests 指向此軌的引用一併清除 |
 | `track_set` | gain = 線性乘數 [0, 4](1 = unity),缺 = 不變 |
 | `track_set_source` | asioIn pair 被別軌占用 → `device_busy`;kind `fx`/`output` 送非 null source → `bad_command` |
-| `track_set_dests` | 多選 = 加總;含自己 → `bad_command`;未知 id → `track_not_found`;造成環 → `cycle_detected` 且**不套用** |
+| `track_set_dests` | 多選 = 加總;含自己 → `bad_command`;目的地為來源軌(kind `audio`/`app`) → `bad_command` 且**不套用**(來源軌覆寫輸入匯流,路由進去的訊號會被丟棄);未知 id → `track_not_found`;造成環 → `cycle_detected` 且**不套用** |
 | `track_set_output` | asioOut pair 被別軌占用 → `device_busy`;wasapi deviceId 不存在 → `device_busy`;非 output 軌送非 null → `bad_command` |
 | `track_set_output_latency_policy` | Output Track 的 Output Latency Policy(Session v3 延遲政策);lowLatency 不加入 Compensation Delay |
 | `track_move` | master 陣列絕對索引重排(erase+insert;newIndex 超尾 = 移到尾);UI 輸入/輸出帶拖放用 |

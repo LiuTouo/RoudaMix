@@ -191,6 +191,7 @@ std::optional<Failure> load(AudioEngine& engine, const std::filesystem::path& fi
 
     // 逐軌重建:track_add(新 id 依序重發)→ 屬性 → plugins → dests(map 重接)
     std::map<std::uint32_t, std::uint32_t> id_map;  // 舊 id → 新 id
+    std::map<std::uint32_t, TrackKind> kind_map;    // 舊 id → 檔案軌種(#11 dest 過濾)
     nlohmann::json missing = nlohmann::json::array();  // structured diagnostics
     if (j.contains("tracks") && j["tracks"].is_array()) {
         for (const auto& st : j["tracks"]) {
@@ -209,8 +210,10 @@ std::optional<Failure> load(AudioEngine& engine, const std::filesystem::path& fi
                     : 0u;
             std::uint32_t new_id = 0;
             if (engine.track_add(kind, name, color, new_id)) continue;
-            if (st.contains("trackId") && st["trackId"].is_number_unsigned())
+            if (st.contains("trackId") && st["trackId"].is_number_unsigned()) {
                 id_map[st["trackId"].get<std::uint32_t>()] = new_id;
+                kind_map[st["trackId"].get<std::uint32_t>()] = kind;
+            }
             // systemRole:值不合法 = kNone(ensure_system_outputs 之後會補齊)
             if (st.contains("systemRole") && st["systemRole"].is_string()) {
                 const auto rs = st["systemRole"].get<std::string>();
@@ -357,7 +360,8 @@ std::optional<Failure> load(AudioEngine& engine, const std::filesystem::path& fi
             }
         }
 
-        // dests 重接:全部軌建好後跑(舊 id → 新 id;map 不到 = 該 dest 丟棄)
+        // dests 重接:全部軌建好後跑(舊 id → 新 id;map 不到 = 該 dest 丟棄;
+        // #11:指到來源軌(audio/app)的 dest 先剔除,同軌其餘路由照常恢復)
         for (const auto& st : j["tracks"]) {
             if (!st.is_object() || !st.contains("trackId") ||
                 !st["trackId"].is_number_unsigned() || !st.contains("dests") ||
@@ -370,7 +374,12 @@ std::optional<Failure> load(AudioEngine& engine, const std::filesystem::path& fi
             for (const auto& d : st["dests"]) {
                 if (!d.is_number_unsigned()) continue;
                 const auto it = id_map.find(d.get<std::uint32_t>());
-                if (it != id_map.end()) dests.push_back(it->second);
+                if (it == id_map.end()) continue;
+                const auto kt = kind_map.find(d.get<std::uint32_t>());
+                if (kt != kind_map.end() &&
+                    (kt->second == TrackKind::kAudio || kt->second == TrackKind::kApp))
+                    continue;  // 來源軌不可為目的地
+                dests.push_back(it->second);
             }
             (void)engine.track_set_dests(mine->second, std::move(dests));
         }

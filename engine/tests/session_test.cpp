@@ -334,11 +334,12 @@ int main() {
         CHECK(!has_extra);
 
         // 9b. 100 軌壓力(P1-H):add/dests/move/gain 正確性 + meter 預算降級
-        //     (不需真 plugin/硬體:placeholder 由 load 路徑覆蓋,此處驗結構)
+        //     (不需真 plugin/硬體:placeholder 由 load 路徑覆蓋,此處驗結構;
+        //      fx 軌:鏈狀 dests 需要可接收路由的軌種,#11 起 audio/app 不可為 dest)
         std::vector<std::uint32_t> ids;
         for (int i = 0; i < 100; ++i) {
             std::uint32_t id = 0;
-            CHECK(!e.track_add(rmx::TrackKind::kApp, "App" + std::to_string(i), 0, id));
+            CHECK(!e.track_add(rmx::TrackKind::kFx, "App" + std::to_string(i), 0, id));
             ids.push_back(id);
         }
         CHECK(e.tracks().size() >= 100);
@@ -349,7 +350,7 @@ int main() {
             // 環偵測:頭接到尾必須擋
             CHECK(e.track_set_dests(ids.back(), {ids.front()}));
         }
-        // strip 預算:100 app 軌 + 系統輸出 → 只有前 63 條(master 序)有錶
+        // strip 預算:100 fx 軌 + 系統輸出 → 只有前 63 條(master 序)有錶
         {
             const auto plan = rmx::plan_telemetry_strips(e.tracks(), rmx::kTelemetryStrips);
             CHECK(plan.tracks.size() == e.tracks().size());
@@ -376,6 +377,70 @@ int main() {
             for (const auto& t : e.tracks()) app_count += t.name.rfind("App", 0) == 0;
             CHECK(app_count == 100);
         }
+    }
+
+    // 10. 路由目的地限縮(#11):來源軌(audio/app)不可為目的地;混合有效+無效
+    //     = 全有全無(原路由不變);session 載入只剔除無效邊、其餘照常恢復
+    {
+        rmx::AudioEngine e2;
+        std::uint32_t vox = 0, app = 0, fx = 0, mon = 0, strm = 0;
+        CHECK(!e2.track_add(rmx::TrackKind::kAudio, "Vox", 0, vox));
+        CHECK(!e2.track_add(rmx::TrackKind::kApp, "App1", 0, app));
+        CHECK(!e2.track_add(rmx::TrackKind::kFx, "FX", 0, fx));
+        CHECK(!e2.track_add(rmx::TrackKind::kOutput, "監聽", 0, mon));
+        CHECK(!e2.track_add(rmx::TrackKind::kOutput, "串流", 0, strm));
+        const auto dests_of = [&](std::uint32_t id) -> const std::vector<std::uint32_t>* {
+            for (const auto& t : e2.tracks())
+                if (t.track_id == id) return &t.dests;
+            return nullptr;
+        };
+
+        // 10a. 目的地含來源軌 → bad_command;FX / 輸出軌照常可接收
+        CHECK(!e2.track_set_dests(fx, {mon}));
+        const auto rej_audio = e2.track_set_dests(fx, {mon, vox});
+        CHECK(rej_audio.has_value() && rej_audio->code == rmx::Err::kBadCommand);
+        const auto rej_app = e2.track_set_dests(fx, {app});
+        CHECK(rej_app.has_value() && rej_app->code == rmx::Err::kBadCommand);
+        CHECK(!e2.track_set_dests(fx, {mon, strm}));
+        CHECK(!e2.track_set_dests(vox, {fx, mon}));
+
+        // 10b. 混合有效+無效 = 全有全無:整組不套用,原路由 {mon, strm} 不變
+        const auto mixed = e2.track_set_dests(fx, {mon, vox});
+        CHECK(mixed.has_value() && mixed->code == rmx::Err::kBadCommand);
+        {
+            const auto* d = dests_of(fx);
+            CHECK(d != nullptr && d->size() == 2);
+            CHECK((*d)[0] == mon && (*d)[1] == strm);
+        }
+
+        // 10c. session 載入:指到來源軌的 dest 被剔除、同軌其餘路由照常恢復
+        //      (A 的 dests [12, 10]:12=output 有效、10=audio 無效剔除)
+        const auto f10 = tmp / "destfilter.rmsession";
+        write_text(f10,
+                   "{\n"
+                   "  \"roudamixSession\": 3,\n"
+                   "  \"tracks\": [\n"
+                   "    {\"trackId\": 10, \"kind\": \"audio\", \"name\": \"A\", "
+                   "\"color\": 0, \"dests\": [12, 10]},\n"
+                   "    {\"trackId\": 11, \"kind\": \"fx\", \"name\": \"F\", "
+                   "\"color\": 0, \"dests\": [12]},\n"
+                   "    {\"trackId\": 12, \"kind\": \"output\", \"name\": \"O\", "
+                   "\"color\": 0, \"dests\": []}\n"
+                   "  ]\n"
+                   "}\n");
+        nlohmann::json applied10;
+        CHECK(!rmx::session::load(e2, f10, applied10));
+        const rmx::TrackNode* a10 = nullptr;
+        const rmx::TrackNode* f10n = nullptr;
+        const rmx::TrackNode* o10 = nullptr;
+        for (const auto& t : e2.tracks()) {
+            if (t.kind == rmx::TrackKind::kAudio) a10 = &t;
+            if (t.kind == rmx::TrackKind::kFx) f10n = &t;
+            if (t.name == "O") o10 = &t;
+        }
+        CHECK(a10 != nullptr && f10n != nullptr && o10 != nullptr);
+        CHECK(a10->dests.size() == 1 && a10->dests[0] == o10->track_id);
+        CHECK(f10n->dests.size() == 1 && f10n->dests[0] == o10->track_id);
     }
 
     std::filesystem::remove_all(tmp);
