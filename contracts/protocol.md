@@ -82,9 +82,9 @@ render 裝置,`list_render_devices` 列 endpoints)。每軌一條 VST 鏈
 | `track_add` | name 缺 = 自動命名;color = 0xRRGGBB,缺 = 調色盤輪替 |
 | `track_remove` | 其他軌 dests 指向此軌的引用一併清除 |
 | `track_set` | gain = 線性乘數 [0, 4](1 = unity),缺 = 不變 |
-| `track_set_source` | asioIn pair 可多軌共用(#12:fan-out,各軌讀同一 scratch);kind `fx`/`output` 送非 null source → `bad_command` |
+| `track_set_source` | asioIn pair 可多軌共用(#12:fan-out,各軌讀同一 scratch);running 中 channel 重建失敗 → `device_busy`(舊設定自動回滾);kind `fx`/`output` 送非 null source → `bad_command` |
 | `track_set_dests` | 多選 = 加總;含自己 → `bad_command`;目的地為來源軌(kind `audio`/`app`) → `bad_command` 且**不套用**(來源軌覆寫輸入匯流,路由進去的訊號會被丟棄);未知 id → `track_not_found`;造成環 → `cycle_detected` 且**不套用** |
-| `track_set_output` | asioOut pair 可多軌共用(#12:同 pair 寫入相加 = 疊加);wasapi deviceId 不存在 → `device_busy`;非 output 軌送非 null → `bad_command` |
+| `track_set_output` | asioOut pair 可多軌共用(#12:同 pair 寫入相加 = 疊加);wasapi deviceId 不存在 → `device_busy`;running 中 channel 重建失敗 → `device_busy`(舊設定自動回滾);非 output 軌送非 null → `bad_command` |
 | `track_set_output_latency_policy` | Output Track 的 Output Latency Policy(Session v3 延遲政策);lowLatency 不加入 Compensation Delay |
 | `track_move` | master 陣列絕對索引重排(erase+insert;newIndex 超尾 = 移到尾);UI 輸入/輸出帶拖放用 |
 | `start_scan` | **非同步增量掃描**:立即回 jobId,掃描在 engine 背景 job 跑;同一時間一個 job(已在跑 = `reused: true` 共用現行 job)。空 roots = 預設 `C:\Program Files\Common Files\VST3`、`C:\Program Files\VST3`、`%LOCALAPPDATA%\Programs\Common\VST3`。registry 會持久化；UI 每次啟動會要求一次增量掃描，未變更 module 依 path/size/last-write fingerprint 沿用快取，不重新載入；新增/變更的檔案式或 bundle 目錄式 `.vst3` 才由隔離 worker 載入。結果經 `scan_progress`/`scan_done`/`scan_failed`/`scan_cancelled` events 回報(帶 jobId)；只有全部 roots 掃完且快取原子寫入成功才替換 registry，失敗或取消保留舊清單。worker 不在 = job failed(fail closed,不 in-process 試爆)。壞 module 進 `scan_done` 的 `failed`(quarantine,不進 `plugins`)且未變更時不重試。*(v2 早期同步的 `scan_plugins` 已移除 —— 它會佔住 engine 主 thread 且 30s reply timeout 必炸)* |

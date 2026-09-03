@@ -1,4 +1,4 @@
-# Issue #12 驗證:ASIO 輸入/輸出 pair 多軌共用(fan-out)— 真實 ASIO 路徑。
+﻿# Issue #12 驗證:ASIO 輸入/輸出 pair 多軌共用(fan-out)— 真實 ASIO 路徑。
 # 命令層:同 in/out pair 第二軌不再 device_busy;out-of-range 仍 bad_command。
 # RT 層(SHM v4):共用 in pair 的兩軌 meter peak 逐窗相等(同 scratch fan-out);
 #   其中一軌改走 sine → 振幅分道、改回 → 相等恢復;engine 輸出(strip0)有訊號。
@@ -120,7 +120,13 @@ $st = Command $pipe 'start' @{ deviceKey = $key; sampleRate = 48000 }
 Assert ($st.result.running) 'running'
 Start-Sleep -Milliseconds 700
 
-# --- 3b. out-of-range 仍 bad_command(channel 檢查保留)---
+# --- 3b. out-of-range 仍 bad_command(channel 檢查保留;先驗最後合法 pair 仍成功)---
+if ($maxIn -ge 2) {
+    $pt = Command $pipe 'track_add' @{ kind = 'audio'; name = 'ProbeHi' }
+    $ptId = [uint32]$pt.result.trackId
+    [void](Command $pipe 'track_set_source' @{ trackId = $ptId; source = @{ type = 'asioIn'; channel = ($maxIn - 2) } })
+    Write-Host "last legal input pair (ch=$($maxIn-2)) binds ok"
+}
 $badIn = Try-Command $pipe 'track_set_source' @{ trackId = $voxId; source = @{ type = 'asioIn'; channel = ($maxIn - 1) } }
 Assert ($badIn.ok -eq $false -and $badIn.error.code -eq 'bad_command') "input ch out of range -> bad_command (got $($badIn.error.code))"
 $badOut = Try-Command $pipe 'track_set_output' @{ trackId = $o1Id; output = @{ type = 'asioOut'; channel = ($maxOut - 1) } }
@@ -139,7 +145,10 @@ Assert ([Math]::Abs($p1.a.l - $p1.b.l) -lt 1e-6 -and [Math]::Abs($p1.a.r - $p1.b
 if ($p1.a.l -eq 0.0 -and $p1.a.r -eq 0.0) { Write-Host 'note: input silent - equality trivially true' }
 Write-Host "RT fan-out: peaks equal (L=$($p1.a.l) R=$($p1.a.r))"
 
-# --- 5. engine 輸出(strip0)有訊號(輸出 pair 寫入路徑活著;共用 pair 兩軌寫同 scratch = 疊加)---
+# --- 5. engine 輸出(strip0)有訊號(輸出 pair 寫入路徑活著)---
+# 註:同 pair 疊加發生在 driver scratch 上,無 loopback 硬體不可觀測 —
+#     疊加語意由 bus_add 累加(與 dest summing 同構、既有測試覆蓋)+ 命令層
+#     兩軌綁定成功(session_test 11)鎖定;此處只驗寫入路徑本身。
 $engPeak = [Math]::Max($acc.ReadSingle(48 + 8), $acc.ReadSingle(48 + 12))
 Assert ($engPeak -gt 0.0) "engine output strip0 has signal (peak=$engPeak)"
 Write-Host "engine output strip0 peak=$engPeak (shared out pair write path alive)"
