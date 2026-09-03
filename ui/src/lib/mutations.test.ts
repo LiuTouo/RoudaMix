@@ -68,3 +68,36 @@ test("MutationQueue:失敗交 onError、佇列續跑;busy 反映等待中", asyn
   assert.equal(q.busy("k2"), true);
   await new Promise((r) => setTimeout(r, 5));
 });
+
+test("MutationQueue.run 回傳可等待結果，superseded job 也會完成", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const q = new MutationQueue(() => {});
+  const first = q.run("settings", "write", async () => {
+    await gate;
+    return 1;
+  });
+  const superseded = q.run("settings", "write", async () => 2);
+  const latest = q.run("settings", "write", async () => 3);
+
+  assert.deepEqual(await superseded, { status: "superseded" });
+  release();
+  assert.deepEqual(await first, { status: "completed", value: 1 });
+  assert.deepEqual(await latest, { status: "completed", value: 3 });
+  await q.whenIdle("settings");
+  assert.equal(q.busy("settings"), false);
+});
+
+test("MutationQueue.run 將失敗正規化後同時交給 onError 與等待者", async () => {
+  const routed: Array<{ key: string; tag: string | undefined; code: string }> = [];
+  const q = new MutationQueue((key, error, tag) =>
+    routed.push({ key, tag, code: error.code }),
+  );
+  const result = await q.run("audio:device", "start", async () => {
+    throw { code: "device_busy", message: "busy" };
+  });
+
+  assert.equal(result.status, "failed");
+  if (result.status === "failed") assert.equal(result.error.code, "device_busy");
+  assert.deepEqual(routed, [{ key: "audio:device", tag: "start", code: "device_busy" }]);
+});

@@ -19,6 +19,15 @@
     type DirtyChoice,
     type RevisionDirtyState,
   } from "./lib/revisionDirty";
+  import { applyStatus, type AuthoritativeStatusPayload } from "./lib/applyStatus";
+  import {
+    initialDeviceStream,
+    isDeviceStreamBusy,
+    transitionDeviceStream,
+    type DeviceStreamConfig,
+    type DeviceStreamRequest,
+  } from "./lib/deviceStream";
+  import { MutationQueue, mutKey, type MutationRunResult } from "./lib/mutations";
   import { connView, epochChanged } from "./lib/connPhase";
   import { errorText, friendlyError, OverloadDetector } from "./lib/errors";
   import { visibleRange, spacerWidths, dropPosFromX } from "./lib/laneView";
@@ -45,6 +54,7 @@
     quitApp,
     respawnEngine,
     type AppSettings,
+    type SettingsReply,
   } from "./lib/ipc";
   import { engineCommand, toCommandError, type CommandError } from "./lib/protocol-commands.generated";
   import { samplesToMs } from "./lib/format";
@@ -69,7 +79,8 @@
   let devices = $state<DeviceInfo[]>([]);
   let selected = $state("");
   let bufSize = $state<number | null>(null); // buffer 是 ASIO host 權威;實數,初始 = driver preferred
-  let busy = $state(false);
+  let deviceStream = $state(initialDeviceStream());
+  const busy = $derived(isDeviceStreamBusy(deviceStream));
   let notice = $state("");
   let panelOpen = $state(false); // 硬體面板開啟中:stream 可能停,關閉後自動重建
   let settingsOpen = $state(false); // 設定 modal;已開再按 = 無操作,天然單例
@@ -80,8 +91,11 @@
   let autostartBusy = $state(false);
   let startMinimizedBusy = $state(false);
   let folderFiles = $state<string[]>([]);
-  let audioStale = $state(false); // 應該在跑但沒跑(啟動失敗)→ 頂欄極簡警示
+  const audioStale = $derived(deviceStream.stale); // 應該在跑但沒跑(啟動失敗)→ 頂欄極簡警示
   let ensuredDefaults = false; // 首次連線確保有系統輸出;engine 端保保證唯一
+  const mutations = new MutationQueue((key, error, tag) => {
+    if (key === mutKey.device && tag !== "auto-start") showNotice(error);
+  });
   // ---- O:頂層通知中心(錯誤/狀態帶動作;per-track 錯誤留在 TrackStrip)----
   interface Notice {
     id: number;
@@ -189,13 +203,6 @@
   let revisionDirty = $state<RevisionDirtyState>(initialRevisionDirty());
   let currentSessionPath: string | null = null; // 本次實際載入/儲存的檔案；不可用「最近 Session」替代
   const dirty = $derived(isRevisionDirty(revisionDirty));
-  function observeEngineRevision(value: unknown): void {
-    if (typeof value !== "number") return;
-    revisionDirty = transitionRevisionDirty(revisionDirty, {
-      type: "engineRevisionObserved",
-      revision: value,
-    });
-  }
   function confirmRevisionBaseline(value: unknown): void {
     if (typeof value !== "number") return;
     revisionDirty = transitionRevisionDirty(revisionDirty, {
@@ -213,6 +220,36 @@
   const scanRunning = $derived(isScanJobRunning(scanJob));
   const scanProgress = $derived(scanJob.progress);
   const scanNotice = $derived(scanJob.error);
+  /** 快照事件、status 事件與主動 get_snapshot 共用的唯一權威縮減入口。 */
+  function applyAuthoritativeStatus(payload: AuthoritativeStatusPayload): boolean {
+    const applied = applyStatus(
+      {
+        status,
+        latencyEnabled,
+        scanModules,
+        revisionDirty,
+        deviceStream,
+        selection: selected ? { deviceKey: selected, bufferSize: bufSize } : null,
+      },
+      payload,
+      { scanRunning, devicesLoaded: devices.length > 0 },
+    );
+    if (!applied.accepted) return false;
+
+    status = applied.state.status;
+    latencyEnabled = applied.state.latencyEnabled;
+    scanModules = applied.state.scanModules;
+    revisionDirty = applied.state.revisionDirty;
+    deviceStream = applied.state.deviceStream;
+    if (applied.state.selection) {
+      selected = applied.state.selection.deviceKey;
+      bufSize = applied.state.selection.bufferSize;
+    }
+    observeLatencyRuntime(applied.effects.latencyTracks);
+    if (applied.effects.refreshDevices) void refreshDevices();
+    if (applied.effects.ensureDefaults) void ensureDefaults();
+    return true;
+  }
   // ---- A:load_session 的 missing diagnostics 摘要(頂欄)----
   let missing = $state<MissingPlugin[]>([]);
   // ---- B:未儲存變更三分支 dialog ----
@@ -289,7 +326,7 @@
         // P1-A:reconnect epoch 對齊 —— engine 換代重連,本地一次性旗標作廢重跑
         if (epochChanged(conn.epoch, c.epoch)) {
           ensuredDefaults = false;
-          restoreP = null;
+          deviceStream = transitionDeviceStream(deviceStream, { type: "reset" }).state;
           currentSessionPath = null; // 新 engine 尚未成功恢復任何檔案，不得覆寫上一代 Session
           scanJob = transitionScanJob(scanJob, { type: "reset" }).state;
         }
@@ -300,33 +337,13 @@
       sub(
       await onSnapshot((s) => {
         snap = s;
-        status = s.status;
-        latencyEnabled = s.capabilities?.includes("pluginLatencyPdcV1") ?? false;
-        observeLatencyRuntime(s.status.tracks);
-        observeEngineRevision(s.status.revision);
-        // 全域 plugin registry 重連也對齊(不用重新掃);掃描進行中不覆寫
-        if (!scanRunning && Array.isArray(s.lastScan)) {
-          scanModules = s.lastScan as ScanModule[];
-        }
-        if (devices.length === 0) void refreshDevices();
-        void ensureDefaults(); // 首次連上空場景也要補系統輸出(snapshot 不走 status 事件)
+        applyAuthoritativeStatus(s);
       }),
     );
       sub(
       await onEngineEvent((kind, payload) => {
         if (kind === "status") {
-          status = payload as EngineStatus;
-          const st = payload as EngineStatus;
-          observeEngineRevision(st.revision);
-          observeLatencyRuntime(st.tracks);
-          // stream 狀態的權威對齊:engine 跑著時 UI 選擇跟著實際值(失敗回滾後也正確)
-          if (st.running && st.deviceKey) {
-            selected = st.deviceKey;
-            // buffer 同步:啟動競態(session 恢復覆寫 bufSize 後 start 撞 busy 被吞)會把
-            // dropdown 留成 stale 值;權威 echo 在這裡帶回現實,否則顯示 ≠ 實際直到手動更改
-            if (st.bufferSize != null && st.bufferSize > 0) bufSize = st.bufferSize;
-          }
-          void ensureDefaults();
+          applyAuthoritativeStatus({ status: payload as EngineStatus });
         }
         // 硬體面板關閉:driver 設定可能變(率),且 SSL 這類 driver 在面板動 buffer 後
         // 現有 stream 會死流 —— 一律重掃 + 重建(短暫中斷換取與硬體同步)
@@ -437,11 +454,7 @@
     try {
       const r = await engineCommand("get_snapshot", {});
       const s = r.snapshot as { status: EngineStatus; lastScan: ScanModule[] | null; capabilities?: string[] };
-      status = s.status;
-      latencyEnabled = s.capabilities?.includes("pluginLatencyPdcV1") ?? false;
-      observeLatencyRuntime(s.status.tracks);
-      observeEngineRevision(s.status.revision);
-      if (!scanRunning && Array.isArray(s.lastScan)) scanModules = s.lastScan;
+      applyAuthoritativeStatus(s);
       connProbeErr = null;
       // 每次程式啟動主動跑一次；持久 fingerprint 讓未變更 VST 不重新載入。
       await startScan();
@@ -449,7 +462,6 @@
       connProbeErr = toCommandError(e); // version mismatch 等分類顯示(connView)
     }
       settingsReady();
-      void refreshDevices();
     })();
 
     // teardown:解除所有 Tauri listener(HMR/重掛不重複事件)
@@ -485,14 +497,43 @@
     closeBehaviorResolve = null;
   }
 
+  function acceptSettingsReply(patch: Partial<AppSettings>, reply: SettingsReply): void {
+    if (!appSettings) {
+      appSettings = reply.settings;
+    } else {
+      const current = appSettings as unknown as Record<string, unknown>;
+      const normalized = reply.settings as unknown as Record<string, unknown>;
+      const next = { ...appSettings } as unknown as Record<string, unknown>;
+      for (const key of Object.keys(patch)) {
+        if (Object.is(current[key], (patch as Record<string, unknown>)[key]))
+          next[key] = normalized[key];
+      }
+      appSettings = next as unknown as AppSettings;
+    }
+    if (reply.warnings.length > 0)
+      addNotice("error", "設定有部分值不合法,已回復預設", reply.warnings.join("\n"));
+  }
+
+  function writeSettings(
+    tag: string,
+    patch: Partial<AppSettings>,
+  ): Promise<MutationRunResult<SettingsReply>> {
+    return mutations.run(mutKey.settings, tag, () => setSettings(patch));
+  }
+
   async function rememberCloseBehavior(choice: CloseBehavior): Promise<void> {
-    try {
-      const result = await setSettings({ closeBehavior: choice });
-      appSettings = result.settings;
-      if (result.warnings.length > 0)
-        addNotice("error", "設定有部分值不合法,已回復預設", result.warnings.join("\n"));
-    } catch (e) {
-      addNotice("error", "關閉視窗偏好儲存失敗，下次仍會再次詢問", errorText(e));
+    const previous = appSettings?.closeBehavior ?? null;
+    if (appSettings) appSettings.closeBehavior = choice;
+    const patch = { closeBehavior: choice };
+    const result = await writeSettings("close-behavior", patch);
+    if (result.status === "completed") acceptSettingsReply(patch, result.value);
+    else if (result.status === "failed") {
+      if (appSettings?.closeBehavior === choice) appSettings.closeBehavior = previous;
+      addNotice(
+        "error",
+        "關閉視窗偏好儲存失敗，下次仍會再次詢問",
+        errorText(result.error),
+      );
     }
   }
 
@@ -592,20 +633,20 @@
 
   async function persistSettings() {
     if (!appSettings) return;
-    try {
-      const r = await setSettings(appSettings);
-      appSettings = r.settings; // 回覆 = normalize 後的權威值
-      if (r.warnings.length > 0)
-        addNotice("error", "設定有部分值不合法,已回復預設", r.warnings.join("\n"));
-    } catch (e) {
+    const patch = { ...appSettings };
+    const result = await writeSettings("preferences", patch);
+    if (result.status === "completed") acceptSettingsReply(patch, result.value);
+    else if (result.status === "failed")
       // 存失敗不擋 UI;下次啟動退回舊值(原子寫入:舊檔完整保留)
-      addNotice("error", "設定儲存失敗(下次啟動沿用舊值)", errorText(e));
-    }
+      addNotice("error", "設定儲存失敗(下次啟動沿用舊值)", errorText(result.error));
   }
 
   function rememberLastSession(p: string) {
     if (appSettings) appSettings.lastSessionPath = p;
-    setSettings({ lastSessionPath: p }).catch(() => {});
+    const patch = { lastSessionPath: p };
+    void writeSettings("last-session", patch).then((result) => {
+      if (result.status === "completed") acceptSettingsReply(patch, result.value);
+    });
   }
 
   // 依啟動模式算出要恢復的 session 路徑(blank = null)
@@ -617,24 +658,28 @@
     return null;
   }
 
-  let restoreP: Promise<void> | null = null;
   let restoreError = $state(""); // 啟動恢復失敗(檔案不存在/損壞)→ 頂列提示
-  function startupRestore(): Promise<void> {
-    // 共享同一個 in-flight promise:多個 status 事件同時觸發也只載一次
-    restoreP ??= (async () => {
-      const p = restorePath();
-      if (!p) return;
-      try {
-        const r = await engineCommand("load_session", { path: p });
-        applyLoadedSession(r);
-        currentSessionPath = p;
-      } catch (e) {
-        rejectRevisionBaseline();
-        // 檔案不存在/損壞 = 開空白 + 頂列提示,不擋啟動
-        restoreError = errorText(e);
-      }
-    })();
-    return restoreP;
+  function restoreSession(tag: string, path: string) {
+    return mutations.run(mutKey.session, tag, () => engineCommand("load_session", { path }));
+  }
+
+  async function startupRestore(): Promise<void> {
+    // 併發觸發只等待目前 restore；不再排第二次 load_session。
+    if (mutations.busy(mutKey.session)) {
+      await mutations.whenIdle(mutKey.session);
+      return;
+    }
+    const path = restorePath();
+    if (!path) return;
+    const result = await restoreSession("startup-restore", path);
+    if (result.status === "completed") {
+      applyLoadedSession(result.value);
+      currentSessionPath = path;
+    } else if (result.status === "failed") {
+      rejectRevisionBaseline();
+      // 檔案不存在/損壞 = 開空白 + 頂列提示,不擋啟動
+      restoreError = errorText(result.error);
+    }
   }
 
   // 首次 snapshot 空 = 新場景:補系統輸出(monitor/stream;engine 端保證唯一性)
@@ -683,6 +728,15 @@
     try {
       const r = await engineCommand("list_devices");
       devices = (r.devices as DeviceInfo[]) ?? [];
+      deviceStream = transitionDeviceStream(deviceStream, {
+        type: "devicesChanged",
+        devices: devices.map((device) => ({
+          deviceKey: device.deviceKey,
+          name: device.name,
+          preferredBufferSize: device.preferredBufferSize,
+          bufferSizes: device.bufferSizes,
+        })),
+      }).state;
       if (!selected && devices.length) {
         // P1-D:啟動偏好 —— 上次「成功啟動」的裝置優先(還在清單才用),
         // 否則依列舉序逐個嘗試到成功(不是 devices[0] 失敗即停)
@@ -697,88 +751,135 @@
     }
   }
 
-  let autoStartP: Promise<void> | null = null;
-  /** P1-D:single-flight —— onConnection/onSnapshot 啟動競態會併發進來,第二個
-   *  跑者在 start() 的 busy 守衛上全數空轉,把每台都記成「失敗」誤報(audio 在
-   *  跑卻跳「沒有任何 ASIO 裝置能成功啟動」)。併發呼叫共享同一個 in-flight。 */
-  function autoStart(): Promise<void> {
-    return (autoStartP ??= runAutoStart().finally(() => (autoStartP = null)));
+  function sameDeviceConfig(left: DeviceStreamConfig | null, right: DeviceStreamConfig | null) {
+    return left?.deviceKey === right?.deviceKey && left?.bufferSize === right?.bufferSize;
   }
 
-  /** 依偏好序嘗試啟動。成功才把該裝置/Buffer 存成 lastWorking(失敗選擇
-   *  不成偏好);全部失敗 = audioStale + 診斷(實際試了哪些、各失敗原因)。 */
-  async function runAutoStart(): Promise<void> {
-    await settingsReady();
-    const prefer = appSettings?.lastWorkingDevice ?? null;
-    const preferBuf = appSettings?.lastWorkingBuffer ?? null;
-    const order: DeviceInfo[] = [];
-    const prefDev = devices.find((d) => d.deviceKey === prefer);
-    if (prefDev) order.push(prefDev);
-    for (const d of devices) if (d.deviceKey !== prefer) order.push(d);
-    if (order.length === 0) return;
-    // 偏好裝置存在 = 連 Buffer 也用上次的(driver preferred fallback)
-    if (prefDev) {
-      bufSize =
-        preferBuf != null && prefDev.bufferSizes.includes(preferBuf)
-          ? preferBuf
-          : prefDev.bufferSizes.includes(prefDev.preferredBufferSize)
-            ? prefDev.preferredBufferSize
-            : (prefDev.bufferSizes[0] ?? null);
+  function statusDeviceConfig(value: EngineStatus): DeviceStreamConfig | null {
+    return value.running && value.deviceKey
+      ? { deviceKey: value.deviceKey, bufferSize: value.bufferSize }
+      : null;
+  }
+
+  async function executeDeviceRequest(request: DeviceStreamRequest): Promise<EngineStatus> {
+    if (request.kind === "stop") return engineCommand("stop");
+    if (request.kind === "restart" || request.kind === "rollback")
+      await engineCommand("stop");
+    return engineCommand("start", {
+      deviceKey: request.target!.deviceKey,
+      sampleRate: null,
+      bufferSize: request.target!.bufferSize,
+    });
+  }
+
+  /** 執行狀態機目前的單一 effect；每次 command 都經同一 device queue。 */
+  async function runDeviceRequest(
+    request: DeviceStreamRequest,
+    tag: "auto-start" | "switch" | "transport",
+  ): Promise<boolean> {
+    if (deviceStream.request?.id !== request.id) return false;
+    if (request.kind === "auto-start" && request.target) {
+      selected = request.target.deviceKey;
+      bufSize = request.target.bufferSize;
     }
-    const failures: string[] = [];
-    for (const d of order) {
-      if (status?.running) return; // engine 已有 stream(attach/併發贏家)= 停止嘗試,不算失敗
-      if (!prefDev || d !== prefDev) applyDeviceDefaults(d);
-      const ok = await start(d.deviceKey, true);
-      if (ok) {
-        if (d !== prefDev)
-          addNotice(
-            "info",
-            `已改用「${d.name}」啟動(偏好裝置不可用)`,
-            `偏好:${prefer ?? "無"};失敗:${failures.join(" | ")}`,
-          );
-        return;
+    const rollbackFailure = request.kind === "rollback" ? deviceStream.lastStartError : null;
+    const result = await mutations.run(mutKey.device, tag, () => executeDeviceRequest(request));
+    if (result.status === "superseded") return false;
+
+    if (result.status === "failed") {
+      const transition = transitionDeviceStream(
+        deviceStream,
+        request.kind === "stop"
+          ? { type: "stopFailed", requestId: request.id }
+          : { type: "startFailed", requestId: request.id, failure: result.error },
+      );
+      if (!transition.accepted) return false;
+      deviceStream = transition.state;
+      const next = deviceStream.request;
+      if (next && next.id !== request.id)
+        return runDeviceRequest(next, tag);
+      if (request.kind === "rollback") {
+        notice = `切換與回滾都失敗,音訊已停止 — ${errorText(result.error)}`;
+        addNotice("error", "裝置切換與回滾都失敗,音訊已停止", errorText(result.error));
       }
-      failures.push(`${d.name}:${lastStartErr}`);
+      return false;
     }
-    audioStale = true;
-    addNotice("error", "沒有任何 ASIO 裝置能成功啟動", failures.join("\n"));
-    notice = failures.join(" | ");
+
+    const actual = statusDeviceConfig(result.value) ?? request.target;
+    const transition = transitionDeviceStream(
+      deviceStream,
+      request.kind === "stop"
+        ? { type: "stopSucceeded", requestId: request.id }
+        : { type: "startSucceeded", requestId: request.id, actual: actual! },
+    );
+    if (transition.accepted) deviceStream = transition.state;
+    applyAuthoritativeStatus({ status: result.value });
+
+    const reached =
+      request.kind === "stop"
+        ? deviceStream.phase === "idle" && deviceStream.request === null
+        : deviceStream.phase === "running" &&
+          deviceStream.request === null &&
+          sameDeviceConfig(deviceStream.lastGood, actual);
+    if (!reached) return false;
+    if (request.kind !== "stop" && actual) persistLastWorking(actual.deviceKey, actual.bufferSize);
+    if (request.kind === "rollback" && rollbackFailure) {
+      notice = `切換失敗,已恢復原裝置/Buffer — ${errorText(rollbackFailure)}`;
+    }
+    return true;
   }
 
-  let lastStartErr = "";
-
-  // ---- C:交易式裝置/Buffer 切換。onchange 立即切(無 Apply);busy 鎖住控制防
-  // 連點競態;切換序列化(promise chain);新設定起不來 = 自動恢復最後可工作的
-  // 裝置/Buffer;恢復也失敗 = engine 已 stopped,權威 status event 會把 UI 帶回現實 ----
-  let lastGood = $state<{ key: string; buf: number | null } | null>(null); // 最後成功 start 的設定
-  let switchChain: Promise<void> = Promise.resolve();
-
-  /** 回傳是否成功(autoStart 的候選序判斷用)。quiet = 不洗 notice(autoStart
-   *  匯整各裝置失敗原因後一次呈現)。 */
-  async function start(deviceKey?: string, quiet = false): Promise<boolean> {
-    const key = deviceKey ?? selected;
-    if (!key || busy || status?.running) return false;
-    busy = true;
-    if (!quiet) notice = "";
-    try {
-      await engineCommand("start", {
-        deviceKey: key,
-        sampleRate: null, // 率 = driver 現行(硬體面板權威)
-        bufferSize: bufSize, // buffer = host 權威;null = driver preferred
-      });
-      lastGood = { key, buf: bufSize };
-      audioStale = false;
-      persistLastWorking(key, bufSize); // P1-D:成功才寫偏好
-      return true;
-    } catch (e) {
-      lastStartErr = friendlyError(e).friendly;
-      audioStale = true;
-      if (!quiet) showNotice(e);
-      return false;
-    } finally {
-      busy = false;
+  /** 依偏好順序只發動一輪；候選推進與失敗累積由狀態機持有。 */
+  async function autoStart(): Promise<void> {
+    await settingsReady();
+    const preferredDeviceKey = appSettings?.lastWorkingDevice ?? null;
+    const requested = transitionDeviceStream(deviceStream, {
+      type: "autoStart",
+      preferredDeviceKey,
+      preferredBufferSize: appSettings?.lastWorkingBuffer ?? null,
+    });
+    if (!requested.accepted || !requested.state.request) return;
+    deviceStream = requested.state;
+    const ok = await runDeviceRequest(requested.state.request, "auto-start");
+    const failures = deviceStream.autoStartFailures.map((item) => {
+      const name = devices.find((device) => device.deviceKey === item.target.deviceKey)?.name;
+      return `${name ?? item.target.deviceKey}:${friendlyError(item.failure).friendly}`;
+    });
+    if (
+      !ok &&
+      deviceStream.phase === "failed" &&
+      deviceStream.request === null &&
+      failures.length > 0
+    ) {
+      addNotice("error", "沒有任何 ASIO 裝置能成功啟動", failures.join("\n"));
+      notice = failures.join(" | ");
+      return;
     }
+    if (!ok) return;
+    const actual = deviceStream.lastGood;
+    if (actual && actual.deviceKey !== preferredDeviceKey) {
+      const name = devices.find((device) => device.deviceKey === actual.deviceKey)?.name;
+      addNotice(
+        "info",
+        `已改用「${name ?? actual.deviceKey}」啟動(偏好裝置不可用)`,
+        `偏好:${preferredDeviceKey ?? "無"};失敗:${failures.join(" | ")}`,
+      );
+    }
+  }
+
+  async function start(deviceKey = selected): Promise<boolean> {
+    if (!deviceKey) return false;
+    const target = { deviceKey, bufferSize: bufSize };
+    const requested = transitionDeviceStream(
+      deviceStream,
+      status?.running || deviceStream.request
+        ? { type: "restartRequested", target }
+        : { type: "startRequested", target },
+    );
+    if (!requested.accepted || !requested.state.request) return false;
+    deviceStream = requested.state;
+    notice = "";
+    return runDeviceRequest(requested.state.request, "transport");
   }
 
   /** P1-D:lastWorkingDevice/lastWorkingBuffer —— 僅成功 start 後呼叫 */
@@ -788,57 +889,22 @@
       appSettings.lastWorkingDevice = key;
       appSettings.lastWorkingBuffer = buf;
     }
-    setSettings({ lastWorkingDevice: key, lastWorkingBuffer: buf }).catch(() => {});
+    const patch = { lastWorkingDevice: key, lastWorkingBuffer: buf };
+    void writeSettings("last-working", patch).then((result) => {
+      if (result.status === "completed") acceptSettingsReply(patch, result.value);
+    });
   }
 
-  function queueRestart(key = selected) {
-    // 連續選擇排隊依序跑;busy 鎖(select disabled)已擋大部分,這裡兜底序列化
-    switchChain = switchChain.then(() => doRestart(key));
-  }
-
-  async function doRestart(key: string) {
+  function queueRestart(key = selected): void {
     if (!key) return;
-    busy = true;
+    const requested = transitionDeviceStream(deviceStream, {
+      type: "restartRequested",
+      target: { deviceKey: key, bufferSize: bufSize },
+    });
+    if (!requested.accepted || !requested.state.request) return;
+    deviceStream = requested.state;
     notice = "";
-    const wantBuf = bufSize;
-    try {
-      await engineCommand("stop");
-      await engineCommand("start", {
-        deviceKey: key,
-        sampleRate: null,
-        bufferSize: wantBuf,
-      });
-      lastGood = { key, buf: wantBuf };
-      audioStale = false;
-      persistLastWorking(key, wantBuf); // P1-D:成功才寫偏好
-    } catch (e) {
-      // 新設定失敗:回滾到最後可工作設定(成功 = UI 回權威值 + 顯示原因)
-      showNotice(e);
-      if (lastGood && (lastGood.key !== key || lastGood.buf !== wantBuf)) {
-        try {
-          await engineCommand("stop");
-          await engineCommand("start", {
-            deviceKey: lastGood.key,
-            sampleRate: null,
-            bufferSize: lastGood.buf,
-          });
-          selected = lastGood.key; // UI 回到實際權威值
-          bufSize = lastGood.buf;
-          showNotice(e);
-          notice = `切換失敗,已恢復原裝置/Buffer — ${errorText(e)}`;
-          audioStale = false;
-          persistLastWorking(lastGood.key, lastGood.buf);
-        } catch (e2) {
-          audioStale = true;
-          showNotice(e2);
-          notice = `切換與回滾都失敗,音訊已停止 — ${errorText(e2)}`;
-          addNotice("error", "裝置切換與回滾都失敗,音訊已停止", errorText(e2));
-        }
-      } else {
-        audioStale = true;
-      }
-    }
-    busy = false;
+    void runDeviceRequest(requested.state.request, "switch");
   }
 
   async function openDevicePanel() {
@@ -851,15 +917,10 @@
   }
 
   async function stop() {
-    busy = true;
-    try {
-      await engineCommand("stop");
-      audioStale = false; // 主動停 = 預期不跑,警示該滅
-      lastGood = null; // 使用者主動停:沒有「最後可工作」可回滾
-    } catch (e) {
-      showNotice(e);
-    }
-    busy = false;
+    const requested = transitionDeviceStream(deviceStream, { type: "stopRequested" });
+    if (!requested.accepted || !requested.state.request) return;
+    deviceStream = requested.state;
+    await runDeviceRequest(requested.state.request, "transport");
   }
 
   // ---- E:背景掃描 job(共用 registry;回覆立即回 jobId,進度走 events)----
@@ -1052,8 +1113,10 @@
       }
     }
     try {
-      const r = await engineCommand("load_session", { path: p });
-      applyLoadedSession(r);
+      const result = await restoreSession("manual-restore", p);
+      if (result.status === "superseded") return;
+      if (result.status === "failed") throw result.error;
+      applyLoadedSession(result.value);
       currentSessionPath = p;
       notice = "";
       restoreError = "";
@@ -1101,8 +1164,10 @@
         filters: [{ name: "RoudaMix Session", extensions: ["rmsession"] }],
       });
       if (!path) return;
-      const r = await engineCommand("load_session", { path });
-      applyLoadedSession(r);
+      const result = await restoreSession("manual-restore", path);
+      if (result.status === "superseded") return;
+      if (result.status === "failed") throw result.error;
+      applyLoadedSession(result.value);
       currentSessionPath = path;
       rememberLastSession(path);
       notice = "";
@@ -1163,17 +1228,15 @@
     startMinimizedBusy = true;
     const previous = appSettings.startMinimizedOnAutostart;
     appSettings.startMinimizedOnAutostart = enabled;
-    try {
-      const result = await setSettings({ startMinimizedOnAutostart: enabled });
-      appSettings = result.settings;
-      if (result.warnings.length > 0)
-        addNotice("error", "設定有部分值不合法,已回復預設", result.warnings.join("\n"));
-    } catch (e) {
+    const patch = { startMinimizedOnAutostart: enabled };
+    const result = await writeSettings("start-minimized", patch);
+    if (result.status === "completed") {
+      acceptSettingsReply(patch, result.value);
+    } else if (result.status === "failed") {
       appSettings.startMinimizedOnAutostart = previous;
-      addNotice("error", "自動啟動縮小偏好儲存失敗", errorText(e));
-    } finally {
-      startMinimizedBusy = false;
+      addNotice("error", "自動啟動縮小偏好儲存失敗", errorText(result.error));
     }
+    startMinimizedBusy = false;
   }
 
   function openGeneral() {
