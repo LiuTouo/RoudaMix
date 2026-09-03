@@ -339,7 +339,7 @@ int main() {
         std::vector<std::uint32_t> ids;
         for (int i = 0; i < 100; ++i) {
             std::uint32_t id = 0;
-            CHECK(!e.track_add(rmx::TrackKind::kFx, "App" + std::to_string(i), 0, id));
+            CHECK(!e.track_add(rmx::TrackKind::kFx, "Fx" + std::to_string(i), 0, id));
             ids.push_back(id);
         }
         CHECK(e.tracks().size() >= 100);
@@ -373,9 +373,9 @@ int main() {
             nlohmann::json applied100;
             CHECK(!rmx::session::load(e, f100, applied100));
             CHECK(e.tracks().size() >= 100);
-            int app_count = 0;
-            for (const auto& t : e.tracks()) app_count += t.name.rfind("App", 0) == 0;
-            CHECK(app_count == 100);
+            int fx_count = 0;
+            for (const auto& t : e.tracks()) fx_count += t.name.rfind("Fx", 0) == 0;
+            CHECK(fx_count == 100);
         }
     }
 
@@ -395,12 +395,16 @@ int main() {
             return nullptr;
         };
 
-        // 10a. 目的地含來源軌 → bad_command;FX / 輸出軌照常可接收
+        // 10a. 目的地含來源軌 → bad_command;FX / 輸出軌照常可接收;原路由不變
         CHECK(!e2.track_set_dests(fx, {mon}));
         const auto rej_audio = e2.track_set_dests(fx, {mon, vox});
         CHECK(rej_audio.has_value() && rej_audio->code == rmx::Err::kBadCommand);
         const auto rej_app = e2.track_set_dests(fx, {app});
         CHECK(rej_app.has_value() && rej_app->code == rmx::Err::kBadCommand);
+        {
+            const auto* d = dests_of(fx);
+            CHECK(d != nullptr && d->size() == 1 && (*d)[0] == mon);
+        }
         CHECK(!e2.track_set_dests(fx, {mon, strm}));
         CHECK(!e2.track_set_dests(vox, {fx, mon}));
 

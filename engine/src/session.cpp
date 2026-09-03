@@ -376,8 +376,7 @@ std::optional<Failure> load(AudioEngine& engine, const std::filesystem::path& fi
                 const auto it = id_map.find(d.get<std::uint32_t>());
                 if (it == id_map.end()) continue;
                 const auto kt = kind_map.find(d.get<std::uint32_t>());
-                if (kt != kind_map.end() &&
-                    (kt->second == TrackKind::kAudio || kt->second == TrackKind::kApp))
+                if (kt != kind_map.end() && source_kind(kt->second))
                     continue;  // 來源軌不可為目的地
                 dests.push_back(it->second);
             }

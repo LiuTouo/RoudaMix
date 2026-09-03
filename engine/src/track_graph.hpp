@@ -35,6 +35,12 @@ inline const char* track_kind_str(TrackKind k) noexcept {
     return "audio";
 }
 
+// 來源軌:每個處理週期用自己的來源覆寫輸入匯流,路由進去的訊號會被丟棄,
+// 不得為路由目的地(#11)。未來新增軌種時在此同步決定可否作為目的地。
+inline bool source_kind(TrackKind k) noexcept {
+    return k == TrackKind::kAudio || k == TrackKind::kApp;
+}
+
 // 系統輸出角色:每個 session 恰好一條 monitor(監聽)+ 一條 stream(串流)。
 // 穩定 ID,不靠名稱;使用者可改名/改 sink/routing,但不可刪除(engine track_remove 擋)。
 enum class SystemRole : std::uint8_t { kNone, kMonitor, kStream };

@@ -1302,7 +1302,7 @@ std::optional<Failure> AudioEngine::track_set_dests(std::uint32_t track_id,
         if (dt == nullptr)
             return failure(Err::kTrackNotFound, "unknown dest trackId " + std::to_string(d));
         // #11:來源軌覆寫輸入匯流,路由進來的訊號會被丟棄 → 不得為目的地
-        if (dt->kind == TrackKind::kAudio || dt->kind == TrackKind::kApp)
+        if (source_kind(dt->kind))
             return failure(Err::kBadCommand, "input track cannot be a routing destination");
     }
     std::sort(dests.begin(), dests.end());

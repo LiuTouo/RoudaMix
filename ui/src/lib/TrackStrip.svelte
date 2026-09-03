@@ -1096,7 +1096,7 @@
           {t.name}
         </label>
       {:else}
-        <span class="dim">沒有可接收路由的軌道（清單僅含 FX 與輸出軌）</span>
+        <span class="dim">沒有可接收路由的軌道</span>
       {/each}
     </div>
   </dialog>
