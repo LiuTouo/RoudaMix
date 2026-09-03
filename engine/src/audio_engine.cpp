@@ -1184,7 +1184,7 @@ std::optional<Failure> AudioEngine::track_set_source(std::uint32_t track_id,
             const auto rate = rt_sample_rate_.load(std::memory_order_relaxed);
             if (auto fail = ensure_capture(*t, rate)) {
                 t->source = TrackSource{};
-                return fail;  // pump 已回報分類(unsupported_windows / app_not_found / …)
+                return fail;  // 分類由產生失敗的層帶上(pump = unsupported_windows)
             }
         }
         swap_graph();

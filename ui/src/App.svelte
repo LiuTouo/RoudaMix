@@ -824,11 +824,13 @@
           });
           selected = lastGood.key; // UI 回到實際權威值
           bufSize = lastGood.buf;
+          showNotice(e);
           notice = `切換失敗,已恢復原裝置/Buffer — ${errorText(e)}`;
           audioStale = false;
           persistLastWorking(lastGood.key, lastGood.buf);
         } catch (e2) {
           audioStale = true;
+          showNotice(e2);
           notice = `切換與回滾都失敗,音訊已停止 — ${errorText(e2)}`;
           addNotice("error", "裝置切換與回滾都失敗,音訊已停止", errorText(e2));
         }

@@ -325,8 +325,9 @@ std::optional<Failure> load(AudioEngine& engine, const std::filesystem::path& fi
                                 ? "sandbox_unavailable"
                                 : "plugin_load_failed",
                             verr);
-                    } else if (engine.add_plugin(new_id, path, class_id, instance_id)) {
-                        note_missing("plugin_load_failed", verr);
+                    } else if (auto fail = engine.add_plugin(new_id, path, class_id,
+                                                             instance_id)) {
+                        note_missing("plugin_load_failed", fail->message);
                     } else {
                         loaded = true;
                     }
