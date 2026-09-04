@@ -839,6 +839,29 @@
               "$ref": "#/$defs/u64"
             },
             "kind": {
+              "const": "list_capture_devices"
+            },
+            "payload": {
+              "$ref": "#/$defs/emptyObject"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "protocolVersion",
+            "id",
+            "kind",
+            "payload"
+          ],
+          "properties": {
+            "protocolVersion": {
+              "const": 2
+            },
+            "id": {
+              "$ref": "#/$defs/u64"
+            },
+            "kind": {
               "const": "start"
             },
             "payload": {

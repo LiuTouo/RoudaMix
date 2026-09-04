@@ -25,6 +25,10 @@
       "missing": [],
       "wrongType": []
     },
+    "list_capture_devices": {
+      "missing": [],
+      "wrongType": []
+    },
     "start": {
       "missing": [
         "deviceKey",

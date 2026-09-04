@@ -124,6 +124,7 @@ private:
     Outcome handle_list_devices(const EmptyRequest& request);
     Outcome handle_list_audio_apps(const EmptyRequest& request);
     Outcome handle_list_render_devices(const EmptyRequest& request);
+    Outcome handle_list_capture_devices(const EmptyRequest& request);
     Outcome handle_start(const StartRequest& request);
     Outcome handle_stop(const EmptyRequest& request);
     Outcome handle_open_device_panel(const EmptyRequest& request);

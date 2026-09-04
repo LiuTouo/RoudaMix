@@ -86,6 +86,7 @@ void check_command_result_schemas() {
         {"list_devices", {{"devices", nlohmann::json::array()}}},
         {"list_audio_apps", {{"apps", nlohmann::json::array()}}},
         {"list_render_devices", {{"devices", nlohmann::json::array()}}},
+        {"list_capture_devices", {{"devices", nlohmann::json::array()}}},
         {"start", nlohmann::json::object()},
         {"stop", nlohmann::json::object()},
         {"open_device_panel", {{"panel", true}}},

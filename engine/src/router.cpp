@@ -200,6 +200,7 @@ const std::unordered_map<std::string, Router::Route>& Router::routes() {
         {"list_devices", &Router::route<EmptyRequest, &Router::handle_list_devices>},
         {"list_audio_apps", &Router::route<EmptyRequest, &Router::handle_list_audio_apps>},
         {"list_render_devices", &Router::route<EmptyRequest, &Router::handle_list_render_devices>},
+        {"list_capture_devices", &Router::route<EmptyRequest, &Router::handle_list_capture_devices>},
         {"start", &Router::route<StartRequest, &Router::handle_start>},
         {"stop", &Router::route<EmptyRequest, &Router::handle_stop>},
         {"open_device_panel", &Router::route<EmptyRequest, &Router::handle_open_device_panel>},
@@ -483,6 +484,16 @@ Router::Outcome Router::handle_list_audio_apps(const EmptyRequest&) {
 Router::Outcome Router::handle_list_render_devices(const EmptyRequest&) {
     auto devices = nlohmann::json::array();
     for (const auto& device : engine_.list_render_devices())
+        devices.push_back({{"id", device.id},
+                           {"name", device.name},
+                           {"default", device.is_default},
+                           {"sampleRate", device.sample_rate}});
+    return success({{"devices", std::move(devices)}});
+}
+
+Router::Outcome Router::handle_list_capture_devices(const EmptyRequest&) {
+    auto devices = nlohmann::json::array();
+    for (const auto& device : engine_.list_capture_devices())
         devices.push_back({{"id", device.id},
                            {"name", device.name},
                            {"default", device.is_default},
