@@ -16,12 +16,13 @@ export interface ParamValue {
 }
 
 export interface TrackSource {
-  type: "sine" | "asioIn" | "app";
+  type: "sine" | "asioIn" | "app" | "wasapiIn";
   freq?: number; // sine
   channel?: number; // asioIn(pair 基底)
   mono?: boolean; // asioIn:單聲道來源(channel 複製到 L/R)
   pid?: number; // app(M5b)
   name?: string; // app 顯示名
+  deviceId?: string; // wasapiIn(M6;空 = 預設麥克風)
 }
 
 export interface TrackOutput {
@@ -37,6 +38,13 @@ export interface AudioApp {
 }
 
 export interface RenderDevice {
+  id: string;
+  name: string;
+  default: boolean;
+  sampleRate: number;
+}
+
+export interface CaptureDevice {
   id: string;
   name: string;
   default: boolean;

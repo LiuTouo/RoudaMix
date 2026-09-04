@@ -89,6 +89,7 @@ add_executable(roudamix-engine
     src/audio_engine.cpp
     src/app_capture.cpp
     src/render_sink.cpp
+    src/mic_capture.cpp
     src/vst3_host.cpp
     src/editor_host.cpp
     src/session.cpp
@@ -170,7 +171,7 @@ add_test(NAME vst3_host COMMAND vst3_host_test)
 
 # session 檔案序列化/載入(無 plugin 環境;真 plugin roundtrip 走 m5a-engine-tracks.ps1)
 add_executable(session_test tests/session_test.cpp src/session.cpp src/audio_engine.cpp
-    src/pdc_planner.cpp src/route_planner.cpp src/pdc_delay_line.cpp src/rt_crossfade.cpp src/track_graph.cpp src/app_capture.cpp src/render_sink.cpp
+    src/pdc_planner.cpp src/route_planner.cpp src/pdc_delay_line.cpp src/rt_crossfade.cpp src/track_graph.cpp src/app_capture.cpp src/render_sink.cpp src/mic_capture.cpp
     src/asio_device.cpp src/pcm_convert.cpp src/telemetry.cpp src/vst3_host.cpp
     src/sandbox.cpp src/vst_registry.cpp)
 target_include_directories(session_test PRIVATE src)
@@ -185,8 +186,9 @@ add_test(NAME session COMMAND session_test)
 add_executable(router_test tests/router_test.cpp src/router.cpp src/session_projection.cpp
     src/session.cpp src/audio_engine.cpp src/protocol.cpp src/command_contract.cpp
     src/pdc_planner.cpp src/route_planner.cpp src/pdc_delay_line.cpp src/rt_crossfade.cpp
-    src/track_graph.cpp src/app_capture.cpp src/render_sink.cpp src/asio_device.cpp
-    src/pcm_convert.cpp src/telemetry.cpp src/vst3_host.cpp src/editor_host.cpp
+    src/track_graph.cpp src/app_capture.cpp src/render_sink.cpp src/mic_capture.cpp
+    src/asio_device.cpp src/pcm_convert.cpp src/telemetry.cpp src/vst3_host.cpp
+    src/editor_host.cpp
     src/sandbox.cpp src/vst_registry.cpp)
 target_include_directories(router_test PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_include_directories(router_test SYSTEM PRIVATE third_party)
@@ -283,8 +285,8 @@ add_test(NAME telemetry COMMAND telemetry_test)
 add_executable(telemetry_strip_contract_test tests/telemetry_strip_contract_test.cpp
     src/session_projection.cpp src/protocol.cpp src/command_contract.cpp src/audio_engine.cpp
     src/pdc_planner.cpp src/route_planner.cpp src/pdc_delay_line.cpp src/rt_crossfade.cpp
-    src/track_graph.cpp src/app_capture.cpp src/render_sink.cpp src/asio_device.cpp
-    src/pcm_convert.cpp src/telemetry.cpp src/vst3_host.cpp src/sandbox.cpp)
+    src/track_graph.cpp src/app_capture.cpp src/render_sink.cpp src/mic_capture.cpp
+    src/asio_device.cpp src/pcm_convert.cpp src/telemetry.cpp src/vst3_host.cpp src/sandbox.cpp)
 target_include_directories(telemetry_strip_contract_test PRIVATE src
     "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_include_directories(telemetry_strip_contract_test SYSTEM PRIVATE third_party)

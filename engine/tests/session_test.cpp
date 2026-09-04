@@ -100,6 +100,31 @@ int main() {
         CHECK(applied["deviceKey"].is_null() && applied["sampleRate"].is_null());
     }
 
+    // 2b. mic 來源(wasapiIn)roundtrip:空 deviceId = 預設麥克風(合法綁定;
+    // 引擎未跑 + 空 id 免裝置列舉 = 無硬體可測)
+    {
+        const auto mic_file = tmp / "mic.rmsession";
+        std::uint32_t a = 0;
+        CHECK(!e.track_add(rmx::TrackKind::kAudio, "Mic", 0, a));
+        rmx::TrackSource mic;
+        mic.type = rmx::TrackSource::kWasapiIn;
+        CHECK(!e.track_set_source(a, mic));
+        CHECK(!rmx::session::save(e, mic_file));
+        CHECK(!e.track_set_source(a, rmx::TrackSource{}));  // 改掉 → load 復原
+        nlohmann::json applied;
+        CHECK(!rmx::session::load(e, mic_file, applied));
+        bool found = false;
+        std::uint32_t mic_id = 0;
+        for (const auto& t : e.tracks()) {
+            if (t.source.type == rmx::TrackSource::kWasapiIn) {
+                found = t.source.wasapi_in_id.empty();
+                mic_id = t.track_id;  // load 重發 id,移除要用新的
+            }
+        }
+        CHECK(found);
+        CHECK(!e.track_remove(mic_id));  // 還原軌數,後續 block 假設不變
+    }
+
     // 3. 檔案內容可讀 + 版本欄位正確
     {
         const auto j = nlohmann::json::parse(read_text(file), nullptr, false);

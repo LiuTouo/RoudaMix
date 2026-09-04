@@ -40,6 +40,14 @@
             "pid": { "$ref": "#/definitions/u32" },
             "name": { "type": "string" }
           }
+        },
+        {
+          "type": "object",
+          "required": ["type"],
+          "properties": {
+            "type": { "const": "wasapiIn" },
+            "deviceId": { "type": "string" }
+          }
         }
       ]
     },

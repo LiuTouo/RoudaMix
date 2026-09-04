@@ -68,6 +68,14 @@ public:
         std::uint32_t sample_rate{};  // mix format 率
     };
     std::vector<RenderDeviceInfo> list_render_devices();
+    // M6:WASAPI capture endpoints(mic 來源選擇器 + track_set_source 驗證;
+    // default = 預設麥克風 eCapture/eMultimedia,與 MicCapture 綁定一致)
+    struct CaptureDeviceInfo {
+        std::string id, name;
+        bool is_default{};
+        std::uint32_t sample_rate{};  // mix format 率
+    };
+    std::vector<CaptureDeviceInfo> list_capture_devices();
     // M5b/M5c:capture/render pump 偵錯(程序結束/裝置失效)→ main thread
     // PostMessage 轉 handle_track_failed(track_id);engine 不鎖、不碰 pipe
     void set_capture_failed_cb(std::function<void(std::uint32_t)> cb) {
@@ -245,6 +253,10 @@ private:
     std::optional<Failure> ensure_render(TrackNode& t, std::uint32_t src_rate);
     void stop_render(TrackNode& t) noexcept;
     void stop_renders() noexcept;
+    // M6:mic capture 生命週期(同語意)
+    std::optional<Failure> ensure_mic(TrackNode& t, std::uint32_t dst_rate);
+    void stop_mic(TrackNode& t) noexcept;
+    void stop_mics() noexcept;
     std::function<void(std::uint32_t)> capture_failed_cb_;
     std::function<void(std::uint32_t, bool)> latency_changed_cb_;
 };

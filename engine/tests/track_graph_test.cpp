@@ -246,6 +246,19 @@ int main() {
         CHECK(rmx::source_to_json(app_empty).is_null());
         const auto app_empty_status = rmx::source_to_status_json(app_empty);
         CHECK(app_empty_status.at("pid") == 4242 && app_empty_status.at("name").is_null());
+        // wasapiIn(M6):空 deviceId = 預設麥克風,合法綁定(原樣編碼,兩形同形)
+        rmx::TrackSource mic;
+        mic.type = rmx::TrackSource::kWasapiIn;
+        CHECK(rmx::source_from_json(rmx::source_to_json(mic)) == mic);
+        CHECK(rmx::source_from_json(rmx::source_to_status_json(mic)) == mic);
+        CHECK(rmx::source_to_json(mic).at("deviceId") == "");
+        // 指令形:deviceId 可省 = 預設
+        CHECK(rmx::source_from_json(json{{"type", "wasapiIn"}}) == mic);
+        rmx::TrackSource mic_dev;
+        mic_dev.type = rmx::TrackSource::kWasapiIn;
+        mic_dev.wasapi_in_id = "{0.0.1.00000000}.mic";
+        CHECK(rmx::source_from_json(rmx::source_to_json(mic_dev)) == mic_dev);
+        CHECK(rmx::source_from_json(rmx::source_to_status_json(mic_dev)) == mic_dev);
         // kNone ↔ null round-trip
         CHECK(rmx::source_from_json(rmx::source_to_json(rmx::TrackSource{})).type ==
               rmx::TrackSource::kNone);

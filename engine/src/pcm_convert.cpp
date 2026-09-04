@@ -3,8 +3,40 @@
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <cstring>
 
 namespace rmx {
+
+void wasapi_mix_to_stereo(const std::byte* data, std::uint32_t frames,
+                          std::uint32_t channels, int format, float* out) noexcept {
+    if (format == 0) {  // f32
+        const float* src = reinterpret_cast<const float*>(data);
+        if (channels == 1) {
+            for (std::uint32_t i = 0; i < frames; ++i) {
+                out[i * 2] = out[i * 2 + 1] = src[i];
+            }
+        } else {
+            for (std::uint32_t i = 0; i < frames; ++i) {
+                out[i * 2] = src[i * channels];
+                out[i * 2 + 1] = src[i * channels + 1];
+            }
+        }
+    } else {  // s16
+        const std::int16_t* src = reinterpret_cast<const std::int16_t*>(data);
+        const float k = 1.0F / 32768.0F;
+        if (channels == 1) {
+            for (std::uint32_t i = 0; i < frames; ++i) {
+                out[i * 2] = out[i * 2 + 1] = src[i] * k;
+            }
+        } else {
+            for (std::uint32_t i = 0; i < frames; ++i) {
+                out[i * 2] = src[i * channels] * k;
+                out[i * 2 + 1] = src[i * channels + 1] * k;
+            }
+        }
+    }
+}
+
 
 // asio.h ASIOSampleType 常數(SDK asio.h L139-168 的數值,避免此檔依賴 SDK header)
 namespace {

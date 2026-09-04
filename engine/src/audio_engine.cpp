@@ -17,6 +17,7 @@
 #include <unordered_set>
 
 #include "app_capture.hpp"
+#include "mic_capture.hpp"
 #include "render_sink.hpp"
 
 namespace rmx {
@@ -368,6 +369,85 @@ std::vector<AudioEngine::RenderDeviceInfo> AudioEngine::list_render_devices() {
     return out;
 }
 
+// M6:capture endpoints 列舉(list_render_devices 的 eCapture 鏡射;default =
+// 預設麥克風 eMultimedia,與 MicCapture 空 id 綁定一致)
+std::vector<AudioEngine::CaptureDeviceInfo> AudioEngine::list_capture_devices() {
+    std::vector<CaptureDeviceInfo> out;
+    IMMDeviceEnumerator* enumerator = nullptr;
+    IMMDeviceCollection* collection = nullptr;
+    IMMDevice* def_device = nullptr;
+    LPWSTR def_id = nullptr;
+    auto release_all = [&]() {
+        if (def_id != nullptr) CoTaskMemFree(def_id);
+        if (def_device != nullptr) def_device->Release();
+        if (collection != nullptr) collection->Release();
+        if (enumerator != nullptr) enumerator->Release();
+    };
+    if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+                                __uuidof(IMMDeviceEnumerator),
+                                reinterpret_cast<void**>(&enumerator))))
+        return out;
+    (void)enumerator->GetDefaultAudioEndpoint(eCapture, eMultimedia, &def_device);
+    if (def_device != nullptr) (void)def_device->GetId(&def_id);
+    if (FAILED(enumerator->EnumAudioEndpoints(eCapture, DEVICE_STATE_ACTIVE, &collection)) ||
+        collection == nullptr) {
+        release_all();
+        return out;
+    }
+    UINT count = 0;
+    if (SUCCEEDED(collection->GetCount(&count))) {
+        for (UINT i = 0; i < count; ++i) {
+            IMMDevice* device = nullptr;
+            if (FAILED(collection->Item(i, &device)) || device == nullptr) continue;
+            LPWSTR id = nullptr;
+            IPropertyStore* props = nullptr;
+            if (SUCCEEDED(device->GetId(&id)) && id != nullptr &&
+                SUCCEEDED(device->OpenPropertyStore(STGM_READ, &props)) && props != nullptr) {
+                CaptureDeviceInfo info;
+                const int need =
+                    WideCharToMultiByte(CP_UTF8, 0, id, -1, nullptr, 0, nullptr, nullptr);
+                if (need > 0) {
+                    info.id.resize(static_cast<std::size_t>(need - 1));
+                    WideCharToMultiByte(CP_UTF8, 0, id, -1, info.id.data(), need, nullptr,
+                                        nullptr);
+                }
+                PROPVARIANT name{};
+                PropVariantInit(&name);
+                if (SUCCEEDED(props->GetValue(PKEY_Device_FriendlyName, &name)) &&
+                    name.vt == VT_LPWSTR && name.pwszVal != nullptr) {
+                    const int nlen = WideCharToMultiByte(CP_UTF8, 0, name.pwszVal, -1, nullptr,
+                                                        0, nullptr, nullptr);
+                    if (nlen > 0) {
+                        info.name.resize(static_cast<std::size_t>(nlen - 1));
+                        WideCharToMultiByte(CP_UTF8, 0, name.pwszVal, -1, info.name.data(),
+                                            nlen, nullptr, nullptr);
+                    }
+                }
+                PropVariantClear(&name);
+                if (def_id != nullptr && wcscmp(id, def_id) == 0) info.is_default = true;
+                // mix 率(開 client 問;開不了就 0)
+                IAudioClient* probe_client = nullptr;
+                if (SUCCEEDED(device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr,
+                                               reinterpret_cast<void**>(&probe_client))) &&
+                    probe_client != nullptr) {
+                    WAVEFORMATEX* mix = nullptr;
+                    if (SUCCEEDED(probe_client->GetMixFormat(&mix)) && mix != nullptr) {
+                        info.sample_rate = mix->nSamplesPerSec;
+                        CoTaskMemFree(mix);
+                    }
+                    probe_client->Release();
+                }
+                if (!info.id.empty()) out.push_back(std::move(info));
+                props->Release();
+            }
+            if (id != nullptr) CoTaskMemFree(id);
+            device->Release();
+        }
+    }
+    release_all();
+    return out;
+}
+
 // M5b/M5c:pump 失敗(main thread 經 callback 轉入 Router 臨界區)
 void AudioEngine::handle_track_failed(std::uint32_t track_id) {
     TrackNode* t = find_track_mut(track_id);
@@ -376,6 +456,11 @@ void AudioEngine::handle_track_failed(std::uint32_t track_id) {
         t->track_error =
             t->capture->pump_error().empty() ? "capture failed" : t->capture->pump_error();
         t->capture.reset();
+        return;
+    }
+    if (t->mic != nullptr) {
+        t->track_error = t->mic->pump_error().empty() ? "mic failed" : t->mic->pump_error();
+        t->mic.reset();
         return;
     }
     if (t->render != nullptr) {
@@ -425,6 +510,7 @@ std::optional<Failure> AudioEngine::start(const std::string& device_key,
         ~StartRollback() {
             if (!armed) return;
             e->stop_captures();
+            e->stop_mics();
             e->stop_renders();
             for (auto& t : e->tracks_)
                 for (auto& s : t.chain)
@@ -436,12 +522,16 @@ std::optional<Failure> AudioEngine::start(const std::string& device_key,
         }
     } rollback{this};
 
-    // M5b/M5c:app capture + wasapi render 啟動(失敗 = 該軌 track_error,
-    // 不擋 start;其他軌照跑)
+    // M5b/M5c/M6:app capture + mic capture + wasapi render 啟動(失敗 = 該軌
+    // track_error,不擋 start;其他軌照跑)
     for (auto& t : tracks_) {
         if (t.source.type == TrackSource::kApp) {
             stop_capture(t);
             (void)ensure_capture(t, rate);
+        }
+        if (t.source.type == TrackSource::kWasapiIn) {
+            stop_mic(t);
+            (void)ensure_mic(t, rate);
         }
         if (t.output.type == TrackOutput::kWasapiRender) {
             stop_render(t);
@@ -585,6 +675,7 @@ void AudioEngine::stop() noexcept {
                 if (slot.monitor_shadow) slot.monitor_shadow->terminate();
             }
     stop_captures();
+    stop_mics();
     stop_renders();
     reap_retired_graphs(/*force=*/true);
 }
@@ -1159,6 +1250,7 @@ std::optional<Failure> AudioEngine::track_remove(std::uint32_t track_id) {
         if (slot.plugin && slot.plugin->editor_open()) slot.plugin->close_editor();
     }
     stop_capture(*it);  // M5b:capture pump 先收(join)再毀節點
+    stop_mic(*it);      // M6:mic capture pump 同
     stop_render(*it);   // M5c:render pump 同
     tracks_.erase(it);
     // 其他軌 dests 的懸空引用一併清
@@ -1236,6 +1328,34 @@ std::optional<Failure> AudioEngine::track_set_source(std::uint32_t track_id,
             if (auto fail = ensure_capture(*t, rate)) {
                 t->source = TrackSource{};
                 return fail;  // 分類由產生失敗的層帶上(pump = unsupported_windows)
+            }
+        }
+        swap_graph();
+        return std::nullopt;
+    }
+    if (source.type == TrackSource::kWasapiIn) {
+        // M6:mic 來源只在 audio 軌;空 id = 預設麥克風(合法綁定,免驗),
+        // 明確 id 對得起來才收(只查存在性,不開 stream — 同 wasapi render 前例)
+        if (t->kind != TrackKind::kAudio)
+            return failure(Err::kBadCommand, "only audio tracks take a mic source");
+        if (!source.wasapi_in_id.empty()) {
+            bool found = false;
+            for (const auto& d : list_capture_devices())
+                if (d.id == source.wasapi_in_id) { found = true; break; }
+            if (!found) {
+                t->track_error = "capture device not found: " + source.wasapi_in_id;
+                return failure(Err::kDeviceBusy, t->track_error);
+            }
+        }
+        t->source = source;
+        stop_mic(*t);
+        t->track_error.clear();
+        // running 中即時啟動;失敗 = 命令失敗 + 回滾(未啟動 = start 時再試,軟失敗)
+        if (device_.running()) {
+            const auto rate = rt_sample_rate_.load(std::memory_order_relaxed);
+            if (auto fail = ensure_mic(*t, rate)) {
+                t->source = TrackSource{};
+                return fail;  // 分類由產生失敗的層帶上(device_busy)
             }
         }
         swap_graph();
@@ -1338,6 +1458,32 @@ void AudioEngine::stop_render(TrackNode& t) noexcept {
 
 void AudioEngine::stop_renders() noexcept {
     for (auto& t : tracks_) stop_render(t);
+}
+
+// M6:mic capture 生命週期(同 capture 語意;空 id = 預設麥克風)
+std::optional<Failure> AudioEngine::ensure_mic(TrackNode& t, std::uint32_t dst_rate) {
+    Failure pump_failure{};
+    auto cap = MicCapture::create(t.source.wasapi_in_id, dst_rate,
+                                  [this, tid = t.track_id] {
+                                      if (capture_failed_cb_) capture_failed_cb_(tid);
+                                  },
+                                  pump_failure);
+    if (cap == nullptr) {
+        t.track_error = pump_failure.message;
+        return pump_failure;  // mic_capture 自己分類(device_busy)
+    }
+    t.track_error.clear();
+    t.mic = std::move(cap);
+    return std::nullopt;
+}
+
+void AudioEngine::stop_mic(TrackNode& t) noexcept {
+    if (t.mic != nullptr) t.mic->stop();
+    t.mic.reset();
+}
+
+void AudioEngine::stop_mics() noexcept {
+    for (auto& t : tracks_) stop_mic(t);
 }
 
 std::optional<Failure> AudioEngine::track_set_dests(std::uint32_t track_id,
@@ -1875,6 +2021,7 @@ void AudioEngine::clear_all_tracks() {
         for (auto& slot : t.chain)
             if (slot.plugin && slot.plugin->editor_open()) slot.plugin->close_editor();
         stop_capture(t);
+        stop_mic(t);
         stop_render(t);
     }
     tracks_.clear();
@@ -2005,6 +2152,11 @@ void AudioEngine::process(const AudioBlock& block) noexcept {
                 // M5b:process loopback FIFO 讀(漂移校正內建;無 capture = 靜音)
                 if (n.capture != nullptr)
                     n.capture->read(cur_l, cur_r, frames, static_cast<std::uint32_t>(rate));
+                break;
+            case TrackSource::kWasapiIn:
+                // M6:mic FIFO 讀(同 app 軌漂移模式;無 capture = 靜音)
+                if (n.mic != nullptr)
+                    n.mic->read(cur_l, cur_r, frames, static_cast<std::uint32_t>(rate));
                 break;
             case TrackSource::kNone:
                 break;

@@ -1,5 +1,7 @@
 #include "app_capture.hpp"
 
+#include "pcm_convert.hpp"
+
 #define PSAPI_VERSION 1  // K32* 進 kernel32,免鏈 psapi.lib
 #include <windows.h>
 
@@ -58,41 +60,6 @@ std::vector<std::pair<std::uint32_t, std::string>> list_process_full_paths() {
 }
 
 namespace {
-
-
-
-// WASAPI 聲道交錯轉 stereo:取 ch0/ch1(>2ch 時其餘忽略;1ch 複製)
-void mix_to_stereo(const BYTE* data, std::uint32_t frames, std::uint32_t channels,
-                   int format, float* out) {
-    const std::uint32_t ch = channels < 2 ? 1 : 2;
-    (void)ch;
-    if (format == 0) {  // f32
-        const float* src = reinterpret_cast<const float*>(data);
-        if (channels == 1) {
-            for (std::uint32_t i = 0; i < frames; ++i) {
-                out[i * 2] = out[i * 2 + 1] = src[i];
-            }
-        } else {
-            for (std::uint32_t i = 0; i < frames; ++i) {
-                out[i * 2] = src[i * channels];
-                out[i * 2 + 1] = src[i * channels + 1];
-            }
-        }
-    } else {  // s16
-        const std::int16_t* src = reinterpret_cast<const std::int16_t*>(data);
-        const float k = 1.0F / 32768.0F;
-        if (channels == 1) {
-            for (std::uint32_t i = 0; i < frames; ++i) {
-                out[i * 2] = out[i * 2 + 1] = src[i] * k;
-            }
-        } else {
-            for (std::uint32_t i = 0; i < frames; ++i) {
-                out[i * 2] = src[i * channels] * k;
-                out[i * 2 + 1] = src[i * channels + 1] * k;
-            }
-        }
-    }
-}
 
 // ActivateAudioInterfaceAsync 的完成回呼(agile:免 marshal,threadpool thread 呼)
 class ActivationHandler final : public IActivateAudioInterfaceCompletionHandler,
@@ -347,7 +314,8 @@ void AppCapture::pump() {
                 if (flags & AUDCLNT_BUFFERFLAGS_SILENT) {
                     std::memset(scratch.data(), 0, need * sizeof(float));
                 } else {
-                    mix_to_stereo(data, frames, channels_, sample_format_, scratch.data());
+                    wasapi_mix_to_stereo(reinterpret_cast<const std::byte*>(data), frames,
+                                         channels_, sample_format_, scratch.data());
                 }
                 // 滿 = 丟新(舊資料保住延遲上界;drift 回饋會把 fill 拉回)
                 (void)fifo_.write(scratch.data(), frames);

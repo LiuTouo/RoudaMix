@@ -22,6 +22,12 @@ enum class PcmType : std::uint8_t {
 // ASIOSampleType → PcmType
 PcmType map_asio_sample_type(long asio_type) noexcept;
 
+// WASAPI 交錯 buffer 轉 stereo(交錯 L/R 對):取 ch0/ch1(>2ch 其餘忽略;
+// 1ch 複製)。format 0 = f32、1 = s16。app_capture(process loopback,可能
+// s16 mix)與 mic_capture(一般 capture)共用。
+void wasapi_mix_to_stereo(const std::byte* data, std::uint32_t frames,
+                          std::uint32_t channels, int format, float* out) noexcept;
+
 std::size_t pcm_bytes_per_sample(PcmType type) noexcept;
 bool pcm_to_float32(PcmType type, std::span<const std::byte> source,
                     std::span<float> destination) noexcept;

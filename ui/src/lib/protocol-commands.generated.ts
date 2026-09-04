@@ -33,7 +33,7 @@ export interface CommandPayloads {
   "track_add": { "kind": "audio" | "app" | "fx" | "output"; "name"?: string; "color"?: number };
   "track_remove": { "trackId": number };
   "track_set": { "trackId": number; "name"?: string; "color"?: number; "gain"?: number; "mute"?: boolean };
-  "track_set_source": { "trackId": number; "source": null | { "type": "sine"; "freq": number } | { "type": "asioIn"; "channel": number; "mono"?: boolean } | { "type": "app"; "pid": number; "name"?: string } };
+  "track_set_source": { "trackId": number; "source": null | { "type": "sine"; "freq": number } | { "type": "asioIn"; "channel": number; "mono"?: boolean } | { "type": "app"; "pid": number; "name"?: string } | { "type": "wasapiIn"; "deviceId"?: string } };
   "track_set_dests": { "trackId": number; "dests": Array<number> };
   "track_set_output": { "trackId": number; "output": null | { "type": "asioOut"; "channel": number } | { "type": "wasapi"; "deviceId": string } };
   "track_set_output_latency_policy": { "trackId": number; "policy": "fullPdc" | "lowLatency" };

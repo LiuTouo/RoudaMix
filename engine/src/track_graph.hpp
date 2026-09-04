@@ -23,6 +23,7 @@ namespace rmx {
 
 class AppCapture;  // M5b:process loopback capture(app 軌;shared_ptr 跨 snapshot)
 class RenderSink;  // M5c:wasapi render sink(串流軌;shared_ptr 跨 snapshot)
+class MicCapture;  // M6:一般 capture endpoint(mic 來源;shared_ptr 跨 snapshot)
 
 enum class TrackKind : std::uint8_t { kAudio, kApp, kFx, kOutput };
 
@@ -56,13 +57,15 @@ inline const char* system_role_str(SystemRole r) noexcept {
 }
 
 // 來源:kNone = FX/output 軌(bus 已含上游 sum);kSine = 測試音;kAsioIn =
-// 裝置輸入 pair(ch 與 ch+1);kApp = process loopback(M5b)。
+// 裝置輸入 pair(ch 與 ch+1);kApp = process loopback(M5b);kWasapiIn =
+// 一般 capture endpoint 麥克風(M6;空 id = 預設麥克風)。
 struct TrackSource {
-    enum Type : std::uint8_t { kNone, kSine, kAsioIn, kApp } type{kNone};
+    enum Type : std::uint8_t { kNone, kSine, kAsioIn, kApp, kWasapiIn } type{kNone};
     float sine_freq{440.0F};
     std::uint32_t asio_in_ch{};  // pair 基底
     std::uint32_t pid{};         // kApp(M5b)
     std::string app_name;        // UI 顯示(M5b;session 存名不存 pid)
+    std::string wasapi_in_id;    // kWasapiIn(M6;空 = 預設麥克風;endpoint id 跨重開機穩定)
     bool mono{};                 // kAsioIn:單聲道來源(asio_in_ch 複製到 L/R;Studio One 式輸入格式)
     bool operator==(const TrackSource&) const = default;
 };
@@ -80,6 +83,7 @@ struct TrackOutput {
 // router 請求解碼共用,不再各持一份欄位搬運。
 // 持久形(session 檔 §8 SessionTrack):app 存名不存 pid(pid 跨載入無意義);
 //   空名/空 deviceId 編碼為 null(載入即 kNone,該軌靜音不 fail)。
+//   例外:wasapiIn 的空 deviceId 是合法綁定(= 預設麥克風),原樣編碼。
 nlohmann::json source_to_json(const TrackSource& src);
 nlohmann::json output_to_json(const TrackOutput& out);
 // 狀態形(status.tracks §8 Track):app 帶 pid(pid 0 = needsRebind,UI 走程序
@@ -142,6 +146,7 @@ struct TrackNode {
     std::shared_ptr<TrackRt> buf;
     std::shared_ptr<AppCapture> capture;  // M5b:app 軌的 loopback pump(master 與 snapshot 共用)
     std::shared_ptr<RenderSink> render;   // M5c:串流軌的 wasapi render pump
+    std::shared_ptr<MicCapture> mic;      // M6:mic 來源的 capture pump(同 capture 語意)
     std::string track_error;              // control 面:capture/render 失敗等原因(UI 顯示;空 = 無)
 };
 

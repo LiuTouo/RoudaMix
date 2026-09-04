@@ -19,6 +19,9 @@ nlohmann::json source_to_json(const TrackSource& src) {
             return src.app_name.empty()
                        ? nlohmann::json(nullptr)
                        : nlohmann::json{{"type", "app"}, {"name", src.app_name}};
+        // wasapiIn 的空 deviceId = 預設麥克風,是合法綁定(原樣編碼,不轉 null)
+        case TrackSource::kWasapiIn:
+            return nlohmann::json{{"type", "wasapiIn"}, {"deviceId", src.wasapi_in_id}};
         case TrackSource::kNone: return nullptr;
     }
     return nullptr;
@@ -31,6 +34,7 @@ nlohmann::json source_to_status_json(const TrackSource& src) {
                               {"name", src.app_name.empty()
                                            ? nlohmann::json(nullptr)
                                            : nlohmann::json(src.app_name)}};
+    // wasapiIn:持久形本就一律帶 deviceId(空 = 預設),狀態形同形
     return source_to_json(src);
 }
 
@@ -74,6 +78,12 @@ TrackSource source_from_json(const nlohmann::json& j) {
             if (has_pid) src.pid = j["pid"].get<std::uint32_t>();
             if (has_name) src.app_name = j["name"].get<std::string>();
         }
+    } else if (t == "wasapiIn") {
+        // deviceId 可省/null/空 = 預設麥克風(合法綁定;endpoint id 跨重開機穩定,
+        // 裝置消失 = track_set_source 失敗,軌 track_error 可見)
+        src.type = TrackSource::kWasapiIn;
+        if (j.contains("deviceId") && j["deviceId"].is_string())
+            src.wasapi_in_id = j["deviceId"].get<std::string>();
     }
     return src;
 }
