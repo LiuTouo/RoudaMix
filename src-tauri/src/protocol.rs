@@ -24,8 +24,12 @@ pub struct IpcChannel {
 impl IpcChannel {
     /// engine env 用的秘密編碼(64 hex chars)。
     pub fn secret_hex(&self) -> String {
-        self.secret.iter().map(|b| format!("{b:02x}")).collect()
+        to_hex(&self.secret)
     }
+}
+
+fn to_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 #[link(name = "bcrypt")]
@@ -54,7 +58,7 @@ pub fn generate_ipc_channel() -> IpcChannel {
         )
     };
     assert!(status >= 0, "BCryptGenRandom failed: NTSTATUS {status:#x}");
-    let suffix: String = bytes[32..].iter().map(|b| format!("{b:02x}")).collect();
+    let suffix: String = to_hex(&bytes[32..]);
     IpcChannel {
         pipe_name: format!("{PIPE_NAME}-{suffix}"),
         secret: bytes[..32].try_into().expect("secret length"),

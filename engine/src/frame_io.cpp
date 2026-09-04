@@ -55,8 +55,12 @@ bool auth_client(HANDLE h, const std::vector<uint8_t>& secret, DWORD timeout_ms)
         DWORD written = 0;
         if (!WriteFile(h, &ack, 1, &written, &io.ov) &&
             GetLastError() == ERROR_IO_PENDING) {
-            if (WaitForSingleObject(io.ov.hEvent, 1000) == WAIT_OBJECT_0)
+            if (WaitForSingleObject(io.ov.hEvent, 1000) != WAIT_OBJECT_0) {
+                CancelIoEx(h, &io.ov);
+                GetOverlappedResult(h, &io.ov, &written, TRUE);
+            } else {
                 GetOverlappedResult(h, &io.ov, &written, FALSE);
+            }
         }
     }
     return ok;
@@ -90,6 +94,9 @@ bool read_exact_bounded(HANDLE h, void* buf, size_t n, DWORD timeout_ms) {
             if (GetLastError() != ERROR_IO_PENDING) return false;
             if (WaitForSingleObject(io.ov.hEvent, timeout_ms) != WAIT_OBJECT_0) {
                 CancelIoEx(h, &io.ov);
+                // cancel 後 IRP 仍會完成;OVERLAPPED 析構前必須等完成,
+                // 否則 kernel 完成路徑寫已釋放的 OVERLAPPED(UAF)
+                GetOverlappedResult(h, &io.ov, &got, TRUE);
                 return false;
             }
             if (!GetOverlappedResult(h, &io.ov, &got, FALSE)) return false;
@@ -131,6 +138,8 @@ bool write_frame(HANDLE h, const nlohmann::json& j) {
         // (GetOverlappedResult TRUE 版無限等,main thread 不可被拖死)
         if (WaitForSingleObject(io.ov.hEvent, 5000) != WAIT_OBJECT_0) {
             CancelIoEx(h, &io.ov);
+            // 同 read_exact_bounded:等 IRP 完成才讓 OVERLAPPED 析構(UAF)
+            GetOverlappedResult(h, &io.ov, &written, TRUE);
             return false;
         }
         if (!GetOverlappedResult(h, &io.ov, &written, FALSE)) return false;

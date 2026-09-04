@@ -18,7 +18,7 @@ use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient};
 use tokio::sync::{oneshot, Mutex as AsyncMutex};
 type WriteHalf = tokio::io::WriteHalf<NamedPipeClient>;
 
-use crate::protocol::{make_command, parse_frame, Frame, MAX_FRAME_BYTES};
+use crate::protocol::{make_command, parse_frame, Frame, IpcChannel, MAX_FRAME_BYTES};
 use crate::spawn;
 
 const REPLY_TIMEOUT: Duration = Duration::from_secs(30);
@@ -114,7 +114,7 @@ struct Inner {
     write: AsyncMutex<Option<WriteHalf>>,
     next_id: AtomicU64,
     /// #16:本啟動的 pipe 名稱 + 認證秘密(run 與 respawn 共用同一 capability)。
-    ipc: crate::protocol::IpcChannel,
+    ipc: IpcChannel,
 }
 
 #[derive(Clone)]

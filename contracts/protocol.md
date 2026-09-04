@@ -13,8 +13,9 @@ TypeScript command interface 由該表衍生，不得直接修改其 generated �
   開發/探針 fallback(無認證;正式路徑 bridge 永遠生成 per-launch 名稱)。
 - **Engine 是 server**(單一 instance,`Local\roudamix-engine-singleton` mutex 防 double-spawn;
   建立 pipe 帶 `FILE_FLAG_FIRST_PIPE_INSTANCE` —— 名稱已被占用 = fail closed 退出;
-  並帶 `PIPE_REJECT_REMOTE_CLIENTS` 拒遠端 SMB 連線。DACL 用進程 token 預設值 =
-  僅本 logon session/admin/SYSTEM 可連)。**bridge 是 client**。client 斷線後
+  並帶 `PIPE_REJECT_REMOTE_CLIENTS` 拒遠端 SMB 連線)。DACL 用進程 token 預設值:
+  其他 principal 建連被 OS 拒;同 user 的提升 token/跨 session 行程仍可能開連,
+  該縱深由秘密握手 §2.1 補足,不靠 DACL。**bridge 是 client**。client 斷線後
   engine 續跑並重建 pipe 等下一個 client。
 - 一次只服務一個 client:新 client 連上前,server 關閉舊連線的控制流(舊 handle 讀到 EOF)。
 

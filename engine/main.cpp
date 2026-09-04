@@ -198,16 +198,14 @@ void serve_client(HANDLE pipe, std::uint64_t generation) {
 }
 
 void pipe_serve_inner() {
-    // #16:第一次建立帶 FILE_FLAG_FIRST_PIPE_INSTANCE 佔名 —— 名稱已被
-    // 別人(冒充者)先建 = fail closed,engine 直接退出。之後的重建迴圈
-    // 不帶(名稱已在我們手上,client handle 殘留不會擋重建)。
-    bool claim_name = true;
+    // #16:每次建立都帶 FILE_FLAG_FIRST_PIPE_INSTANCE —— 名稱已被別人
+    // (冒充者)先建 = fail closed,engine 直接退出。client handle 殘留
+    // 不會佔名(server instance 才佔),CloseHandle 後立即重建不會誤撞;
+    // 這樣 CloseHandle 與重建之間也沒有名稱空窗可插。
     while (!g_exiting.load()) {
-        const DWORD open_mode =
-            PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED |
-            (claim_name ? FILE_FLAG_FIRST_PIPE_INSTANCE : 0);
         HANDLE pipe = CreateNamedPipeW(
-            g_pipe_name.c_str(), open_mode,
+            g_pipe_name.c_str(),
+            PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE,
             PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS, 1,
             64 * 1024, 64 * 1024, 0, nullptr);
         if (pipe == INVALID_HANDLE_VALUE) {
@@ -215,7 +213,6 @@ void pipe_serve_inner() {
                          "[engine] CreateNamedPipeW failed: %lu\n", GetLastError());
             break;
         }
-        claim_name = false;
         g_active_pipe.store(pipe);
         OVERLAPPED connection{};
         connection.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
