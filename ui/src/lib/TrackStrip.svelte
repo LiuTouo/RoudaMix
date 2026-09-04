@@ -33,6 +33,7 @@
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import type {
     AudioApp,
+    CaptureDevice,
     DeviceInfo,
     RackSlot,
     RenderDevice,
@@ -86,6 +87,8 @@
   let destDlg = $state<HTMLDialogElement | null>(null);
   // WASAPI render 裝置清單(focus 時拉,保持常新)
   let renderDevices = $state<RenderDevice[]>([]);
+  // M6:capture(麥克風)裝置清單(focus 時拉;空 deviceId = 預設麥克風)
+  let captureDevices = $state<CaptureDevice[]>([]);
   // P2-N:刪除確認(track/plugin);系統輸出軌不可刪(engine 權威)
   let confirmBox = $state<{ title: string; impact: string[]; confirmLabel: string } | null>(null);
   let pendingDelete: (() => void) | null = null;
@@ -141,6 +144,13 @@
     try {
       if (value === "") {
         await engineCommand("track_set_source", { trackId: track.trackId, source: null });
+      } else if (value.startsWith("mic:")) {
+        // M6:麥克風來源(mic:default → 空 deviceId = 預設麥克風)
+        const id = value.slice(4);
+        await engineCommand("track_set_source", {
+          trackId: track.trackId,
+          source: { type: "wasapiIn", deviceId: id === "default" ? "" : id },
+        });
       } else if (value.startsWith("m")) {
         // 單聲道來源:m{ch} → 單 ch 複製到 L/R(mic 監聽兩耳)
         await engineCommand("track_set_source", {
@@ -162,6 +172,16 @@
     try {
       const r = await engineCommand("list_render_devices", {});
       renderDevices = (r.devices as RenderDevice[]) ?? [];
+    } catch (e) {
+      err = errorText(e);
+    }
+  }
+
+  // M6:mic 裝置清單(source select focus 時拉)
+  async function loadCaptureDevices() {
+    try {
+      const r = await engineCommand("list_capture_devices", {});
+      captureDevices = (r.devices as CaptureDevice[]) ?? [];
     } catch (e) {
       err = errorText(e);
     }
@@ -774,17 +794,31 @@
           ? track.source.mono
             ? `m${track.source.channel}`
             : String(track.source.channel)
-          : ""}
+          : track.source?.type === "wasapiIn"
+            ? `mic:${track.source.deviceId || "default"}`
+            : ""}
         onchange={(e) => setSource(e.currentTarget.value)}
-        disabled={!dev}
+        onfocus={loadCaptureDevices}
+        disabled={!dev && captureDevices.length === 0}
+        data-tooltip="ASIO 輸入 pair 或系統麥克風(WASAPI capture);清單在點開時載入。"
       >
         <option value="">(無)</option>
-        {#each pairOptions(dev?.inputNames ?? [], "in") as o (o.value)}
-          <option value={String(o.value)}>{o.label}</option>
-        {/each}
-        {#each (dev?.inputNames ?? []) as nm, ch (ch)}
-          <option value="m{ch}">{ch + 1} {nm}(單聲)</option>
-        {/each}
+        {#if dev}
+          {#each pairOptions(dev?.inputNames ?? [], "in") as o (o.value)}
+            <option value={String(o.value)}>{o.label}</option>
+          {/each}
+          {#each (dev?.inputNames ?? []) as nm, ch (ch)}
+            <option value="m{ch}">{ch + 1} {nm}(單聲)</option>
+          {/each}
+        {/if}
+        {#if captureDevices.length > 0}
+          <optgroup label="麥克風(WASAPI)">
+            <option value="mic:default">系統預設麥克風</option>
+            {#each captureDevices as d (d.id)}
+              <option value={`mic:${d.id}`}>{d.name}{d.default ? "(預設)" : ""}</option>
+            {/each}
+          </optgroup>
+        {/if}
       </select>
     {:else if track.kind === "app"}
       <span class="lbl">輸入</span>
@@ -838,6 +872,11 @@
           : "指定串流輸出的 WASAPI 裝置，例如 VB-CABLE 等虛擬音訊端點。"}
       >
         <option value="">(無)</option>
+        {#if !dev}
+          <optgroup label="系統">
+            <option value="asio:0">主輸出(系統)</option>
+          </optgroup>
+        {/if}
         {#if dev}
           <optgroup label="ASIO">
             {#each pairOptions(dev.outputNames, "out") as o (o.value)}

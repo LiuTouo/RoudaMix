@@ -3,6 +3,9 @@ export interface DeviceStreamConfig {
   bufferSize: number | null;
 }
 
+/** M6:WASAPI master clock 的 deviceKey sentinel(engine kWasapiMasterKey)。 */
+export const WASAPI_DEVICE_KEY = "wasapi";
+
 export interface DeviceStreamDevice {
   deviceKey: string;
   name: string;
@@ -117,7 +120,7 @@ function autoStartCandidates(
   const ordered = preferred
     ? [preferred, ...devices.filter((device) => device.deviceKey !== preferred.deviceKey)]
     : devices;
-  return ordered.map((device) => ({
+  const asioCandidates = ordered.map((device) => ({
     deviceKey: device.deviceKey,
     bufferSize:
       device === preferred &&
@@ -126,6 +129,10 @@ function autoStartCandidates(
         ? preferredBufferSize
         : defaultBuffer(device),
   }));
+  // M6:ASIO 全敗/無 ASIO 裝置時,系統音訊(WASAPI master)當最後候選 —— mic-only
+  // 機器沒有 ASIO 裝置也能啟動。bufferSize null = engine 決定(WASAPI 無 buffer 選項)。
+  asioCandidates.push({ deviceKey: WASAPI_DEVICE_KEY, bufferSize: null });
+  return asioCandidates;
 }
 
 export function transitionDeviceStream(

@@ -25,6 +25,7 @@
     isDeviceStreamBusy,
     sameDeviceStreamConfig,
     transitionDeviceStream,
+    WASAPI_DEVICE_KEY,
     type DeviceStreamConfig,
     type DeviceStreamRequest,
   } from "./lib/deviceStream";
@@ -749,9 +750,9 @@
           bufferSizes: device.bufferSizes,
         })),
       }).state;
-      if (!selected && devices.length) {
+      if (!selected) {
         // P1-D:啟動偏好 —— 上次「成功啟動」的裝置優先(還在清單才用),
-        // 否則依列舉序逐個嘗試到成功(不是 devices[0] 失敗即停)
+        // 否則依列舉序逐個嘗試到成功;M6:無 ASIO 裝置也有 wasapi fallback 候選
         await autoStart();
       }
       if (lastNoticeErr?.code === "not_connected") {
@@ -764,9 +765,12 @@
   }
 
   function statusDeviceConfig(value: EngineStatus): DeviceStreamConfig | null {
-    return value.running && value.deviceKey
-      ? { deviceKey: value.deviceKey, bufferSize: value.bufferSize }
-      : null;
+    if (!value.running || !value.deviceKey) return null;
+    // M6:WASAPI master 的 bufferSize 由 engine 決定(status 帶實際 block),
+    // start 請求帶 null — 正規化成 null 才能對上 sameConfig,否則 UI 卡 "starting"
+    const bufferSize =
+      value.deviceKey === WASAPI_DEVICE_KEY ? null : value.bufferSize;
+    return { deviceKey: value.deviceKey, bufferSize };
   }
 
   async function executeDeviceRequest(request: DeviceStreamRequest): Promise<EngineStatus> {
@@ -868,7 +872,7 @@
       deviceStream.request === null &&
       failures.length > 0
     ) {
-      addNotice("error", "沒有任何 ASIO 裝置能成功啟動", failures.join("\n"));
+      addNotice("error", "沒有任何 ASIO/系統音訊裝置能成功啟動", failures.join("\n"));
       notice = failures.join(" | ");
       return;
     }
@@ -991,6 +995,20 @@
   async function addTrack(kind: "audio" | "app" | "fx" | "output") {
     try {
       await engineCommand("track_add", { kind });
+    } catch (e) {
+      showNotice(e);
+    }
+  }
+
+  // M6:mic 軌 = audio 軌 + 預設麥克風來源(空 deviceId = engine 端預設裝置;
+  // 具體裝置在 TrackStrip 輸入下拉的麥克風 optgroup 換)
+  async function addMicTrack() {
+    try {
+      const r = await engineCommand("track_add", { kind: "audio" });
+      await engineCommand("track_set_source", {
+        trackId: r.trackId,
+        source: { type: "wasapiIn" },
+      });
     } catch (e) {
       showNotice(e);
     }
@@ -1415,6 +1433,7 @@
       <div class="colhead">
         <span class="coltitle">輸入</span>
         <button class="mini" onclick={() => addTrack("audio")}>＋ Audio</button>
+        <button class="mini" onclick={() => addMicTrack()}>＋ Mic</button>
         <button class="mini" onclick={() => addTrack("app")}>＋ App</button>
         <button class="mini" onclick={() => addTrack("fx")}>＋ FX</button>
       </div>
@@ -1458,6 +1477,7 @@
             <p class="dim">還沒有輸入軌 —— 加入 Audio(App 軌抓程式聲音)、或從上次的 Session 恢復。</p>
             <div class="startrow">
               <button class="mini" onclick={() => addTrack("audio")}>＋ Audio 軌(麥克風/樂器)</button>
+              <button class="mini" onclick={() => addMicTrack()}>＋ Mic 軌(預設麥克風)</button>
               <button class="mini" onclick={() => addTrack("app")}>＋ App 軌(抓程式聲音)</button>
               <button class="mini" onclick={loadSession}>載入 Session…</button>
               {#if appSettings?.lastSessionPath}
@@ -1567,9 +1587,14 @@
       <select
         id="setdev"
         bind:value={selected}
-        disabled={devices.length === 0 || busy}
+        disabled={busy}
         onchange={(e) => {
-          const d = devices.find((x) => x.deviceKey === e.currentTarget.value);
+          const value = e.currentTarget.value;
+          if (value === WASAPI_DEVICE_KEY) {
+            queueRestart(WASAPI_DEVICE_KEY); // 系統音訊:無 buffer 選項,直接切
+            return;
+          }
+          const d = devices.find((x) => x.deviceKey === value);
           if (d) {
             applyDeviceDefaults(d);
             queueRestart(d.deviceKey); // 即時切換:stop → start 新裝置(失敗自動回滾)
@@ -1581,6 +1606,7 @@
         {:else}
           <option value="">(無 ASIO 裝置)</option>
         {/each}
+        <option value={WASAPI_DEVICE_KEY}>系統音訊 (WASAPI)</option>
       </select>
       {#if busy}
         <span class="dim">切換中…</span>

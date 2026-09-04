@@ -87,18 +87,62 @@ test("自動啟動逐一嘗試候選且整輪只接受一次", () => {
     requestId: firstFailed.state.request!.id,
     failure: { code: "device_open_failed", message: "second failed" },
   });
-  const duplicate = transitionDeviceStream(exhausted.state, {
+  // M6:兩台 ASIO 全敗後,最後候選 = 系統音訊(WASAPI master fallback)
+  assert.equal(exhausted.state.phase, "starting");
+  assert.deepEqual(exhausted.state.request?.target, {
+    deviceKey: "wasapi",
+    bufferSize: null,
+  });
+  assert.equal(exhausted.state.autoStartFailures.length, 2);
+
+  const wasapiFailed = transitionDeviceStream(exhausted.state, {
+    type: "startFailed",
+    requestId: exhausted.state.request!.id,
+    failure: { code: "device_open_failed", message: "no render endpoint" },
+  });
+  const duplicate = transitionDeviceStream(wasapiFailed.state, {
     type: "autoStart",
     preferredDeviceKey: null,
     preferredBufferSize: null,
   });
 
-  assert.equal(exhausted.state.phase, "failed");
-  assert.equal(exhausted.state.request, null);
-  assert.equal(exhausted.state.stale, true);
-  assert.equal(exhausted.state.autoStartFailures.length, 2);
+  assert.equal(wasapiFailed.state.phase, "failed");
+  assert.equal(wasapiFailed.state.request, null);
+  assert.equal(wasapiFailed.state.stale, true);
+  assert.equal(wasapiFailed.state.autoStartFailures.length, 3);
   assert.equal(duplicate.accepted, false);
-  assert.equal(duplicate.state, exhausted.state);
+  assert.equal(duplicate.state, wasapiFailed.state);
+});
+
+test("無 ASIO 裝置時自動啟動直接以系統音訊(WASAPI master)為候選", () => {
+  const listed = transitionDeviceStream(initialDeviceStream(), {
+    type: "devicesChanged",
+    devices: [],
+  });
+  const requested = transitionDeviceStream(listed.state, {
+    type: "autoStart",
+    preferredDeviceKey: null,
+    preferredBufferSize: null,
+  });
+
+  assert.equal(requested.accepted, true);
+  assert.equal(requested.state.phase, "starting");
+  assert.deepEqual(requested.state.request?.target, {
+    deviceKey: "wasapi",
+    bufferSize: null,
+  });
+
+  const succeeded = transitionDeviceStream(requested.state, {
+    type: "startSucceeded",
+    requestId: requested.state.request!.id,
+    actual: { deviceKey: "wasapi", bufferSize: null },
+  });
+  assert.equal(succeeded.accepted, true);
+  assert.equal(succeeded.state.phase, "running");
+  assert.deepEqual(succeeded.state.lastGood, {
+    deviceKey: "wasapi",
+    bufferSize: null,
+  });
 });
 
 test("裝置切換失敗後以 lastGood 回滾，保留原失敗供 UI 呈現", () => {
