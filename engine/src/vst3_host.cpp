@@ -148,6 +148,103 @@ std::string normalize_uid(std::string s) {
     return out;
 }
 
+// #14(CWE-400/770):preset 檔在動 live plugin(先 bypass)「前」的整檔/結構驗證。
+constexpr std::size_t kMaxPresetBytes = 64u * 1024 * 1024;  // 整檔 byte cap;
+// setState/MemoryStream 吃 int32 size,檔案 ≤ 64MiB 同時保證各 chunk < INT32_MAX。
+
+struct PresetLayout {
+    std::uint64_t comp_off{}, comp_size{}, ctrl_off{}, ctrl_size{}, rmxp_off{}, rmxp_size{};
+};
+
+// 讀檔(byte cap)→ header/class ID/chunk list 邊界全檢。回 false = err 帶原因。
+// 純檔案檢查,不碰 plugin 狀態;Vst3Plugin::Impl::load_preset 與公開的
+// validate_preset_file 共用(後者讓 engine 在 bypass live plugin 前先驗)。
+bool read_and_validate_preset(const std::filesystem::path& file,
+                              const std::string& class_uid,
+                              std::vector<std::uint8_t>& data, PresetLayout& out,
+                              std::string& err) {
+    std::FILE* f = nullptr;
+    if (_wfopen_s(&f, file.c_str(), L"rb") != 0 || f == nullptr) {
+        err = "cannot open preset file: " + file.string();
+        return false;
+    }
+    data.clear();
+    std::uint8_t buf[4096];
+    size_t n;
+    while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) {
+        data.insert(data.end(), buf, buf + n);
+        // 巨檔連讀都不吃完(原始碼整檔 insert 無上限)
+        if (data.size() > kMaxPresetBytes) {
+            std::fclose(f);
+            err = "preset file too large (limit is 64 MiB): " + file.string();
+            return false;
+        }
+    }
+    std::fclose(f);
+
+    const std::uint64_t total = data.size();
+    if (total < kPresetHeaderSize + 8 + 20 || rd_u32(data.data()) != kPresetMagic ||
+        rd_u32(data.data() + 4) != static_cast<std::uint32_t>(kPresetVersion)) {
+        err = "not a VST3 preset file (bad header): " + file.string();
+        return false;
+    }
+    // class ID 比對:header 32 字元 vs 本 instance(normalize 容錯 {}- 與大小寫)
+    const char* raw_uid = reinterpret_cast<const char*>(data.data() + 8);
+    const auto uid_len = strnlen(raw_uid, 32);
+    std::string header_uid(raw_uid, uid_len);
+    const std::string want = normalize_uid(class_uid);
+    const std::string got = normalize_uid(header_uid);
+    if (want.empty() || got.empty() || want != got) {
+        err = "preset class id mismatch (file targets " + (got.empty() ? "?" : got) + ")";
+        return false;
+    }
+
+    const std::uint64_t list_off = rd_u64(data.data() + 40);
+    // 邊界全用減法形式:offset 為檔案內容(attacker-controlled),加法會繞回
+    if (total < kPresetHeaderSize || list_off > total - 8 || total - list_off < 8 ||
+        rd_u32(data.data() + list_off) != kListMagic) {
+        err = "preset chunk list corrupt: " + file.string();
+        return false;
+    }
+    const std::uint64_t count = rd_u32(data.data() + list_off + 4);
+    if (count > 64) {
+        err = "preset chunk list too large: " + file.string();
+        return false;
+    }
+    bool have_comp = false;
+    for (std::uint64_t i = 0; i < count; ++i) {
+        const std::uint64_t e = list_off + 8 + i * 20;
+        if (e > total || total - e < 20) {
+            err = "preset chunk entry out of range: " + file.string();
+            return false;
+        }
+        const std::uint32_t id = rd_u32(data.data() + e);
+        const std::uint64_t off = rd_u64(data.data() + e + 4);
+        const std::uint64_t size = rd_u64(data.data() + e + 12);
+        if (off > total || total - off < size) {
+            err = "preset chunk data out of range: " + file.string();
+            return false;
+        }
+        if (id == kChunkComp) {
+            out.comp_off = off;
+            out.comp_size = size;
+            have_comp = true;
+        } else if (id == kChunkCont || id == kChunkCntcOld) {
+            // 'Cont' = SDK 標準;'Cntc' = 本專案早期誤寫的檔,讀取相容
+            out.ctrl_off = off;
+            out.ctrl_size = size;
+        } else if (id == kChunkRmxP) {
+            out.rmxp_off = off;
+            out.rmxp_size = size;
+        }
+    }
+    if (!have_comp || out.comp_size == 0) {
+        err = "preset has no component state chunk: " + file.string();
+        return false;
+    }
+    return true;
+}
+
 }  // namespace
 
 std::vector<Vst3ClassInfo> scan_vst3_module(const std::filesystem::path& module_path,
@@ -678,82 +775,14 @@ struct Vst3Plugin::Impl {
             err = "plugin not loaded";
             return false;
         }
-        std::FILE* f = nullptr;
-        if (_wfopen_s(&f, file.c_str(), L"rb") != 0 || f == nullptr) {
-            err = "cannot open preset file: " + file.string();
-            return false;
-        }
+        // #14:整檔讀入(byte cap)+ header/class/chunk 邊界驗證共用
+        // read_and_validate_preset;AudioEngine::load_preset 在 bypass 前已呼
+        // validate_preset_file 先擋壞檔,這裡是 commit 前的最後防線
         std::vector<std::uint8_t> data;
-        std::uint8_t buf[4096];
-        size_t n;
-        while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) data.insert(data.end(), buf, buf + n);
-        std::fclose(f);
-
-        const std::uint64_t total = data.size();
-        if (total < kPresetHeaderSize + 8 + 20 || rd_u32(data.data()) != kPresetMagic ||
-            rd_u32(data.data() + 4) != static_cast<std::uint32_t>(kPresetVersion)) {
-            err = "not a VST3 preset file (bad header): " + file.string();
-            return false;
-        }
-        // class ID 比對:header 32 字元 vs 本 instance(normalize 容錯 {}- 與大小寫)
-        const char* raw_uid = reinterpret_cast<const char*>(data.data() + 8);
-        const auto uid_len = strnlen(raw_uid, 32);
-        std::string header_uid(raw_uid, uid_len);
-        const std::string want = normalize_uid(class_uid_);
-        const std::string got = normalize_uid(header_uid);
-        if (want.empty() || got.empty() || want != got) {
-            err = "preset class id mismatch (file targets " +
-                  (got.empty() ? "?" : got) + ")";
-            return false;
-        }
-
-        const std::uint64_t list_off = rd_u64(data.data() + 40);
-        // 邊界全用減法形式:offset 為檔案內容(attacker-controlled),加法會繞回
-        if (total < kPresetHeaderSize || list_off > total - 8 || total - list_off < 8 ||
-            rd_u32(data.data() + list_off) != kListMagic) {
-            err = "preset chunk list corrupt: " + file.string();
-            return false;
-        }
-        const std::uint64_t count = rd_u32(data.data() + list_off + 4);
-        if (count > 64) {
-            err = "preset chunk list too large: " + file.string();
-            return false;
-        }
-        std::uint64_t comp_off = 0, comp_size = 0, ctrl_off = 0, ctrl_size = 0, rmxp_off = 0,
-                     rmxp_size = 0;
-        bool have_comp = false, have_ctrl = false, have_rmxp = false;
-        for (std::uint64_t i = 0; i < count; ++i) {
-            const std::uint64_t e = list_off + 8 + i * 20;
-            if (e > total || total - e < 20) {
-                err = "preset chunk entry out of range: " + file.string();
-                return false;
-            }
-            const std::uint32_t id = rd_u32(data.data() + e);
-            const std::uint64_t off = rd_u64(data.data() + e + 4);
-            const std::uint64_t size = rd_u64(data.data() + e + 12);
-            if (off > total || total - off < size) {
-                err = "preset chunk data out of range: " + file.string();
-                return false;
-            }
-            if (id == kChunkComp) {
-                comp_off = off;
-                comp_size = size;
-                have_comp = true;
-            } else if (id == kChunkCont || id == kChunkCntcOld) {
-                // 'Cont' = SDK 標準;'Cntc' = 本專案早期誤寫的檔,讀取相容
-                ctrl_off = off;
-                ctrl_size = size;
-                have_ctrl = true;
-            } else if (id == kChunkRmxP) {
-                rmxp_off = off;
-                rmxp_size = size;
-                have_rmxp = true;
-            }
-        }
-        if (!have_comp || comp_size == 0) {
-            err = "preset has no component state chunk: " + file.string();
-            return false;
-        }
+        PresetLayout layout;
+        if (!read_and_validate_preset(file, class_uid_, data, layout, err)) return false;
+        // 成員序 = 宣告序;structured binding 直接攤平,不再逐欄搬
+        const auto [comp_off, comp_size, ctrl_off, ctrl_size, rmxp_off, rmxp_size] = layout;
 
         MemoryStream comp_in(data.data() + comp_off, static_cast<int32>(comp_size));
         if (component->setState(&comp_in) != kResultOk) {
@@ -770,7 +799,7 @@ struct Vst3Plugin::Impl {
             MemoryStream comp_again(data.data() + comp_off, static_cast<int32>(comp_size));
             ctrl_synced = controller->setComponentState(&comp_again) == kResultOk;
         }
-        if (have_ctrl && controller && ctrl_synced) {
+        if (ctrl_size != 0 && controller && ctrl_synced) {
             // controller 自身狀態(Cntc)最後套,蓋編輯器佈局等,不影響參數值
             MemoryStream ctrl_in(data.data() + ctrl_off, static_cast<int32>(ctrl_size));
             controller->setState(&ctrl_in);
@@ -778,7 +807,7 @@ struct Vst3Plugin::Impl {
 
         // host 權威值:RmxP(save 時的 host 表)最準;淺實作 plugin 的 controller
         // setComponentState 回 OK 但 getParamNormalized 不動,不可當 truth
-        if (have_rmxp && rmxp_size >= 4) {
+        if (rmxp_size >= 4) {
             const std::uint64_t n_entries = rd_u32(data.data() + rmxp_off);
             if (n_entries <= (rmxp_size - 4) / 12) {
                 for (std::uint64_t i = 0; i < n_entries; ++i) {
@@ -951,6 +980,15 @@ bool Vst3Plugin::load_preset(const std::filesystem::path& file,
     state_rejected = false;
     return impl_ && impl_->load_preset(file, host_params_inout, error,
                                       host_values_from_file, state_rejected);
+}
+
+bool validate_preset_file(const std::filesystem::path& file,
+                          const std::string& class_uid, std::string& error) {
+    // 純檔案檢查(byte cap + header/class/chunk 邊界),不需 loaded plugin:
+    // engine 在 bypass live plugin 之前呼(#14),壞檔不動 live 狀態
+    std::vector<std::uint8_t> data;
+    PresetLayout layout;
+    return read_and_validate_preset(file, class_uid, data, layout, error);
 }
 
 bool Vst3Plugin::editor_capable() const noexcept {

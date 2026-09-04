@@ -2,9 +2,13 @@
 // 沒裝 plugin 的環境印 SKIP(不自動失敗)。
 #include "vst3_host.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
+#include <string>
 
 namespace {
 
@@ -44,6 +48,33 @@ std::filesystem::path find_installed_vst3(const char* filename) {
     return std::filesystem::exists(path, ec) ? path : std::filesystem::path{};
 }
 
+// 最小合法 .vst3 容器:48B header('VST3'+v1+uid32+list_off)+ Comp chunk + chunk list
+std::vector<std::uint8_t> make_preset(const std::string& uid32,
+                                      const std::vector<std::uint8_t>& comp) {
+    std::vector<std::uint8_t> out;
+    const auto push32 = [&out](std::uint32_t x) {
+        const auto* p = reinterpret_cast<const std::uint8_t*>(&x);
+        out.insert(out.end(), p, p + 4);
+    };
+    const auto push64 = [&out](std::uint64_t x) {
+        const auto* p = reinterpret_cast<const std::uint8_t*>(&x);
+        out.insert(out.end(), p, p + 8);
+    };
+    push32(0x33545356);  // 'VST3'
+    push32(1);           // version
+    char uid[32]{};
+    std::memcpy(uid, uid32.data(), std::min<size_t>(32, uid32.size()));
+    out.insert(out.end(), uid, uid + 32);
+    push64(48 + comp.size());  // chunk list offset(= Comp chunk 結尾)
+    out.insert(out.end(), comp.begin(), comp.end());
+    push32(0x7473694C);  // 'List'
+    push32(1);           // count
+    push32(0x706D6F43);  // 'Comp'
+    push64(48);          // offset
+    push64(comp.size());
+    return out;
+}
+
 }  // namespace
 
 int main() {
@@ -52,6 +83,66 @@ int main() {
         const auto classes = rmx::scan_vst3_module("Z:\\definitely\\not\\here.vst3", err);
         CHECK(classes.empty(), "scan of missing path should return no classes");
         CHECK(!err.empty(), "scan of missing path should set error");
+    }
+
+    {  // 1b. #14 validate_preset_file:pure 檔案驗證(不需 plugin)——header/class/
+        //     chunk 邊界;整檔 byte cap 在動 live plugin(先 bypass)之前擋下
+        const auto uid = std::string(32, 'A');  // normalize_uid:32 hex 大寫
+        const std::vector<std::uint8_t> comp{'C', 'S', 'T'};
+        const auto dir = std::filesystem::temp_directory_path() / "rmx-vst3-host-test";
+        std::filesystem::create_directories(dir);
+        const auto write = [](const std::filesystem::path& p,
+                              const std::vector<std::uint8_t>& bytes) {
+            std::FILE* f = nullptr;
+            if (_wfopen_s(&f, p.c_str(), L"wb") != 0 || f == nullptr) return;
+            std::fwrite(bytes.data(), 1, bytes.size(), f);
+            std::fclose(f);
+        };
+
+        // 合法容器 → 過
+        const auto ok = dir / "ok.vstpreset";
+        write(ok, make_preset(uid, comp));
+        std::string v_err;
+        CHECK(rmx::validate_preset_file(ok, uid, v_err), "valid preset should pass validation");
+
+        // class ID 不符 → 拒
+        const auto wrong_uid = dir / "wrong-uid.vstpreset";
+        write(wrong_uid, make_preset(std::string(31, 'B') + "C", comp));
+        CHECK(!rmx::validate_preset_file(wrong_uid, uid, v_err),
+              "preset with mismatched class id should be rejected");
+
+        // chunk list offset 超界 → 拒
+        {
+            auto bad = make_preset(uid, comp);
+            const std::uint64_t bogus = 0xFFFFFFFFFFFFFF00ull;
+            std::memcpy(bad.data() + 40, &bogus, 8);
+            const auto bad_list = dir / "bad-list.vstpreset";
+            write(bad_list, bad);
+            CHECK(!rmx::validate_preset_file(bad_list, uid, v_err),
+                  "out-of-range chunk list should be rejected");
+        }
+
+        // 非 preset 檔(隨機短檔)→ 拒
+        const auto garbage = dir / "garbage.vstpreset";
+        write(garbage, {'x', 'y', 'z'});
+        CHECK(!rmx::validate_preset_file(garbage, uid, v_err),
+              "non-preset file should be rejected");
+
+        // 整檔 byte cap:超上限的大檔在讀入階段就拒(不整檔吃進記憶體)
+        {
+            const auto huge = dir / "huge.vstpreset";
+            std::FILE* f = nullptr;
+            if (_wfopen_s(&f, huge.c_str(), L"wb") == 0 && f != nullptr) {
+                const std::vector<std::uint8_t> zero(1 << 20, 0);
+                for (int i = 0; i < 65; ++i)  // 65MiB > cap
+                    std::fwrite(zero.data(), 1, zero.size(), f);
+                std::fclose(f);
+            }
+            CHECK(!rmx::validate_preset_file(huge, uid, v_err),
+                  "oversized preset should be rejected by byte cap");
+            std::filesystem::remove(huge);
+        }
+        std::filesystem::remove_all(dir);
     }
 
     const auto plugin_path = find_any_vst3();

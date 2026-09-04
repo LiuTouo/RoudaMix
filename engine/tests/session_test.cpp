@@ -636,6 +636,92 @@ int main() {
         }
     }
 
+    // 13. #14 資源預算(CWE-400/770):外部檔在動 live 狀態「前」有整檔/結構
+    //     總量上限;超限 = 拒載且狀態不動(不 terminate、不放大記憶體)
+    {
+        // 13a. 整檔 byte cap:~5.2MiB 檔(超過上限)拒載,原軌不動
+        {
+            const auto big = tmp / "big.rmsession";
+            std::FILE* bf = nullptr;
+            _wfopen_s(&bf, big.c_str(), L"wb");
+            CHECK(bf != nullptr);
+            const std::string chunk(4096, ' ');
+            for (int i = 0; i < 1300; ++i)
+                std::fwrite(chunk.data(), 1, chunk.size(), bf);
+            std::fclose(bf);
+            const auto before = e.tracks().size();
+            nlohmann::json applied;
+            CHECK(rmx::session::load(e, big, applied));
+            CHECK(e.tracks().size() == before);
+        }
+
+        // 13b. JSON 深度上限:1000 層巢狀(nlohmann 無深度限制,遞迴會爆棧)拒載
+        {
+            const auto deep = tmp / "deep.rmsession";
+            std::string s = R"({"roudamixSession":3,"tracks":[{"kind":)";
+            s += std::string(1000, '[') + std::string(1000, ']') + "}]}";
+            write_text(deep, s.c_str());
+            nlohmann::json applied;
+            CHECK(rmx::session::load(e, deep, applied));
+        }
+
+        // 13c. 軌數上限(kMaxTracks):200 條 minimal track = 整檔拒載、狀態不動
+        //      (極小 track 物件可放大成每軌 384KiB RT buffer;不得靜默截斷)
+        {
+            std::string s = R"({"roudamixSession":3,"tracks":[)";
+            for (int i = 0; i < 200; ++i) {
+                if (i != 0) s += ",";
+                s += R"({"kind":"fx","name":"t"})";
+            }
+            s += "]}";
+            const auto many = tmp / "many.rmsession";
+            write_text(many, s.c_str());
+            rmx::AudioEngine fresh;
+            nlohmann::json applied;
+            CHECK(rmx::session::load(fresh, many, applied));
+            CHECK(fresh.tracks().empty());  // 拒載 = live 狀態原封不動
+        }
+
+        // 13d. 每軌 plugin 鏈上限(kMaxChain):300 個已知 placeholder(availability
+        //      = missing → 走 placeholder 路徑、不碰 worker,測試可決定論)截到上限
+        {
+            // raw string 內不能出現 `)"`(會提前關閉 literal),plugins 陣列開頭拆開串
+            std::string s =
+                R"({"roudamixSession":3,"tracks":[{"kind":"fx","name":"c","plugins":)";
+            s += '[';
+            for (int i = 0; i < 300; ++i) {
+                if (i != 0) s += ",";
+                s += R"({"pluginPath":"C:\\nope\\x.vst3","name":"p","availability":"missing"})";
+            }
+            s += "]}]}";
+            const auto chained = tmp / "chained.rmsession";
+            write_text(chained, s.c_str());
+            rmx::AudioEngine fresh;
+            nlohmann::json applied;
+            CHECK(!rmx::session::load(fresh, chained, applied));
+            CHECK(fresh.tracks()[0].chain.size() == rmx::kMaxChain);
+            CHECK(applied["missing"].size() == rmx::kMaxChain);
+        }
+
+        // 13e. 每 plugin 參數上限(kMaxParams):10000 筆 params 截到上限
+        {
+            std::string s = "{\"roudamixSession\":3,\"tracks\":[{\"kind\":\"fx\","
+                            "\"name\":\"c\",\"plugins\":[{\"pluginPath\":\"C:\\\\nope\\\\x.vst3\","
+                            "\"name\":\"p\",\"availability\":\"missing\",\"params\":[";
+            for (int i = 0; i < 10000; ++i) {
+                if (i != 0) s += ",";
+                s += "{\"paramId\":" + std::to_string(i) + ",\"normalized\":0.5}";
+            }
+            s += "]}]}]}";  // params] plugin} plugins] track} tracks] root}
+            const auto params = tmp / "params.rmsession";
+            write_text(params, s.c_str());
+            rmx::AudioEngine fresh;
+            nlohmann::json applied;
+            CHECK(!rmx::session::load(fresh, params, applied));
+            CHECK(fresh.tracks()[0].chain[0].param_values.size() == rmx::kMaxParams);
+        }
+    }
+
     std::filesystem::remove_all(tmp);
     std::printf("session_test PASSED\n");
     return 0;

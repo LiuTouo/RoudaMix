@@ -1,5 +1,7 @@
 #include "session.hpp"
 
+#include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <io.h>  // _commit(原子寫入:temp 落盤後才 replace)
@@ -14,6 +16,33 @@ namespace rmx::session {
 
 namespace {
 constexpr int kSessionVersion = 3;
+
+// #14 資源預算(CWE-400/770):外部 session 檔在動 live 狀態「前」的整檔/結構
+// 總量上限。超限 = 拒載(結構超限則略過超量項),live 狀態不動。
+constexpr std::size_t kMaxSessionBytes = 4u * 1024 * 1024;  // 整檔 byte cap
+constexpr int kMaxJsonDepth = 64;  // nlohmann 無深度上限,深巢狀 = 遞迴爆棧
+// 每 plugin preflight 20s(sandbox.cpp);session 載入整體再加聚合上限,
+// 防大量獨立 module 把 engine dispatch 卡住數小時。
+constexpr int kMaxPreflightSeconds = 60;
+
+// 檔案內最大 { [ 括號深度(略過字串/逸出)。nlohmann parse 是遞迴下降且無
+// 深度限制,幾百 KB 的深巢狀就能爆 stack;session 結構深度 ≤ 8,64 已極寬鬆。
+int max_json_depth(const std::string& text) {
+    int depth = 0, max = 0;
+    bool in_string = false, escaped = false;
+    for (const char c : text) {
+        if (in_string) {
+            if (escaped) escaped = false;
+            else if (c == '\\') escaped = true;
+            else if (c == '"') in_string = false;
+            continue;
+        }
+        if (c == '"') in_string = true;
+        else if (c == '{' || c == '[') max = (std::max)(max, ++depth);
+        else if (c == '}' || c == ']') --depth;
+    }
+    return max;
+}
 
 // availability ↔ JSON:字串實作共用 rack.hpp availability_str;舊檔無此欄 = ok
 using rmx::availability_str;
@@ -230,8 +259,20 @@ std::optional<Failure> load(AudioEngine& engine, const std::filesystem::path& fi
     std::string text;
     char buf[4096];
     size_t n;
-    while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) text.append(buf, n);
+    while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) {
+        text.append(buf, n);
+        // #14:整檔 byte cap 在 parse/驗證之前 —— 巨檔連讀都不吃完
+        if (text.size() > kMaxSessionBytes) {
+            std::fclose(f);
+            return failure(Err::kSessionIo,
+                           "session file too large (limit is 4 MiB): " + file.string());
+        }
+    }
     std::fclose(f);
+
+    // 深度檢查也先於 parse:nlohmann 無深度限制,深巢狀會在 parse 內爆 stack
+    if (max_json_depth(text) > kMaxJsonDepth)
+        return failure(Err::kSessionIo, "session file too deeply nested: " + file.string());
 
     const nlohmann::json j = nlohmann::json::parse(text, nullptr, /*allow_exceptions=*/false);
     if (j.is_discarded() || !j.is_object() || !j.contains("roudamixSession") ||
@@ -241,6 +282,14 @@ std::optional<Failure> load(AudioEngine& engine, const std::filesystem::path& fi
     if (file_version != 2 && file_version != kSessionVersion)
         return failure(Err::kSessionIo,
                        "unsupported RoudaMix session version (expected v2 or v3)");
+
+    // #14:軌數超上限 = 整檔拒載、狀態不動(極小 track 物件可放大成每軌 384KiB
+    // RT buffer;合法檔遠低於此 — telemetry 也只有 64 strip)。clear 之前擋。
+    if (j.contains("tracks") && j["tracks"].is_array() &&
+        j["tracks"].size() > kMaxTracks)
+        return failure(Err::kSessionIo,
+                       "session has too many tracks (limit " + std::to_string(kMaxTracks) +
+                           "): " + file.string());
 
     // 舊全軌清空(trackId/instanceId 不保留 — load 後全部重發;含系統輸出軌,
     // 載入後 ensure_system_outputs 會依檔案重建/補齊)
@@ -261,6 +310,28 @@ std::optional<Failure> load(AudioEngine& engine, const std::filesystem::path& fi
                          "require explicit retry approval\n",
                          reg_err.c_str());
     }
+
+    // #14 preflight 去重 + 聚合預算:同一 module+class 只送一次 worker(每驗一次
+    // 最多 20s);整檔載入共用 kMaxPreflightSeconds 秒 worker 時間,用完後其餘
+    // plugin 記 placeholder(code=preflight_budget),使用者按 retry 逐個載。
+    struct PreflightVerdict {
+        sandbox::PreflightFailure code{};
+        std::string error;
+        bool budget_exhausted{};
+    };
+    std::map<std::pair<std::string, std::string>, PreflightVerdict> preflights;
+    const auto load_started = std::chrono::steady_clock::now();
+    const auto run_preflight = [&](const std::string& p,
+                                   const std::string& cid) -> PreflightVerdict {
+        const auto key = std::make_pair(p, cid);
+        if (const auto it = preflights.find(key); it != preflights.end()) return it->second;
+        if (std::chrono::steady_clock::now() - load_started >
+            std::chrono::seconds(kMaxPreflightSeconds))
+            return {sandbox::PreflightFailure::kWorkerUnavailable, {}, true};
+        PreflightVerdict v;
+        v.code = preflight_plugin(engine, p, cid, v.error);
+        return preflights.emplace(key, v).first->second;
+    };
 
     // 逐軌重建:track_add(新 id 依序重發)→ 屬性 → plugins → dests(map 重接)
     std::map<std::uint32_t, std::uint32_t> id_map;  // 舊 id → 新 id
@@ -318,6 +389,8 @@ std::optional<Failure> load(AudioEngine& engine, const std::filesystem::path& fi
             if (st.contains("plugins") && st["plugins"].is_array()) {
                 std::size_t chain_index = 0;
                 for (const auto& sp : st["plugins"]) {
+                    // #14:每軌 plugin 鏈上限(kMaxChain);超量項整個略過
+                    if (chain_index >= kMaxChain) break;
                     if (!sp.is_object() || !sp.contains("pluginPath") ||
                         !sp["pluginPath"].is_string())
                         continue;
@@ -340,6 +413,8 @@ std::optional<Failure> load(AudioEngine& engine, const std::filesystem::path& fi
                     std::vector<std::pair<std::uint32_t, double>> params;
                     if (sp.contains("params") && sp["params"].is_array()) {
                         for (const auto& p : sp["params"]) {
+                            // #14:每 plugin 參數表上限(kMaxParams)
+                            if (params.size() >= kMaxParams) break;
                             if (p.is_object() && p.contains("paramId") &&
                                 p.contains("normalized") && p["paramId"].is_number_unsigned() &&
                                 p["normalized"].is_number())
@@ -397,14 +472,17 @@ std::optional<Failure> load(AudioEngine& engine, const std::filesystem::path& fi
                     if (!restore_allowed(path, enforce_registry, approved_registry, verr)) {
                         // 未核准:fail closed,不送 preflight、不進 engine
                         note_missing("plugin_unapproved", verr);
-                    } else if (const auto preflight =
-                                   preflight_plugin(engine, path, class_id, verr);
-                               preflight != rmx::sandbox::PreflightFailure::kNone) {
-                        note_missing(
-                            preflight == rmx::sandbox::PreflightFailure::kWorkerUnavailable
-                                ? "sandbox_unavailable"
-                                : "plugin_load_failed",
-                            verr);
+                    } else if (const auto pf = run_preflight(path, class_id);
+                               pf.budget_exhausted) {
+                        note_missing("preflight_budget",
+                                     "session restore worker budget exceeded — press "
+                                     "retry to load this plugin");
+                    } else if (pf.code != rmx::sandbox::PreflightFailure::kNone) {
+                        note_missing(pf.code ==
+                                             rmx::sandbox::PreflightFailure::kWorkerUnavailable
+                                         ? "sandbox_unavailable"
+                                         : "plugin_load_failed",
+                                     pf.error);
                     } else if (auto fail = engine.add_plugin(new_id, path, class_id,
                                                              instance_id)) {
                         note_missing("plugin_load_failed", fail->message);

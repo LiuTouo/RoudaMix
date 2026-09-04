@@ -110,6 +110,14 @@ struct TrackRt {
 
 constexpr std::uint32_t kNoStrip = 0xFFFFFFFFu;  // 超出 telemetry 預算 = 沒有錶
 
+// 資源預算(#14,CWE-400/770):外部輸入(session 檔/router 指令)可合成的
+// 結構總量上限。每軌 TrackRt ≈384KiB RT buffer、每條 route 一條 2s PDC delay,
+// 無上限 = 極小檔案放大成 GB 級配置。合法場景遠低於此(telemetry strip 也只有
+// 64);超限 = track_add 回 kBadCommand、session 載入多餘軌/plugin/params 略過。
+constexpr std::size_t kMaxTracks = 128;    // 軌數(含系統輸出)
+constexpr std::size_t kMaxChain = 256;     // 每軌 plugin 數(= kPluginLoadEntries)
+constexpr std::size_t kMaxParams = 4096;   // 每 plugin host 參數表筆數
+
 // snapshot 節點(RT 唯讀)。master 同構但 src/out/strip 欄位只在 snapshot 填。
 struct TrackNode {
     std::uint32_t track_id{};

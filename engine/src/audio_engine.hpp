@@ -220,7 +220,10 @@ private:
     std::atomic<TrackGraph*> rt_graph_{nullptr};  // 讀取一律走 acquire_graph(#15)
     GraphRetireQueue retired_graphs_;  // #15:reader 門閂,逾時且無 reader 才刪
 
-    bool swap_graph() noexcept;  // candidate 合法才 atomic commit
+    // #14:candidate 建構滿是丟例外的配置(new/vector/unordered_set/make_shared),
+    // noexcept 包裝把配置失敗轉成「保留現行圖、回 false」,不在 noexcept 內 terminate
+    bool commit_graph_candidate();  // 建候選圖 + atomic commit(會丟例外)
+    bool swap_graph() noexcept;         // candidate 合法才 atomic commit
     bool swap_safety_graph() noexcept;  // 複製目前 RT routing，只暫停 plugin process
     void retire_graph() noexcept;           // graph 退場(RT 改讀 nullptr)
     // grace 期滿「且」reader 歸零才刪;reader 未退 = 留佇列下輪再試(含 force)

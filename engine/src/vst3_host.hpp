@@ -53,6 +53,12 @@ struct Vst3RuntimeState {
     std::vector<std::uint8_t> controller;
 };
 
+// #14:preset 檔案驗證(純檔案檢查,不需 loaded plugin)。整檔讀入有 64MiB
+// byte cap,header/class ID/chunk list 邊界全檢;engine 在 bypass live plugin
+// 之前呼,壞檔/巨檔不動 live 狀態。回 false = error 帶原因。
+bool validate_preset_file(const std::filesystem::path& file,
+                          const std::string& class_uid, std::string& error);
+
 // 單一 plugin instance。載入/初始化/參數在控制面;process 只在 audio thread。
 class Vst3Plugin {
 public:

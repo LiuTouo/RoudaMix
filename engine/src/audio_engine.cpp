@@ -591,9 +591,11 @@ void AudioEngine::stop() noexcept {
 
 // ---- track graph swap(同舊 rack 的 grace 模式)----
 
-bool AudioEngine::swap_graph() noexcept {
+// 建候選圖 + atomic commit。會丟例外:new TrackGraph、各 vector/unordered_set
+// 成長、make_shared<PdcDelayLine>。noexcept 介面由 swap_graph 提供(#14)。
+bool AudioEngine::commit_graph_candidate() {
     // 深拷貝結構殼:chain 內 plugin/ring shared_ptr、RT buffer shared_ptr 共用
-    auto* fresh = new TrackGraph{};
+    std::unique_ptr<TrackGraph> fresh{new TrackGraph{}};
     fresh->nodes = tracks_;
     fresh->order = graph_topo_order(tracks_);
     if (fresh->order.empty()) {
@@ -645,7 +647,6 @@ bool AudioEngine::swap_graph() noexcept {
     if (!fresh->route_plan.ok()) {
         // Candidate plan 不合法即不 commit；caller 負責回滾剛才的 control
         // mutation。既有 RT graph 與 last-known-good plan 完全不動。
-        delete fresh;
         return false;
     }
 
@@ -725,7 +726,6 @@ bool AudioEngine::swap_graph() noexcept {
         }
     }
     if (!dry_resources_ready) {
-        delete fresh;
         return false;
     }
     for (auto& t : fresh->nodes) t.dest_pdc.assign(t.dests.size(), nullptr);
@@ -766,7 +766,6 @@ bool AudioEngine::swap_graph() noexcept {
         pending_lines.push_back({key, edge.delay_samples, std::move(delay), reused});
     }
     if (!resources_ready) {
-        delete fresh;
         return false;
     }
     for (const auto& pending : pending_dry_delays)
@@ -791,38 +790,68 @@ bool AudioEngine::swap_graph() noexcept {
     last_route_plan_ = fresh->route_plan;
     latency_generation_.fetch_add(1, std::memory_order_relaxed);
     // seq_cst:與 acquire_graph 的「登記→取圖」SC 全序成對(#15)
-    TrackGraph* old = rt_graph_.exchange(fresh, std::memory_order_seq_cst);
-    retired_graphs_.retire(old, GetTickCount64());
-    // Commit 後才發布共享 delay 的 target，candidate 失敗時現行 graph 不會
-    // 提前看到新 latency。Audio thread 仍只在下一個 block boundary 套用。
-    const auto transition_samples =
-        running_rate > 0 ? static_cast<std::uint32_t>(plan_rate / 50u) : 0u;
-    for (auto& pending : pending_lines)
-        if (pending.reused)
-            (void)pending.line->set_delay(pending.target, transition_samples);
-    for (auto& pending : pending_dry_delays)
-        if (pending.reused)
-            (void)pending.line->set_delay(pending.target, transition_samples);
-    reap_retired_graphs(false);
+    TrackGraph* old = rt_graph_.exchange(fresh.get(), std::memory_order_seq_cst);
+    fresh.release();  // 所有權已移轉 rt_graph_;以下絕不可再刪新圖
+    // Commit 已成立;收尾丟例外(retire/reap 的 vector push)只允許「舊圖晚刪/
+    // 漏刪一次」,不得回報失敗(呼叫端會回滾 control 狀態,與已 commit 的圖落差)
+    try {
+        retired_graphs_.retire(old, GetTickCount64());
+        // Commit 後才發布共享 delay 的 target，candidate 失敗時現行 graph 不會
+        // 提前看到新 latency。Audio thread 仍只在下一個 block boundary 套用。
+        const auto transition_samples =
+            running_rate > 0 ? static_cast<std::uint32_t>(plan_rate / 50u) : 0u;
+        for (auto& pending : pending_lines)
+            if (pending.reused)
+                (void)pending.line->set_delay(pending.target, transition_samples);
+        for (auto& pending : pending_dry_delays)
+            if (pending.reused)
+                (void)pending.line->set_delay(pending.target, transition_samples);
+        reap_retired_graphs(false);
+    } catch (...) {
+        std::fprintf(stderr,
+                     "[engine] swap_graph: post-commit retire/reap failed; "
+                     "previous graph leaked once\n");
+    }
     return true;
+}
+
+bool AudioEngine::swap_graph() noexcept {
+    // #14:noexcept 內配置失敗 = 丟棄 candidate、現行 graph 不動、回 false
+    // (呼叫端本就有 plan-failure 回滾路徑),不 terminate。
+    try {
+        return commit_graph_candidate();
+    } catch (...) {
+        return false;
+    }
 }
 
 bool AudioEngine::swap_safety_graph() noexcept {
     const TrackGraph* active = rt_graph_.load(std::memory_order_acquire);
     if (active == nullptr) return true;
-    auto* safe = new TrackGraph(*active);
-    for (auto& track : safe->nodes) {
-        for (auto& slot : track.chain) {
-            slot.bypass = true;
-            slot.primary_cpu_index = 0xFFFFFFFFu;
-            slot.shadow_cpu_index = 0xFFFFFFFFu;
+    // #14:同 swap_graph — new 複製/plan_route_suspension/retire 會丟例外;
+    // 失敗 = 維持現行圖(不換安全圖),不 terminate
+    std::unique_ptr<TrackGraph> safe;
+    try {
+        safe.reset(new TrackGraph(*active));
+        for (auto& track : safe->nodes) {
+            for (auto& slot : track.chain) {
+                slot.bypass = true;
+                slot.primary_cpu_index = 0xFFFFFFFFu;
+                slot.shadow_cpu_index = 0xFFFFFFFFu;
+            }
         }
+        safe->route_plan = plan_route_suspension(active->route_plan);
+        TrackGraph* old = rt_graph_.exchange(safe.get(), std::memory_order_seq_cst);
+        safe.release();  // 所有權已移轉;收尾失敗只允許舊圖晚刪
+        try {
+            retired_graphs_.retire(old, GetTickCount64());
+            reap_retired_graphs(false);
+        } catch (...) {
+        }
+        return true;
+    } catch (...) {
+        return false;
     }
-    safe->route_plan = plan_route_suspension(active->route_plan);
-    TrackGraph* old = rt_graph_.exchange(safe, std::memory_order_seq_cst);
-    retired_graphs_.retire(old, GetTickCount64());
-    reap_retired_graphs(false);
-    return true;
 }
 
 void AudioEngine::refresh_latency(RackSlot& slot) noexcept {
@@ -1006,7 +1035,11 @@ std::optional<Failure> AudioEngine::prepare_monitor_variants() {
 
 void AudioEngine::retire_graph() noexcept {
     TrackGraph* old = rt_graph_.exchange(nullptr, std::memory_order_seq_cst);
-    retired_graphs_.retire(old, GetTickCount64());
+    // #14:retire 入隊(vector push)會丟例外;失敗 = 舊圖漏刪一次,好過 terminate
+    try {
+        retired_graphs_.retire(old, GetTickCount64());
+    } catch (...) {
+    }
 }
 
 bool AudioEngine::rebuild_asio_channels(std::string& err) {
@@ -1085,6 +1118,10 @@ TrackNode* AudioEngine::find_track_mut(std::uint32_t track_id) noexcept {
 
 std::optional<Failure> AudioEngine::track_add(TrackKind kind, const std::string& name,
                                               std::uint32_t color, std::uint32_t& track_id) {
+    // #14:router 指令與 session 載入都走這裡,單點擋軌數總量(kMaxTracks)
+    if (tracks_.size() >= kMaxTracks)
+        return failure(Err::kBadCommand,
+                       "track limit reached (" + std::to_string(kMaxTracks) + ")");
     TrackNode t;
     t.kind = kind;
     t.track_id = next_track_id_++;
@@ -1680,6 +1717,12 @@ std::optional<Failure> AudioEngine::load_preset(std::uint32_t instance_id,
     }
     if (s->plugin == nullptr)
         return failure(Err::kPresetIo, "plugin not loaded (placeholder)");
+    {
+        // #14:檔案驗證先於 bypass —— 壞檔/巨檔在動 live 狀態前就擋下
+        std::string verr;
+        if (!rmx::validate_preset_file(file, s->plugin->class_uid(), verr))
+            return failure(Err::kPresetIo, std::move(verr));
+    }
     std::string err;
     // setState 與 RT process 不得併發:同 save_preset,先掛 bypass
     const bool orig_bypass = s->bypass;
