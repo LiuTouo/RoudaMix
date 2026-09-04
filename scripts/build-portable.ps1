@@ -3,6 +3,9 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$WebView2RuntimeDir,
 
+    # 變體標籤(如 "mic"):壓縮包/資料夾名變成 RoudaMix-<ver>-windows-x64-portable-mic
+    [string]$Suffix = '',
+
     [switch]$SkipRestore,
     [switch]$SkipTests
 )
@@ -155,7 +158,8 @@ Invoke-Native npm @(
 $tauriConfig = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'src-tauri\tauri.conf.json') |
     ConvertFrom-Json
 $version = [string]$tauriConfig.version
-$artifactName = "RoudaMix-$version-windows-x64-portable"
+$suffixPart = if ($Suffix) { '-' + $Suffix.TrimStart('-') } else { '' }
+$artifactName = "RoudaMix-$version-windows-x64-portable$suffixPart"
 $stageRoot = Join-Path $workRoot $artifactName
 $zipPath = Join-Path $workRoot "$artifactName.zip"
 $zipHashPath = "$zipPath.sha256"
