@@ -10,6 +10,7 @@
 // 對 spec 案例類別的取捨:「初始鎖定」由 underrun 重鎖 + 起播預填門檻兩案例
 // 合併覆蓋;「佇列關閉」半邊 —— SpscFifo 無 close 語意(spec 禁新增
 // production seam),僅測空佇列端點(sustained_underrun)。
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdint>
@@ -50,8 +51,9 @@ void drain_into(DriftReader& reader, SpscFifo& fifo, std::uint32_t frames, float
     }
 }
 
-// 同率穩態:corr 恆 0(err=0),step 精確 1 → 輸出 = 輸入延遲 1 樣本(內插
-// 固有),跨 read() 呼叫 state 連續(第二輪 out[0] = 第一輪最後一個輸入)。
+// 同率穩態:fill(32)高於收斂目標(cap/4=16)→ 校正啟動,corr 首輪僅
+// 5e-8/frame 推進 —— 輸出 = 輸入延遲 1 樣本(內插固有)加無聽感差的微移,
+// 以 1e-3 容差斷言;跨 read() 呼叫 state 連續(第二輪 out[0] = 第一輪最後輸入)。
 void passthrough_same_rate() {
     SpscFifo fifo(64);
     DriftReader reader;
@@ -59,20 +61,20 @@ void passthrough_same_rate() {
 
     fill(fifo, 32, 1.0F, 1.0F, 1000.0F, 2.0F);
     drain_into(reader, fifo, 16, l, r, 48000, 48000);
-    CHECK(l[0] == 0.0F);  // 首樣 = 初始 prev(0),1 樣本延遲由此而來
+    CHECK(std::fabs(l[0]) < 1e-3F);  // 首樣 ≈ 初始 prev(0),1 樣本延遲由此而來
     for (std::uint32_t i = 1; i < 16; ++i) {
-        CHECK(l[i] == static_cast<float>(i));         // in_L[i-1] = 1+(i-1)
-        CHECK(r[i] == 1000.0F + 2.0F * static_cast<float>(i - 1));  // 分離:R 獨立 ramp
+        CHECK(std::fabs(l[i] - static_cast<float>(i)) < 1e-3F);  // in_L[i-1] = 1+(i-1)
+        CHECK(std::fabs(r[i] - (1000.0F + 2.0F * static_cast<float>(i - 1))) < 1e-3F);  // R 獨立 ramp
     }
     CHECK(fifo.size() == 16);
     CHECK(reader.underruns() == 0);
 
     fill(fifo, 16, 17.0F, 1.0F, 1032.0F, 2.0F);
     drain_into(reader, fifo, 16, l, r, 48000, 48000);
-    CHECK(l[0] == 16.0F);  // 跨呼叫連續:上一輪 cur(樣本16)現為 prev
+    CHECK(std::fabs(l[0] - 16.0F) < 1e-3F);  // 跨呼叫連續:上一輪 cur(樣本16)現為 prev
     for (std::uint32_t i = 1; i < 16; ++i) {
-        CHECK(l[i] == 16.0F + static_cast<float>(i));
-        CHECK(r[i] == 1030.0F + 2.0F * static_cast<float>(i));
+        CHECK(std::fabs(l[i] - (16.0F + static_cast<float>(i))) < 1e-3F);
+        CHECK(std::fabs(r[i] - (1030.0F + 2.0F * static_cast<float>(i))) < 1e-3F);
     }
     CHECK(reader.underruns() == 0);
 }
@@ -86,8 +88,8 @@ void lr_separation() {
     fill(fifo, 32, 0.0F, 0.0F, -500.0F, -1.0F);
     drain_into(reader, fifo, 16, l, r, 48000, 48000);
     for (std::uint32_t i = 1; i < 16; ++i) {
-        CHECK(l[i] == 0.0F);
-        CHECK(r[i] == -500.0F - static_cast<float>(i - 1));
+        CHECK(std::fabs(l[i]) < 1e-3F);
+        CHECK(std::fabs(r[i] - (-500.0F - static_cast<float>(i - 1))) < 1e-3F);
     }
     CHECK(reader.underruns() == 0);
 }
@@ -202,7 +204,7 @@ void zero_src_rate_guard() {
     fill(fifo, 32, 5.0F, 1.0F, 5.0F, 1.0F);
     drain_into(reader, fifo, 16, l, r, 0, 48000);
     for (std::uint32_t i = 1; i < 16; ++i) {
-        CHECK(l[i] == 4.0F + static_cast<float>(i));
+        CHECK(std::fabs(l[i] - (4.0F + static_cast<float>(i))) < 1e-3F);
     }
     CHECK(reader.underruns() == 0);
 }
@@ -238,6 +240,42 @@ void slight_rate_mismatch() {
     CHECK(fifo.size() > 24 && fifo.size() < 30);  // 消耗>供給:fill 下降
 }
 
+// 延遲上界(時間久了延遲累積的迴歸):真實 clock drift(+100ppm,晶體容差
+// 內)長時運行,fill level = 聽感延遲,收斂後不得超過延遲預算。回饋收斂點
+// 在 cap/2(170ms)的行為必紅 —— 100ppm 累積 0.048 frame/10ms,爬到 cap/4
+// 起播門檻約 14 分鐘、之後滑向 fixed point,模擬視窗必須蓋過此時間尺度。
+void latency_bounded_under_drift() {
+    SpscFifo fifo(16384);  // production 尺寸(app_capture.hpp)
+    DriftReader reader;
+    float l[480], r[480];
+
+    const std::uint32_t rate = 48000;
+    const std::uint32_t packet = 480;  // 10ms 共享模式封包
+    const double drift = 100e-6;       // 來源快 100ppm
+    const std::size_t budget = 1440;   // 30ms @48k
+    double frac = 0.0;
+    float w = 0.0F;
+    std::size_t max_fill_after_warmup = 0;
+    for (int cb = 0; cb < 120000; ++cb) {  // 120000 × 10ms = 20 分鐘
+        frac += packet * drift;
+        const std::uint32_t n = packet + static_cast<std::uint32_t>(frac);
+        frac -= static_cast<double>(n - packet);
+        float buf[2 * 512];
+        for (std::uint32_t i = 0; i < n; ++i) {
+            buf[i * 2] = w;
+            buf[i * 2 + 1] = w;
+            w += 1.0F;
+        }
+        CHECK(fifo.write(buf, n) == n);  // 不得觸頂
+        reader.read(fifo, l, r, packet, rate, rate);
+        if (cb >= 60000) max_fill_after_warmup = std::max(max_fill_after_warmup, fifo.size());
+    }
+    std::printf("  max fill after 10min = %zu frames (%.1f ms)\n",
+                max_fill_after_warmup, static_cast<double>(max_fill_after_warmup) / 48.0);
+    CHECK(max_fill_after_warmup <= budget);
+    CHECK(reader.underruns() < 100);  // 起播鎖定後不得持續 underrun
+}
+
 struct Case {
     const char* name;
     void (*fn)();
@@ -253,6 +291,7 @@ const Case cases[] = {
     {"sustained_underrun", sustained_underrun},
     {"zero_src_rate_guard", zero_src_rate_guard},
     {"slight_rate_mismatch", slight_rate_mismatch},
+    {"latency_bounded_under_drift", latency_bounded_under_drift},
 };
 
 }  // namespace

@@ -21,13 +21,17 @@ public:
               std::uint32_t src_rate, std::uint32_t dst_rate) noexcept {
         if (src_rate == 0) src_rate = dst_rate;
 
-        // 漂移回饋:fill level 收斂到容量一半(只在有資料後才開始校正)
+        // 漂移回饋:fill level 收斂到 20ms 目標(蓋過共享模式 10ms 封包 +
+        // 排程抖動;上限 cap/4 保小 fifo 測試)—— 收斂點若是容量比例(cap/2
+        // = 170ms@48k),fill 會在數十分鐘內緩升到該點,聽感延遲持續累積。
+        const std::size_t target =
+            std::min<std::size_t>(fifo.capacity() / 4, src_rate * 20u / 1000u);
         const std::size_t avail = fifo.size();
         const double cap = static_cast<double>(fifo.capacity());
         if (avail > 0 || started_) {
-            if (!started_ && avail >= cap / 4) started_ = true;  // 起播預填
+            if (!started_ && avail >= target) started_ = true;  // 起播預填
             if (started_) {
-                const double err = (static_cast<double>(avail) - cap * 0.5) / cap;
+                const double err = (static_cast<double>(avail) - static_cast<double>(target)) / cap;
                 const double corr_target = std::clamp(err * 0.02, -5e-4, 5e-4);
                 corr_ += 1e-4 * (corr_target - corr_);  // 慢平滑
             }
