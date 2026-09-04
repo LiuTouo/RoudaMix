@@ -40,6 +40,8 @@ std::filesystem::path cache_path_from_env();
 // Windows 路徑 JSON 一律 UTF-8；key 正規化且不分大小寫，用於去重/查找。
 std::string path_utf8(const std::filesystem::path& path);
 std::wstring path_key(const std::filesystem::path& path);
+// UTF-8 → 寬字元路徑；無效位元組序列 = 空 path(session restore 閘門共用)。
+std::filesystem::path path_from_utf8(const std::string& text);
 
 bool fingerprint(const std::filesystem::path& path, Fingerprint& out,
                  std::string& error);

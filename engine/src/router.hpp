@@ -143,6 +143,8 @@ private:
     Outcome handle_set_bypass(const BypassRequest& request);
     Outcome handle_set_monitor_bypass(const BypassRequest& request);
     Outcome handle_retry_plugin(const RetryPluginRequest& request);
+    // #13:retry 成功 = 使用者核准,以 path+fingerprint 記進 registry(restore 閘門放行)
+    void approve_module(const std::string& module_path, const RackSlot* slot);
     Outcome handle_set_param(const SetParamRequest& request);
     Outcome handle_get_params(const InstanceRequest& request);
     Outcome handle_open_editor(const InstanceRequest& request);

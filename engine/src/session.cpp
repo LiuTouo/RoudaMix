@@ -6,6 +6,9 @@
 #include <map>
 
 #include "sandbox.hpp"
+#include "vst_registry.hpp"
+
+#include <windows.h>
 
 namespace rmx::session {
 
@@ -25,6 +28,60 @@ RackSlot::Availability availability_from(const nlohmann::json& j) {
 
 // TrackSource/TrackOutput ↔ JSON 走 rmx::source_to_json 等(track_graph.hpp;
 // 與 status 投影、router 請求解碼共用的唯一 codec)
+
+// #13 session restore 信任閘門:檔案內的 pluginPath 是外部輸入,不信任。
+// 載入 native module 前需有信任決策 = 本機絕對路徑 + (有 registry 時)掃描核准過
+// 且內容未變的 registry 成員。未過閘 = placeholder,使用者按 retry 明確核准才載。
+// 回 true = 可進 preflight;false = 未核准,*reason 給 missing diagnostics。
+bool restore_allowed(const std::string& module_path, bool enforce_registry,
+                     const vst_registry::Registry& approved, std::string& reason) {
+    const auto path = vst_registry::path_from_utf8(module_path);
+    // 本機磁碟路徑才收:X:\...(延伸長度前綴 \\?\X:\... 視為本機);
+    // UNC(\\server)、device(\\.\)、相對路徑一律拒。
+    const std::wstring wide = path.wstring();
+    std::size_t i = 0;
+    if (wide.rfind(L"\\\\?\\", 0) == 0) i = 4;
+    const bool local = wide.size() >= i + 3 &&
+                       ((wide[i] >= L'A' && wide[i] <= L'Z') ||
+                        (wide[i] >= L'a' && wide[i] <= L'z')) &&
+                       wide[i + 1] == L':' && (wide[i + 2] == L'\\' || wide[i + 2] == L'/');
+    if (!local) {
+        reason = "plugin path is not a local absolute path (UNC/remote/device paths are "
+                 "rejected on session restore): " + module_path;
+        return false;
+    }
+    // 映射遠端磁碟(net use 的 SMB/WebDAV)語法上是碟號、實際是遠端 — 一併拒
+    const std::wstring drive_root{wide[i], L':', L'\\'};
+    if (GetDriveTypeW(drive_root.c_str()) == DRIVE_REMOTE) {
+        reason = "plugin path is on a mapped remote drive: " + module_path;
+        return false;
+    }
+    if (!enforce_registry) return true;
+
+    // registry 成員 + 內容未變才放行。檔案不存在(遺失)不算「未核准」,交給原
+    // preflight 流程回報載不動的原因;檔案存在但 fingerprint 算不出來(bundle
+    // 列舉錯誤等)= 無法證明內容未變 → 未核准(fail closed)。
+    vst_registry::Fingerprint fp;
+    std::string fp_err;
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec) || ec) return true;
+    if (!vst_registry::fingerprint(path, fp, fp_err)) {
+        reason = "cannot fingerprint approved plugin (contents may have changed): " +
+                 module_path;
+        return false;
+    }
+    const auto key = vst_registry::path_key(path);
+    for (const auto& e : approved.entries) {
+        if (vst_registry::path_key(e.path) != key) continue;
+        if (e.fingerprint == fp) return true;
+        reason = "plugin changed on disk since it was approved — press retry to "
+                 "re-approve: " + module_path;
+        return false;
+    }
+    reason = "plugin is not in the approved VST registry (scan it, or press retry to "
+             "approve): " + module_path;
+    return false;
+}
 }  // namespace
 
 std::filesystem::path default_path() {
@@ -189,6 +246,22 @@ std::optional<Failure> load(AudioEngine& engine, const std::filesystem::path& fi
     // 載入後 ensure_system_outputs 會依檔案重建/補齊)
     engine.clear_all_tracks();
 
+    // #13 信任閘門環境:registry 由 app spawn 時以 env 指定(spawn.rs),有 env =
+    // 成員檢查開啟;env 有設但檔案壞 = 無核准清單 → fail closed(全部視為未核准)。
+    // 沒設 env(直接跑 engine 的開發/探針流程)= 只擋非本機路徑,不做成員檢查。
+    vst_registry::Registry approved_registry;
+    bool enforce_registry = false;
+    if (const auto reg_path = vst_registry::cache_path_from_env(); !reg_path.empty()) {
+        enforce_registry = true;
+        std::string reg_err;
+        // 檔案壞:load 回 false 並清空 registry = 空核准清單,fail closed
+        if (!vst_registry::load(reg_path, approved_registry, reg_err))
+            std::fprintf(stderr,
+                         "[engine] session restore: VST registry unusable (%s) — plugins "
+                         "require explicit retry approval\n",
+                         reg_err.c_str());
+    }
+
     // 逐軌重建:track_add(新 id 依序重發)→ 屬性 → plugins → dests(map 重接)
     std::map<std::uint32_t, std::uint32_t> id_map;  // 舊 id → 新 id
     std::map<std::uint32_t, TrackKind> kind_map;    // 舊 id → 檔案軌種(#11 dest 過濾)
@@ -321,8 +394,12 @@ std::optional<Failure> load(AudioEngine& engine, const std::filesystem::path& fi
                     std::uint32_t instance_id = 0;
                     bool loaded = false;
                     std::string verr;
-                    const auto preflight = preflight_plugin(engine, path, class_id, verr);
-                    if (preflight != rmx::sandbox::PreflightFailure::kNone) {
+                    if (!restore_allowed(path, enforce_registry, approved_registry, verr)) {
+                        // 未核准:fail closed,不送 preflight、不進 engine
+                        note_missing("plugin_unapproved", verr);
+                    } else if (const auto preflight =
+                                   preflight_plugin(engine, path, class_id, verr);
+                               preflight != rmx::sandbox::PreflightFailure::kNone) {
                         note_missing(
                             preflight == rmx::sandbox::PreflightFailure::kWorkerUnavailable
                                 ? "sandbox_unavailable"

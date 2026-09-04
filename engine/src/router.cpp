@@ -666,9 +666,48 @@ Router::Outcome Router::handle_retry_plugin(const RetryPluginRequest& request) {
         return failure(Err::kPluginLoadFailed, std::move(error));
     if (auto fail = engine_.load_placeholder(request.instance_id, module_path, class_id))
         return failure(std::move(*fail));
+    // #13:retry = 使用者對該 module 的明確核准,寫回 registry(見 approve_module)
+    approve_module(module_path, slot);
     return success({{"instanceId", request.instance_id},
                     {"tracks", session::tracks_json(engine_)}},
                    Effect::kDirty);
+}
+
+// #13:把「使用者核准過的 module」以 path+fingerprint 記進 registry,session restore
+// 閘門(session.cpp restore_allowed)才會放行。掃描來的 entry 只重釘 fingerprint
+// (保留 classes);registry 外的路徑(relocate 挑的新檔)合成 entry。registry 檔
+// 寫失敗只損跨啟動持久,本輪記憶體內核准仍生效。
+void Router::approve_module(const std::string& module_path, const RackSlot* slot) {
+    const auto path = vst_registry::path_from_utf8(module_path);
+    if (path.empty()) return;
+    vst_registry::Fingerprint fp;
+    std::string error;
+    if (!vst_registry::fingerprint(path, fp, error)) return;
+    const auto key = vst_registry::path_key(path);
+    std::lock_guard<std::mutex> lock(scan_mutex_);
+    bool merged = false;
+    for (auto& existing : vst_registry_.entries) {
+        if (vst_registry::path_key(existing.path) == key) {
+            existing.fingerprint = fp;
+            merged = true;
+            break;
+        }
+    }
+    if (!merged) {
+        vst_registry::Entry entry;
+        entry.path = path;
+        entry.fingerprint = fp;
+        entry.classes.push_back({{"uid", slot != nullptr ? slot->class_id : ""},
+                                 {"name", slot != nullptr ? slot->name : ""},
+                                 {"vendor", ""},
+                                 {"version", ""},
+                                 {"subcategories", ""}});
+        vst_registry_.entries.push_back(std::move(entry));
+        vst_registry::normalize(vst_registry_);
+    }
+    last_scan_ = vst_registry::plugins_json(vst_registry_);
+    if (!vst_registry_path_.empty())
+        (void)vst_registry::save_atomic(vst_registry_path_, vst_registry_, error);
 }
 
 Router::Outcome Router::handle_set_param(const SetParamRequest& request) {

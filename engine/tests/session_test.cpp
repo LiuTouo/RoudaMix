@@ -8,6 +8,9 @@
 #include "audio_engine.hpp"
 #include "sandbox.hpp"
 #include "session.hpp"
+#include "vst_registry.hpp"
+
+#include <string>
 
 #define CHECK(x)                                                              \
     do {                                                                      \
@@ -495,6 +498,142 @@ int main() {
             if (t.kind == rmx::TrackKind::kAudio && t.source.type == rmx::TrackSource::kAsioIn)
                 sing_n = &t;
         CHECK(sing_n != nullptr && sing_n->source.asio_in_ch == 0 && sing_n->source.mono);
+    }
+
+    // 12. #13 session restore 信任閘門:registry 環境下 pluginPath 需為「已核准」的
+    //     本機 module(registry 成員 + fingerprint 未變);未核准/已變更/非本機 =
+    //     placeholder(plugin_unapproved),不送 worker preflight、不進 engine。
+    //     env 未設(直接跑 engine 的開發/探針流程)= 不做成員檢查,僅擋非本機路徑。
+    {
+        using rmx::vst_registry::Entry;
+        using rmx::vst_registry::Registry;
+        // 真實存在的 module 檔(內容隨意 — fingerprint 認 size/mtime)與其 registry entry
+        const auto approved_mod = tmp / "approved.vst3";
+        write_text(approved_mod, "dummy module");
+        Registry reg;
+        Entry entry;
+        entry.path = approved_mod;
+        std::string reg_err;
+        CHECK(rmx::vst_registry::fingerprint(approved_mod, entry.fingerprint, reg_err));
+        entry.classes.push_back({{"uid", "U"},
+                                 {"name", "N"},
+                                 {"vendor", "V"},
+                                 {"version", "1"},
+                                 {"subcategories", "Fx"}});
+        reg.entries.push_back(entry);
+        const auto regfile = tmp / "vst-registry.json";
+        CHECK(rmx::vst_registry::save_atomic(regfile, reg, reg_err));
+
+        // 單軌單 plugin 的 session;load 後 applied = missing diagnostics。
+        // extra = 併入 plugin 物件的額外欄位(bypassed/params 等),預設空。
+        const auto gate_load = [&](const std::string& plugin_path, nlohmann::json& applied,
+                                   rmx::AudioEngine& g, const nlohmann::json& extra = {}) {
+            nlohmann::json plugin{{"pluginPath", plugin_path},
+                                  {"classId", "CID"},
+                                  {"name", "P"}};
+            if (extra.is_object())
+                for (const auto& [k, v] : extra.items()) plugin[k] = v;
+            const nlohmann::json j = {
+                {"roudamixSession", 3},
+                {"tracks",
+                 nlohmann::json::array({nlohmann::json{
+                     {"trackId", 1},
+                     {"kind", "audio"},
+                     {"name", "T"},
+                     {"color", 0},
+                     {"dests", nlohmann::json::array()},
+                     {"output", nullptr},
+                     {"plugins", nlohmann::json::array({plugin})},
+                 }})},
+            };
+            const auto f = tmp / "gate.rmsession";
+            write_text(f, j.dump().c_str());
+            CHECK(!rmx::session::load(g, f, applied));
+        };
+        const bool has_worker = !rmx::sandbox::worker_path().empty();
+
+        _wputenv_s(L"ROUDAMIX_VST_REGISTRY", regfile.c_str());
+
+        // 12a. 已核准 + fingerprint 未變 → 閘門放行,走原本 preflight 流程
+        //      (worker 在 = dummy 載不動 = plugin_load_failed;不在 = sandbox_unavailable)
+        {
+            rmx::AudioEngine g;
+            nlohmann::json applied;
+            gate_load(rmx::vst_registry::path_utf8(approved_mod), applied, g);
+            CHECK(applied["missing"][0]["code"] ==
+                  (has_worker ? "plugin_load_failed" : "sandbox_unavailable"));
+        }
+
+        // 12b. 本機路徑、檔案存在、但不在 registry = 未核准;
+        //      placeholder 佔住原鏈位,metadata 全存、不參與 DSP
+        {
+            const auto unapproved_mod = tmp / "unapproved.vst3";
+            write_text(unapproved_mod, "dummy module");
+            rmx::AudioEngine g;
+            nlohmann::json applied;
+            gate_load(rmx::vst_registry::path_utf8(unapproved_mod), applied, g,
+                      {{"bypassed", true},
+                       {"params", nlohmann::json::array(
+                                      {nlohmann::json{{"paramId", 3},
+                                                      {"normalized", 0.25}}})}});
+            CHECK(applied["missing"][0]["code"] == "plugin_unapproved");
+            CHECK(applied["missing"][0]["pluginPath"] ==
+                  rmx::vst_registry::path_utf8(unapproved_mod));
+            CHECK(g.tracks()[0].chain.size() == 1);
+            const auto& slot = g.tracks()[0].chain[0];
+            CHECK(slot.is_placeholder() && slot.plugin == nullptr);
+            CHECK(slot.name == "P");
+            CHECK(slot.class_id == "CID");
+            CHECK(slot.module_path == rmx::vst_registry::path_utf8(unapproved_mod));
+            CHECK(slot.bypass);
+            CHECK(slot.param_values.size() == 1 && slot.param_values[0].first == 3 &&
+                  slot.param_values[0].second == 0.25);
+            CHECK(slot.load_error.empty() == false);
+        }
+
+        // 12c. registry 成員但檔案在核准後變更(size/mtime 變)= 重新核准
+        write_text(approved_mod, "dummy module CHANGED");
+        {
+            rmx::AudioEngine g;
+            nlohmann::json applied;
+            gate_load(rmx::vst_registry::path_utf8(approved_mod), applied, g);
+            CHECK(applied["missing"][0]["code"] == "plugin_unapproved");
+        }
+
+        // 12d. 非本機絕對路徑(UNC/device)= 拒;不送 preflight
+        {
+            rmx::AudioEngine g;
+            nlohmann::json applied;
+            gate_load("\\\\server\\share\\x.vst3", applied, g);
+            CHECK(applied["missing"][0]["code"] == "plugin_unapproved");
+        }
+        {
+            rmx::AudioEngine g;
+            nlohmann::json applied;
+            gate_load("\\\\.\\pipe\\x.vst3", applied, g);
+            CHECK(applied["missing"][0]["code"] == "plugin_unapproved");
+        }
+
+        // 12e. registry 檔壞 = 無核准清單 → fail closed(全部視為未核准)
+        {
+            const auto badreg = tmp / "bad-registry.json";
+            write_text(badreg, "{not a registry");
+            _wputenv_s(L"ROUDAMIX_VST_REGISTRY", badreg.c_str());
+            rmx::AudioEngine g;
+            nlohmann::json applied;
+            gate_load(rmx::vst_registry::path_utf8(approved_mod), applied, g);
+            CHECK(applied["missing"][0]["code"] == "plugin_unapproved");
+        }
+
+        // 12f. env 未設(探針/直接跑 engine):不做 registry 成員檢查 → 原流程
+        _wputenv_s(L"ROUDAMIX_VST_REGISTRY", L"");
+        {
+            rmx::AudioEngine g;
+            nlohmann::json applied;
+            gate_load(rmx::vst_registry::path_utf8(approved_mod), applied, g);
+            CHECK(applied["missing"][0]["code"] ==
+                  (has_worker ? "plugin_load_failed" : "sandbox_unavailable"));
+        }
     }
 
     std::filesystem::remove_all(tmp);

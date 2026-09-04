@@ -113,7 +113,7 @@ render 裝置,`list_render_devices` 列 endpoints)。每軌一條 VST 鏈
 | `start_scan` | **非同步增量掃描**:立即回 jobId,掃描在 engine 背景 job 跑;同一時間一個 job(已在跑 = `reused: true` 共用現行 job)。空 roots = 預設 `C:\Program Files\Common Files\VST3`、`C:\Program Files\VST3`、`%LOCALAPPDATA%\Programs\Common\VST3`。registry 會持久化；UI 每次啟動會要求一次增量掃描，未變更 module 依 path/size/last-write fingerprint 沿用快取，不重新載入；新增/變更的檔案式或 bundle 目錄式 `.vst3` 才由隔離 worker 載入。結果經 `scan_progress`/`scan_done`/`scan_failed`/`scan_cancelled` events 回報(帶 jobId)；只有全部 roots 掃完且快取原子寫入成功才替換 registry，失敗或取消保留舊清單。worker 不在 = job failed(fail closed,不 in-process 試爆)。壞 module 進 `scan_done` 的 `failed`(quarantine,不進 `plugins`)且未變更時不重試。*(v2 早期同步的 `scan_plugins` 已移除 —— 它會佔住 engine 主 thread 且 30s reply timeout 必炸)* |
 | `cancel_scan` | 取消進行中的掃描 job;沒有進行中 = `cancelling: false` |
 | `add_plugin` | classId 省 = module 內第一個 Audio Effect class;追加到該軌鏈尾(無上限);失敗 `plugin_load_failed`。載入前在隔離 worker 驗證(載入 + initialize);worker 不在 = `plugin_load_failed`(fail closed) |
-| `retry_plugin` | placeholder 重試載入:與 `add_plugin` 同規 worker preflight;`path` 帶了 = 重新定位到新 module 路徑。原 instanceId/鏈位/params/bypass 保留;非 placeholder → `bad_command`;載入再失敗 = 維持 placeholder、`plugin_load_failed` |
+| `retry_plugin` | placeholder 重試載入:與 `add_plugin` 同規 worker preflight;`path` 帶了 = 重新定位到新 module 路徑。原 instanceId/鏈位/params/bypass 保留;非 placeholder → `bad_command`;載入再失敗 = 維持 placeholder、`plugin_load_failed`;載入成功 = 使用者核准該 module(#13),以 path+fingerprint 寫回 registry,下次 session restore 閘門放行 |
 | `remove_plugin` | — |
 | `move_plugin` | 所屬軌鏈內重排 |
 | `set_bypass` | — |
@@ -125,7 +125,7 @@ render 裝置,`list_render_devices` 列 endpoints)。每軌一條 VST 鏈
 | `save_preset` | 寫 `.vstpreset`(VST3 容器:`Comp`=component state + `Cont`=controller state + `RmxP`=host 權威表私有 chunk,其他 host 會略過;class ID 為 32 hex 大寫 ASCII);非 mutation(不動 epoch/不廣播) |
 | `load_preset` | 讀 `.vstpreset` 套用(component setState → controller setComponentState);成功 = mutation(廣播 status)。host 端 param 權威值重同步:檔案帶 `RmxP` chunk 時優先採用;無 `RmxP`(外部 host 存的)且 controller 同步成功時自 controller;皆無 = 保持現值。容器缺 `Comp` chunk 或 class ID 不符回 `preset_io` |
 | `save_session` | path null = `%APPDATA%\RoudaMix\default.rmsession`;deviceKey/sampleRate/bufferSize 帶了就蓋寫進檔;寫 §8 SessionFile;非 mutation(不動 epoch/不廣播)。**P1-F 原子寫入**:同目錄 `.tmp` 完整寫入+落盤 → 舊檔搬 `.bak` → rename 替換;任何一步失敗 = 原檔不動、err 帶原因(成功保留一份 `.bak` = 上一版,手動恢復用)。revision 隨回(UI 以此定 clean 基準;失敗 = dirty 不清) |
-| `load_session` | best-effort 全軌重建(壞軌略過不整體失敗;dests 以舊 id→新 id map 重接);消失/壞掉的 plugin = 原鏈位保留 placeholder(name/path/classId/bypass/params 全存,不參與 DSP),詳情列在 `missing`;`roudamixSession != 2` 一律 `session_io` 拒載(v1 不支援,現況不動);不自動 start;成功 = mutation(廣播 status) |
+| `load_session` | best-effort 全軌重建(壞軌略過不整體失敗;dests 以舊 id→新 id map 重接);消失/壞掉的 plugin = 原鏈位保留 placeholder(name/path/classId/bypass/params 全存,不參與 DSP),詳情列在 `missing`;#13 信任閘門:檔案內 pluginPath 需為本機絕對路徑,且為掃描核准、內容未變的 registry 成員(app spawn 時以 `ROUDAMIX_VST_REGISTRY` 指定;env 未設 = 只擋非本機路徑,registry 檔壞 = fail closed),未過閘 = placeholder(`plugin_unapproved`),按 retry 明確核准才載;`roudamixSession != 2` 一律 `session_io` 拒載(v1 不支援,現況不動);不自動 start;成功 = mutation(廣播 status) |
 | `ensure_system_outputs` | 系統輸出補齊:monitor/stream 恰好各一條(缺 = 補,重複 = 留第一個其餘降級);新 session 或載入後缺 role 時 UI 呼;沒變動 = no-op(不動 epoch) |
 | `shutdown_engine` | 回 ack 後退出 |
 
@@ -199,7 +199,8 @@ SessionSlot  { pluginPath: str, classId: str, name: str, bypassed: bool, monitor
                (availability 缺 = "ok";!= "ok" 載入時原樣重建 placeholder、不重新試爆;
                 載入詳細清單回在 load_session result.missing)
 MissingPlugin{ trackId: u32(檔案內舊 id), trackName: str, index: u32(鏈位), name: str, pluginPath: str, classId: str, code: str, message: str }
-               (code: plugin_missing / plugin_load_failed / sandbox_unavailable)
+               (code: plugin_missing / plugin_load_failed / sandbox_unavailable /
+                      plugin_unapproved)
 ```
 
 `bufferSizes` = driver granularity 展開的合法清單(engine 計算;空 = 用 min/max 過濾常見值)。

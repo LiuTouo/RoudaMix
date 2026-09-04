@@ -21,18 +21,6 @@ std::filesystem::path absolute_normal(const std::filesystem::path& path) {
     return out.lexically_normal();
 }
 
-std::filesystem::path path_from_utf8(const std::string& text) {
-    if (text.empty()) return {};
-    const int n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(),
-                                      static_cast<int>(text.size()), nullptr, 0);
-    if (n <= 0) return {};
-    std::wstring wide(static_cast<std::size_t>(n), L'\0');
-    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(),
-                            static_cast<int>(text.size()), wide.data(), n) != n)
-        return {};
-    return std::filesystem::path{wide};
-}
-
 nlohmann::json registry_json(const Registry& registry) {
     auto roots = nlohmann::json::array();
     for (const auto& root : registry.roots) roots.push_back(path_utf8(root));
@@ -78,6 +66,18 @@ std::wstring path_key(const std::filesystem::path& path) {
     std::transform(key.begin(), key.end(), key.begin(),
                    [](wchar_t ch) { return static_cast<wchar_t>(std::towlower(ch)); });
     return key;
+}
+
+std::filesystem::path path_from_utf8(const std::string& text) {
+    if (text.empty()) return {};
+    const int n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(),
+                                      static_cast<int>(text.size()), nullptr, 0);
+    if (n <= 0) return {};
+    std::wstring wide(static_cast<std::size_t>(n), L'\0');
+    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(),
+                            static_cast<int>(text.size()), wide.data(), n) != n)
+        return {};
+    return std::filesystem::path{wide};
 }
 
 bool fingerprint(const std::filesystem::path& path, Fingerprint& out,
