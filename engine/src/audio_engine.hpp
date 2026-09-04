@@ -17,6 +17,7 @@
 
 #include "asio_device.hpp"
 #include "failure.hpp"
+#include "graph_retire.hpp"
 #include "rack.hpp"
 #include "telemetry.hpp"
 #include "track_graph.hpp"
@@ -208,16 +209,17 @@ private:
     std::uint32_t last_sample_rate_{};
     std::uint32_t last_buffer_size_{};
     std::atomic<TrackGraph*> rt_graph_{nullptr};
-    struct Retired {
-        TrackGraph* graph;
-        std::uint64_t tick;  // GetTickCount64;RT 可能仍在用 → grace 後刪
-    };
-    std::vector<Retired> retired_;
+    GraphRetireQueue retired_graphs_;  // #15:reader 門閂,逾時且無 reader 才刪
+
+    // RT/publisher reader 門閂:登記後驗證指標穩定才回傳(未通過 = 重試/空)。
+    // 持圖期間 retire queue 不可 delete 該圖;用畢務必 release_graph。
+    const TrackGraph* acquire_graph() noexcept;
+    void release_graph() noexcept;
 
     bool swap_graph() noexcept;  // candidate 合法才 atomic commit
     bool swap_safety_graph() noexcept;  // 複製目前 RT routing，只暫停 plugin process
     void retire_graph() noexcept;           // graph 退場(RT 改讀 nullptr)
-    void clear_expired_retired(bool force) noexcept;  // grace > 500ms 才刪
+    void clear_expired_retired(bool force) noexcept;  // grace 期滿且無 reader 才刪
     // 跑著時軌道動了 ASIO pair:以最新 source/output 聯集重建裝置 buffer
     // (createBuffers 只能在 stop 狀態;聯集沒變 = 不動)。失敗 = 串流已停
     bool rebuild_asio_channels(std::string& err);  // 內部 plumbing;分類 = 呼叫端 kDeviceBusy

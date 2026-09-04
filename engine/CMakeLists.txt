@@ -206,6 +206,15 @@ if(MSVC)
 endif()
 add_test(NAME track_graph COMMAND track_graph_test)
 
+# 退休圖回收門閂(#15):reader 未退不可 delete;純邏輯,無裝置/VST。
+add_executable(graph_retire_test tests/graph_retire_test.cpp)
+target_include_directories(graph_retire_test PRIVATE src)
+target_include_directories(graph_retire_test SYSTEM PRIVATE third_party)
+if(MSVC)
+    target_compile_options(graph_retire_test PRIVATE /W4 /utf-8)
+endif()
+add_test(NAME graph_retire COMMAND graph_retire_test)
+
 # Plugin Delay Compensation planner:純 DAG/資源規劃，不依賴 audio device/VST。
 add_executable(pdc_planner_test tests/pdc_planner_test.cpp src/pdc_planner.cpp)
 target_include_directories(pdc_planner_test PRIVATE src)

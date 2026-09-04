@@ -1,7 +1,8 @@
 // Track graph:多軌 DAG。控制面持有 master(vector<TrackNode>),mutation 後
 // build_graph() 深拷貝結構殼(chain 內 plugin/ring shared_ptr 共用、RT buffer
 // shared_ptr 共用 → 不拷音訊記憶體)、atomic swap 進 RT;舊 graph 走 500ms grace
-// 後回收(同舊 rack 模式,RT 絕不 delete 自己正讀的快照)。
+// 且 reader 歸零後才回收(GraphRetireQueue,#15 — reader 卡超過 grace 也只是
+// 晚刪,不會被使用中釋放)。
 // 契約:control 面保證 dests 無環(track_set_dests 先驗);RT 端不防環。
 #pragma once
 

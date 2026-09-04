@@ -149,6 +149,22 @@ bool pre_roll_shadow(Vst3Plugin& shadow,
 }
 }  // namespace
 
+// reader 門閂 RAII(acquire/release 見 audio_engine.hpp)。graph == nullptr =
+// 無圖,未登記,dtor 不退。
+namespace {
+struct GraphReadGuard {
+    AudioEngine* engine;
+    TrackGraph* graph;
+    explicit GraphReadGuard(AudioEngine& e) noexcept
+        : engine(&e), graph(engine->acquire_graph()) {}
+    ~GraphReadGuard() {
+        if (graph != nullptr) engine->release_graph();
+    }
+    GraphReadGuard(const GraphReadGuard&) = delete;
+    GraphReadGuard& operator=(const GraphReadGuard&) = delete;
+};
+}  // namespace
+
 AudioEngine::AudioEngine() {
     plugin_timing_overhead_ = (std::numeric_limits<std::uint64_t>::max)();
     for (int i = 0; i < 64; ++i) {
@@ -162,9 +178,9 @@ AudioEngine::~AudioEngine() {
     exiting_.store(true, std::memory_order_release);
     if (publish_thread_.joinable()) publish_thread_.join();
     device_.close();
+    // thread 已收完(publish join、RT 隨 close 停)→ reader 必為 0,reap 全清
     delete rt_graph_.load(std::memory_order_relaxed);
-    for (auto& r : retired_) delete r.graph;
-    retired_.clear();
+    retired_graphs_.reap(0, /*force=*/true);
     if (shm_ != nullptr) UnmapViewOfFile(shm_);
     if (shm_mapping_ != nullptr) CloseHandle(shm_mapping_);
 }
@@ -502,7 +518,9 @@ std::optional<Failure> AudioEngine::start(const std::string& device_key,
             while (!exiting_.load(std::memory_order_acquire)) {
                 next += std::chrono::milliseconds(33);  // ~30Hz
                 std::this_thread::sleep_until(next);
-                const TrackGraph* g = rt_graph_.load(std::memory_order_acquire);
+                // reader 門閂:整個遍歷 + publish 期間擋退休回收(#15)
+                GraphReadGuard guard(*this);
+                const TrackGraph* g = guard.graph;
                 if (g != nullptr) {
                     for (const auto& track : g->nodes) {
                         for (const auto& slot : track.chain) {
@@ -782,7 +800,7 @@ bool AudioEngine::swap_graph() noexcept {
     for (auto& pending : pending_dry_delays)
         if (pending.reused)
             (void)pending.line->set_delay(pending.target, transition_samples);
-    if (old != nullptr) retired_.push_back({old, GetTickCount64()});
+    if (old != nullptr) retired_graphs_.retire(old, GetTickCount64());
     clear_expired_retired(false);
     return true;
 }
@@ -800,7 +818,7 @@ bool AudioEngine::swap_safety_graph() noexcept {
     }
     safe->route_plan = plan_route_suspension(active->route_plan);
     TrackGraph* old = rt_graph_.exchange(safe, std::memory_order_acq_rel);
-    if (old != nullptr) retired_.push_back({old, GetTickCount64()});
+    if (old != nullptr) retired_graphs_.retire(old, GetTickCount64());
     clear_expired_retired(false);
     return true;
 }
@@ -986,7 +1004,7 @@ std::optional<Failure> AudioEngine::prepare_monitor_variants() {
 
 void AudioEngine::retire_graph() noexcept {
     TrackGraph* old = rt_graph_.exchange(nullptr, std::memory_order_acq_rel);
-    if (old != nullptr) retired_.push_back({old, GetTickCount64()});
+    if (old != nullptr) retired_graphs_.retire(old, GetTickCount64());
 }
 
 bool AudioEngine::rebuild_asio_channels(std::string& err) {
@@ -1032,16 +1050,28 @@ bool AudioEngine::rebuild_asio_channels(std::string& err) {
 }
 
 void AudioEngine::clear_expired_retired(bool force) noexcept {
-    const std::uint64_t now = GetTickCount64();
-    std::vector<Retired> still;
-    still.reserve(retired_.size());
-    for (auto& r : retired_) {
-        if (force || (now - r.tick) > 500)
-            delete r.graph;
-        else
-            still.push_back(std::move(r));
+    // force 仍受 reader 門閂(#15):stop 時 publisher thread 還活著,
+    // 可能恰在遍歷;沒刪掉的留在佇列,引擎解構(thread 收完)再全清。
+    retired_graphs_.reap(GetTickCount64(), force);
+}
+
+// ---- reader 門閂(#15):RT callback / publisher 取圖的唯一入口 ----
+// 先登記(計數本體在 retire queue,永不釋放),再雙讀驗證指標未變。驗證通過
+// 前絕不解引用;未通過退登記重試(指標在兩次 load 之間被換掉)。控制面 swap
+// 後,退休圖要等 grace 期滿「且」reader 歸零才可能被 reap,登記持續到 release
+// —— reader 卡再久也只會讓圖晚刪,不會被使用中釋放。
+const TrackGraph* AudioEngine::acquire_graph() noexcept {
+    for (;;) {
+        retired_graphs_.reader_enter();
+        TrackGraph* g = rt_graph_.load(std::memory_order_acquire);
+        if (g != nullptr && g == rt_graph_.load(std::memory_order_acquire)) return g;
+        retired_graphs_.reader_exit();
+        if (g == nullptr) return nullptr;
     }
-    retired_ = std::move(still);
+}
+
+void AudioEngine::release_graph() noexcept {
+    retired_graphs_.reader_exit();
 }
 
 // ---- tracks(控制面)----
@@ -1848,7 +1878,9 @@ void AudioEngine::process(const AudioBlock& block) noexcept {
     const std::uint64_t tsc0 = __rdtsc();  // callback load 量測(見 telemetry publish)
     const std::uint32_t frames =
         block.frames > kMaxBlockFrames ? kMaxBlockFrames : block.frames;
-    TrackGraph* g = rt_graph_.load(std::memory_order_acquire);
+    // reader 門閂(純 atomic = RT-safe):整個 block 期間擋退休回收(#15)
+    GraphReadGuard guard(*this);
+    TrackGraph* g = guard.graph;
     if (g == nullptr || frames == 0) return;  // 輸出已由 asio_device 清零 = 靜音
 
     // 1) 清所有軌的 summing bus(16 軌 @512f = 8K floats,可忽略)
