@@ -8,7 +8,58 @@ use crate::command_contract;
 
 pub const PROTOCOL_VERSION: u32 = 2;
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
+/// 舊固定名稱:僅剩 engine 無 `ROUDAMIX_IPC_PIPE` 時的開發/探針 fallback
+/// (無認證;正式路徑 bridge 一律生成 per-launch 名稱與秘密,issue #16)。
 pub const PIPE_NAME: &str = r"\\.\pipe\roudamix-engine";
+
+/// 每次啟動的 IPC capability:不可預測的 pipe 名稱 + 認證秘密。
+/// bridge 生成後經 spawn env 傳 engine(engine 進程 env 跨 principal 不可讀,
+/// 同 user 不在威脅模型內);engine 連線後 client 須先證明持有秘密才會收到
+/// snapshot/dispatch(認證 prelude 見 contracts/protocol.md §2.1)。
+pub struct IpcChannel {
+    pub pipe_name: String,
+    pub secret: [u8; 32],
+}
+
+impl IpcChannel {
+    /// engine env 用的秘密編碼(64 hex chars)。
+    pub fn secret_hex(&self) -> String {
+        self.secret.iter().map(|b| format!("{b:02x}")).collect()
+    }
+}
+
+#[link(name = "bcrypt")]
+unsafe extern "system" {
+    fn BCryptGenRandom(
+        algorithm: *mut core::ffi::c_void,
+        buffer: *mut u8,
+        length: u32,
+        flags: u32,
+    ) -> i32;
+}
+
+/// 產生本啟動的 pipe 名稱與秘密。RNG 失敗即 panic:fail closed,
+/// 沒有安全的 capability 就不該建立 IPC。
+pub fn generate_ipc_channel() -> IpcChannel {
+    const BCRYPT_USE_SYSTEM_PREFERRED_RNG: u32 = 0x0000_0002;
+    // 40 = 32(secret)+ 8(pipe 名稱後綴熵)
+    let mut bytes = [0u8; 40];
+    // SAFETY:緩衝與長度配對正確;系統偏好 RNG 無需 algorithm handle。
+    let status = unsafe {
+        BCryptGenRandom(
+            std::ptr::null_mut(),
+            bytes.as_mut_ptr(),
+            bytes.len() as u32,
+            BCRYPT_USE_SYSTEM_PREFERRED_RNG,
+        )
+    };
+    assert!(status >= 0, "BCryptGenRandom failed: NTSTATUS {status:#x}");
+    let suffix: String = bytes[32..].iter().map(|b| format!("{b:02x}")).collect();
+    IpcChannel {
+        pipe_name: format!("{PIPE_NAME}-{suffix}"),
+        secret: bytes[..32].try_into().expect("secret length"),
+    }
+}
 
 pub fn error_codes() -> Vec<&'static str> {
     command_contract::error_codes()
@@ -230,5 +281,18 @@ mod tests {
         .unwrap_err();
         assert_eq!(error.code(), "bad_command");
         assert!(error.to_string().contains("payload.bufferSize"));
+    }
+
+    /// #16:per-launch pipe 名稱不可預測(跨啟動唯一)、秘密 32 bytes、hex 可逆。
+    #[test]
+    fn ipc_channel_unpredictable_and_wellformed() {
+        let a = generate_ipc_channel();
+        let b = generate_ipc_channel();
+        assert_ne!(a.pipe_name, b.pipe_name, "per-launch name must differ");
+        assert!(a.pipe_name.starts_with(PIPE_NAME));
+        assert_ne!(a.secret, [0u8; 32]);
+        assert_eq!(a.secret.len(), 32);
+        assert_eq!(a.secret_hex().len(), 64);
+        assert!(a.secret_hex().chars().all(|c| c.is_ascii_hexdigit()));
     }
 }

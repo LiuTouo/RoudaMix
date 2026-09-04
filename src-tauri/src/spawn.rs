@@ -83,7 +83,7 @@ pub fn engine_exe_path() -> Option<PathBuf> {
     candidates().into_iter().find(|p| p.is_file())
 }
 
-pub fn spawn_supervised(app: &AppHandle) -> std::io::Result<()> {
+pub fn spawn_supervised(app: &AppHandle, ipc: &crate::protocol::IpcChannel) -> std::io::Result<()> {
     let exe = engine_exe_path().ok_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::NotFound, "roudamix-engine.exe not found")
     })?;
@@ -93,6 +93,10 @@ pub fn spawn_supervised(app: &AppHandle) -> std::io::Result<()> {
     let spawned = Command::new(&exe)
         // engine 與其 worker 共用；OsStr 保留非 ASCII Windows 使用者路徑。
         .env("ROUDAMIX_VST_REGISTRY", registry)
+        // #16:per-launch pipe 名稱與認證秘密 —— spawn env 是受保護通道
+        // (跨 principal 讀他人進程 env 需 PROCESS_VM_READ;同 user 不在威脅模型)。
+        .env("ROUDAMIX_IPC_PIPE", &ipc.pipe_name)
+        .env("ROUDAMIX_IPC_SECRET", ipc.secret_hex())
         .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
         .spawn()?;
     // 進 job(app 退出 = engine 結束)。engine 已在別的 job(沙箱/測試環境)會失敗

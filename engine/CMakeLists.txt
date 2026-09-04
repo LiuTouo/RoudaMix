@@ -255,6 +255,15 @@ if(MSVC)
 endif()
 add_test(NAME drift_reader COMMAND drift_reader_test)
 
+# pipe transport 認證 prelude(issue #16):真 pipe pair + 純函數
+add_executable(frame_io_test tests/frame_io_test.cpp src/frame_io.cpp)
+target_include_directories(frame_io_test PRIVATE src)
+target_include_directories(frame_io_test SYSTEM PRIVATE third_party)
+if(MSVC)
+    target_compile_options(frame_io_test PRIVATE /W4 /utf-8)
+endif()
+add_test(NAME frame_io COMMAND frame_io_test)
+
 add_executable(pdc_audio_path_test tests/pdc_audio_path_test.cpp
     src/route_planner.cpp src/pdc_planner.cpp src/pdc_delay_line.cpp)
 target_include_directories(pdc_audio_path_test PRIVATE src)

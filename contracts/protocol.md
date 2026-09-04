@@ -7,12 +7,33 @@ TypeScript command interface 由該表衍生，不得直接修改其 generated �
 
 ## 1. 傳輸
 
-- **Named pipe**:`\\.\pipe\roudamix-engine`,byte mode,雙向。
-- **Engine 是 server**(單一 instance,`Local\roudamix-engine-singleton` mutex 防 double-spawn);
-  **bridge 是 client**。client 斷線後 engine 續跑並重建 pipe 等下一個 client。
+- **Named pipe**:bridge 每次啟動生成**不可預測的 per-launch 名稱**(seed 由
+  `BCryptGenRandom`),經 spawn env `ROUDAMIX_IPC_PIPE` 傳 engine;byte mode,雙向。
+  舊固定名 `\\.\pipe\roudamix-engine` 僅剩 engine 未拿到 `ROUDAMIX_IPC_PIPE` 時的
+  開發/探針 fallback(無認證;正式路徑 bridge 永遠生成 per-launch 名稱)。
+- **Engine 是 server**(單一 instance,`Local\roudamix-engine-singleton` mutex 防 double-spawn;
+  建立 pipe 帶 `FILE_FLAG_FIRST_PIPE_INSTANCE` —— 名稱已被占用 = fail closed 退出;
+  並帶 `PIPE_REJECT_REMOTE_CLIENTS` 拒遠端 SMB 連線。DACL 用進程 token 預設值 =
+  僅本 logon session/admin/SYSTEM 可連)。**bridge 是 client**。client 斷線後
+  engine 續跑並重建 pipe 等下一個 client。
 - 一次只服務一個 client:新 client 連上前,server 關閉舊連線的控制流(舊 handle 讀到 EOF)。
 
 ## 2. Framing
+
+### 2.1 連線認證 prelude(issue #16)
+
+連線建立後、**任何 JSON frame 之前**,雙方先做秘密握手:
+
+- Bridge(engine spawn 時經 `ROUDAMIX_IPC_SECRET` env 交付 64 hex chars = 32 bytes)
+  連線後**立刻**送出 32 raw secret bytes。
+- Engine 常數時間比較;相符回 **1 byte `0x01`**,不符回 `0x00` 後斷線。
+  讀秘密逾時 5 秒 = 未認證 client 不得佔住唯一 pipe 槽,斷線。
+- 認證通過前 server **不送 snapshot、不 dispatch 任何 command**。
+- Bridge 等 ack 逾時 5 秒、或收到 `0x00`、或斷線 = fail closed,丟棄連線回到重試迴圈。
+- Engine 拿不到 `ROUDAMIX_IPC_SECRET` = fallback 無認證(僅開發/探針);
+  拿到但解不開(非 hex 或 < 16 bytes)= fail closed 拒絕啟動。
+
+### 2.2 JSON frame
 
 - 每 frame = `u32 LE` length + payload(length 不含自身 4 bytes)。
 - Payload = UTF-8 JSON 單一物件。
@@ -52,7 +73,8 @@ TypeScript command interface 由該表衍生，不得直接修改其 generated �
 { "kind": "status", "payload": { "running": false } }
 ```
 
-連線建立時 server 先推一次 `snapshot` event(等同 `get_snapshot` result),client 不需先請求。
+連線建立且認證 prelude(§2.1)通過後,server 先推一次 `snapshot` event
+(等同 `get_snapshot` result),client 不需先請求。
 
 ## 5. 生命週期語意
 

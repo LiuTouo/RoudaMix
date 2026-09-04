@@ -6,7 +6,9 @@
 #include <cstdio>
 #include <mutex>
 #include <optional>
+#include <string>
 #include <thread>
+#include <vector>
 
 #include "editor_host.hpp"
 #include "frame_io.hpp"
@@ -32,6 +34,48 @@ HWND g_main_hwnd = nullptr;
 std::mutex g_write_mutex;
 std::atomic<HANDLE> g_active_pipe{nullptr};
 std::atomic<std::uint64_t> g_conn_gen{0};
+
+// #16 IPC capability:bridge 產生、spawn env 傳入(ROUDAMIX_IPC_PIPE /
+// ROUDAMIX_IPC_SECRET)。兩者皆設 = 認證模式(production);都缺 = 舊固定名
+// 無認證,僅供開發/探針腳本(ponytail: legacy fallback,正式路徑永不觸及)。
+// secret 設了但解不開 = fail closed 直接退出。
+std::wstring g_pipe_name{L"\\\\.\\pipe\\roudamix-engine"};
+std::vector<std::uint8_t> g_ipc_secret;
+
+std::optional<std::wstring> env_wide(const wchar_t* name) {
+    const DWORD n = GetEnvironmentVariableW(name, nullptr, 0);
+    if (n == 0)
+        return GetLastError() == ERROR_ENVVAR_NOT_FOUND ? std::nullopt
+                                                        : std::optional{std::wstring{}};
+    std::wstring value(n, L'\0');
+    GetEnvironmentVariableW(name, value.data(), n);
+    value.resize(n - 1);  // 回傳長度含結尾 NUL
+    return value;
+}
+
+// hex 秘密必為 ASCII;帶非 ASCII 直接視為解碼失敗(空字串回傳)
+std::string to_ascii(const std::wstring& wide) {
+    std::string out;
+    out.reserve(wide.size());
+    for (wchar_t c : wide) {
+        if (c > 0x7F) return {};
+        out.push_back(static_cast<char>(c));
+    }
+    return out;
+}
+
+void load_ipc_config() {
+    if (auto name = env_wide(L"ROUDAMIX_IPC_PIPE"))
+        g_pipe_name = std::move(*name);
+    auto secret = env_wide(L"ROUDAMIX_IPC_SECRET");
+    if (!secret) return;
+    auto decoded = rmx::hex_decode(to_ascii(*secret));
+    if (!decoded || decoded->size() < 16) {
+        std::fprintf(stderr, "[engine] ROUDAMIX_IPC_SECRET invalid, refusing to start\n");
+        std::exit(1);
+    }
+    g_ipc_secret = std::move(*decoded);
+}
 
 struct Task {
     std::uint64_t generation;
@@ -113,6 +157,12 @@ LRESULT CALLBACK main_wnd_proc(HWND window, UINT message, WPARAM word_param,
 }
 
 void serve_client(HANDLE pipe, std::uint64_t generation) {
+    // #16 認證閘:秘密不符/逾時 = 不送 snapshot、不進 dispatch,直接斷。
+    // (router.connect 會立即推 snapshot,故閘必須在它之前)
+    if (!g_ipc_secret.empty() && !rmx::auth_client(pipe, g_ipc_secret, 5000)) {
+        std::fprintf(stderr, "[engine] client failed ipc auth\n");
+        return;
+    }
     g_last_activity.store(GetTickCount64());
     g_router.connect(generation,
                      [pipe](const nlohmann::json& frame) { send_frame(pipe, frame); });
@@ -148,15 +198,24 @@ void serve_client(HANDLE pipe, std::uint64_t generation) {
 }
 
 void pipe_serve_inner() {
+    // #16:第一次建立帶 FILE_FLAG_FIRST_PIPE_INSTANCE 佔名 —— 名稱已被
+    // 別人(冒充者)先建 = fail closed,engine 直接退出。之後的重建迴圈
+    // 不帶(名稱已在我們手上,client handle 殘留不會擋重建)。
+    bool claim_name = true;
     while (!g_exiting.load()) {
+        const DWORD open_mode =
+            PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED |
+            (claim_name ? FILE_FLAG_FIRST_PIPE_INSTANCE : 0);
         HANDLE pipe = CreateNamedPipeW(
-            L"\\\\.\\pipe\\roudamix-engine",
-            PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
-            PIPE_READMODE_BYTE | PIPE_WAIT, 1, 64 * 1024, 64 * 1024, 0, nullptr);
+            g_pipe_name.c_str(), open_mode,
+            PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS, 1,
+            64 * 1024, 64 * 1024, 0, nullptr);
         if (pipe == INVALID_HANDLE_VALUE) {
-            std::fprintf(stderr, "[engine] CreateNamedPipeW failed: %lu\n", GetLastError());
+            std::fprintf(stderr,
+                         "[engine] CreateNamedPipeW failed: %lu\n", GetLastError());
             break;
         }
+        claim_name = false;
         g_active_pipe.store(pipe);
         OVERLAPPED connection{};
         connection.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
@@ -224,6 +283,8 @@ int main() {
 
     if (FAILED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)))
         std::fprintf(stderr, "[engine] CoInitializeEx failed\n");
+
+    load_ipc_config();
 
     g_router.load_registry();
 

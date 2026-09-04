@@ -26,16 +26,73 @@ struct AsyncIo {
 };
 }  // namespace
 
+// read_exact 的 bounded 版:每個讀取區段最多等 timeout_ms,逾時 CancelIoEx。
+// 認證 prelude 用 —— 未認證 client 卡住不能無限佔住唯一 pipe 槽。
+bool read_exact_bounded(HANDLE h, void* buf, size_t n, DWORD timeout_ms);
+
 bool read_exact(HANDLE h, void* buf, size_t n) {
+    return read_exact_bounded(h, buf, n, INFINITE);
+}
+
+bool secret_matches(const uint8_t* a, size_t a_len, const uint8_t* b, size_t b_len) {
+    if (a_len != b_len) return false;
+    // 常數時間:逐 byte 累積差異,單一分支在尾端
+    uint8_t diff = 0;
+    for (size_t i = 0; i < a_len; ++i) diff |= a[i] ^ b[i];
+    return diff == 0;
+}
+
+bool auth_client(HANDLE h, const std::vector<uint8_t>& secret, DWORD timeout_ms) {
+    if (secret.empty()) return false;
+    std::vector<uint8_t> provided(secret.size());
+    if (!read_exact_bounded(h, provided.data(), provided.size(), timeout_ms)) return false;
+    const bool ok = secret_matches(provided.data(), provided.size(), secret.data(),
+                                   secret.size());
+    // ack 一定回(1 = ok,0 = 不符);寫不出 = 呼叫端也會因讀失敗而斷
+    AsyncIo io;
+    if (io.valid()) {
+        const uint8_t ack = ok ? 1 : 0;
+        DWORD written = 0;
+        if (!WriteFile(h, &ack, 1, &written, &io.ov) &&
+            GetLastError() == ERROR_IO_PENDING) {
+            if (WaitForSingleObject(io.ov.hEvent, 1000) == WAIT_OBJECT_0)
+                GetOverlappedResult(h, &io.ov, &written, FALSE);
+        }
+    }
+    return ok;
+}
+
+std::optional<std::vector<uint8_t>> hex_decode(const std::string& hex) {
+    if (hex.size() % 2 != 0) return std::nullopt;
+    std::vector<uint8_t> out(hex.size() / 2);
+    auto nibble = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+    };
+    for (size_t i = 0; i < out.size(); ++i) {
+        const int hi = nibble(hex[2 * i]);
+        const int lo = nibble(hex[2 * i + 1]);
+        if (hi < 0 || lo < 0) return std::nullopt;
+        out[i] = static_cast<uint8_t>((hi << 4) | lo);
+    }
+    return out;
+}
+
+bool read_exact_bounded(HANDLE h, void* buf, size_t n, DWORD timeout_ms) {
     auto* p = static_cast<uint8_t*>(buf);
     while (n > 0) {
         AsyncIo io;
         if (!io.valid()) return false;
         DWORD got = 0;
         if (!ReadFile(h, p, static_cast<DWORD>(n), &got, &io.ov)) {
-            if (GetLastError() != ERROR_IO_PENDING ||
-                !GetOverlappedResult(h, &io.ov, &got, TRUE))
+            if (GetLastError() != ERROR_IO_PENDING) return false;
+            if (WaitForSingleObject(io.ov.hEvent, timeout_ms) != WAIT_OBJECT_0) {
+                CancelIoEx(h, &io.ov);
                 return false;
+            }
+            if (!GetOverlappedResult(h, &io.ov, &got, FALSE)) return false;
         }
         if (got == 0) return false;
         p += got;

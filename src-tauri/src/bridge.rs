@@ -18,11 +18,12 @@ use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient};
 use tokio::sync::{oneshot, Mutex as AsyncMutex};
 type WriteHalf = tokio::io::WriteHalf<NamedPipeClient>;
 
-use crate::protocol::{make_command, parse_frame, Frame, MAX_FRAME_BYTES, PIPE_NAME};
+use crate::protocol::{make_command, parse_frame, Frame, MAX_FRAME_BYTES};
 use crate::spawn;
 
 const REPLY_TIMEOUT: Duration = Duration::from_secs(30);
 const CONNECT_RETRY: Duration = Duration::from_millis(500);
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -112,6 +113,8 @@ struct Inner {
     pending: PendingMap,
     write: AsyncMutex<Option<WriteHalf>>,
     next_id: AtomicU64,
+    /// #16:本啟動的 pipe 名稱 + 認證秘密(run 與 respawn 共用同一 capability)。
+    ipc: crate::protocol::IpcChannel,
 }
 
 #[derive(Clone)]
@@ -127,6 +130,7 @@ impl Bridge {
                 pending: PendingMap::new(),
                 write: AsyncMutex::new(None),
                 next_id: AtomicU64::new(0),
+                ipc: crate::protocol::generate_ipc_channel(),
             }),
         }
     }
@@ -150,7 +154,7 @@ impl Bridge {
         let b = self.clone();
         tauri::async_runtime::spawn(async move {
             b.set_phase(&app, "spawning", "");
-            match spawn::spawn_supervised(&app) {
+            match spawn::spawn_supervised(&app, &b.inner.ipc) {
                 Ok(()) => b.set_phase(&app, "connecting", ""),
                 Err(se) => b.set_phase(&app, "spawn_failed", &format!("{se}")),
             }
@@ -261,7 +265,7 @@ async fn run(app: AppHandle, b: Bridge) {
     let mut tries: u32 = 0;
     loop {
         b.set_phase(&app, "connecting", "");
-        match ClientOptions::new().open(PIPE_NAME) {
+        match ClientOptions::new().open(&b.inner.ipc.pipe_name) {
             Ok(pipe) => {
                 tries = 0;
                 serve(&app, &b, pipe).await;
@@ -272,7 +276,7 @@ async fn run(app: AppHandle, b: Bridge) {
                 eprintln!("[bridge] connect fail (try {tries}): {e}");
                 if tries == 1 || tries % 20 == 0 {
                     b.set_phase(&app, "spawning", "");
-                    match spawn::spawn_supervised(&app) {
+                    match spawn::spawn_supervised(&app, &b.inner.ipc) {
                         Ok(()) => {
                             eprintln!("[bridge] spawned engine");
                             b.set_phase(&app, "connecting", "");
@@ -289,8 +293,33 @@ async fn run(app: AppHandle, b: Bridge) {
     }
 }
 
+/// #16 連線認證:開檔後立刻送 per-launch 秘密,等 engine 的 1-byte ack。
+/// 不符/逾時/斷線都 fail closed(上層重試)。engine 在 ack 前不送 snapshot。
+async fn handshake(
+    pipe: &mut NamedPipeClient,
+    secret: &[u8],
+    timeout: Duration,
+) -> Result<(), String> {
+    pipe.write_all(secret)
+        .await
+        .map_err(|e| format!("handshake write: {e}"))?;
+    let mut ack = [0u8; 1];
+    tokio::time::timeout(timeout, pipe.read_exact(&mut ack))
+        .await
+        .map_err(|_| "handshake timeout".to_string())?
+        .map_err(|e| format!("handshake read ack: {e}"))?;
+    if ack[0] != 1 {
+        return Err("engine rejected ipc secret".into());
+    }
+    Ok(())
+}
+
 /// 讀 loop:reply 分發 pending、event 轉發 Tauri。EOF/錯誤即返回(上層重連)。
-async fn serve(app: &AppHandle, b: &Bridge, pipe: NamedPipeClient) {
+async fn serve(app: &AppHandle, b: &Bridge, mut pipe: NamedPipeClient) {
+    if let Err(e) = handshake(&mut pipe, &b.inner.ipc.secret, HANDSHAKE_TIMEOUT).await {
+        eprintln!("[bridge] ipc handshake failed: {e}");
+        return;
+    }
     let (mut read, write) = tokio::io::split(pipe);
     *b.inner.write.lock().await = Some(write);
 
@@ -356,6 +385,91 @@ async fn serve(app: &AppHandle, b: &Bridge, pipe: NamedPipeClient) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #16:模擬 engine 端的測試 pipe server —— server 先建好(名稱先佔位),
+    /// accept/read/ack 才丟背景 task(避免 client 搶先 open)。
+    fn make_engine_server(
+        name: &'static str,
+    ) -> tokio::net::windows::named_pipe::NamedPipeServer {
+        tokio::net::windows::named_pipe::ServerOptions::new()
+            .first_pipe_instance(true)
+            .create(name)
+            .expect("create test server pipe")
+    }
+
+    async fn fake_engine_accept(
+        mut server: tokio::net::windows::named_pipe::NamedPipeServer,
+        secret: [u8; 32],
+        stall_after_read: bool,
+    ) {
+        server.connect().await.expect("client connected");
+        let mut buf = [0u8; 32];
+        server.read_exact(&mut buf).await.expect("read secret");
+        if !stall_after_read {
+            // 仿真 engine:比較後回 1/0 ack
+            let ack: u8 = if buf == secret { 1 } else { 0 };
+            server.write_all(&[ack]).await.expect("write ack");
+        }
+        // 不 drop:測試要驗「server 不回話」時,pipe 得保持開著
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+
+    fn open(name: &'static str) -> NamedPipeClient {
+        ClientOptions::new().open(name).expect("open client pipe")
+    }
+
+    /// #16:秘密相符 → ack 1 → 握手成功。
+    #[tokio::test]
+    async fn handshake_accepts_matching_secret() {
+        const NAME: &str = r"\\.\pipe\roudamix-test-hs-ok";
+        let secret = [7u8; 32];
+        let server = tokio::spawn(fake_engine_accept(
+            make_engine_server(NAME),
+            secret,
+            false,
+        ));
+        let mut client = open(NAME);
+        handshake(&mut client, &secret, Duration::from_secs(5))
+            .await
+            .expect("matching secret must pass");
+        server.await.unwrap();
+    }
+
+    /// #16:秘密不符 → ack 0 → 拒絕(不進 serve loop、不收 event)。
+    #[tokio::test]
+    async fn handshake_rejects_wrong_secret() {
+        const NAME: &str = r"\\.\pipe\roudamix-test-hs-bad";
+        let secret = [7u8; 32];
+        let server = tokio::spawn(fake_engine_accept(
+            make_engine_server(NAME),
+            secret,
+            false,
+        ));
+        let mut client = open(NAME);
+        let err = handshake(&mut client, &[9u8; 32], Duration::from_secs(5))
+            .await
+            .expect_err("mismatched secret must be rejected");
+        assert!(err.contains("rejected"), "got: {err}");
+        server.await.unwrap();
+    }
+
+    /// #16:server 收了秘密不回話 → timeout fail closed(不能掛死在 serve loop)。
+    #[tokio::test]
+    async fn handshake_times_out_without_ack() {
+        const NAME: &str = r"\\.\pipe\roudamix-test-hs-stall";
+        let secret = [3u8; 32];
+        let server = tokio::spawn(fake_engine_accept(
+            make_engine_server(NAME),
+            secret,
+            true,
+        ));
+        let mut client = open(NAME);
+        let err = handshake(&mut client, &secret, Duration::from_millis(200))
+            .await
+            .expect_err("stalled ack must time out");
+        assert!(err.contains("timeout"), "got: {err}");
+        server.await.unwrap();
+    }
 
     /// P1-G:命令在飛時斷線 → fail_all 把所有 pending 用 disconnected reply 收掉
     /// (呼叫端收到明確錯誤,不是乾等 timeout)。
