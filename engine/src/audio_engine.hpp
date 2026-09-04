@@ -152,7 +152,16 @@ public:
     const std::vector<TrackNode>& tracks() const noexcept { return tracks_; }
     // control-plane snapshot 與 SHM publisher 共用 active graph 已提交的 plan。
     // graph 尚未建立／stop 後才從 control master 純函式重建。
+    // control thread 專屬(#15):不在 reader 門閂內讀 rt_graph_,安全前提是
+    // reap 也在 control thread;跨執行緒呼叫請改走 acquire_graph。
     [[nodiscard]] TelemetryStripPlan telemetry_strip_plan() const;
+    // ---- reader 門閂(#15):RT callback / publisher 取圖的唯一入口 ----
+    // 登記(SC)→ 取圖(SC):兩者皆 seq_cst,SC 全序保證「reaper 的計數檢查
+    // 看不到本登記」⇔「取圖必已越過 unlink(拿不到已退休的舊圖)」。持圖期間
+    // retire queue 不可 delete 該圖;用畢務必 release_graph。返回 nullptr = 無圖
+    // (未登記,release 不必呼)。
+    const TrackGraph* acquire_graph() noexcept;
+    void release_graph() noexcept;
     // editor host 顯示資料：tab 用 plugin 名，視窗標題用音軌名
     struct PluginTabInfo {
         std::uint32_t instance_id{};
@@ -208,18 +217,14 @@ private:
     std::string last_device_key_;     // 空 = 從未成功 start
     std::uint32_t last_sample_rate_{};
     std::uint32_t last_buffer_size_{};
-    std::atomic<TrackGraph*> rt_graph_{nullptr};
+    std::atomic<TrackGraph*> rt_graph_{nullptr};  // 讀取一律走 acquire_graph(#15)
     GraphRetireQueue retired_graphs_;  // #15:reader 門閂,逾時且無 reader 才刪
-
-    // RT/publisher reader 門閂:登記後驗證指標穩定才回傳(未通過 = 重試/空)。
-    // 持圖期間 retire queue 不可 delete 該圖;用畢務必 release_graph。
-    const TrackGraph* acquire_graph() noexcept;
-    void release_graph() noexcept;
 
     bool swap_graph() noexcept;  // candidate 合法才 atomic commit
     bool swap_safety_graph() noexcept;  // 複製目前 RT routing，只暫停 plugin process
     void retire_graph() noexcept;           // graph 退場(RT 改讀 nullptr)
-    void clear_expired_retired(bool force) noexcept;  // grace 期滿且無 reader 才刪
+    // grace 期滿「且」reader 歸零才刪;reader 未退 = 留佇列下輪再試(含 force)
+    void reap_retired_graphs(bool force) noexcept;
     // 跑著時軌道動了 ASIO pair:以最新 source/output 聯集重建裝置 buffer
     // (createBuffers 只能在 stop 狀態;聯集沒變 = 不動)。失敗 = 串流已停
     bool rebuild_asio_channels(std::string& err);  // 內部 plumbing;分類 = 呼叫端 kDeviceBusy

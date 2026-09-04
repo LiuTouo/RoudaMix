@@ -150,11 +150,12 @@ bool pre_roll_shadow(Vst3Plugin& shadow,
 }  // namespace
 
 // reader 門閂 RAII(acquire/release 見 audio_engine.hpp)。graph == nullptr =
-// 無圖,未登記,dtor 不退。
+// 無圖,未登記,dtor 不退。graph 為 const TrackGraph*:節點欄位唯讀,RT 對
+// TrackRt 的寫入全經 shared_ptr(淺 const),足以覆蓋。
 namespace {
 struct GraphReadGuard {
     AudioEngine* engine;
-    TrackGraph* graph;
+    const TrackGraph* graph;
     explicit GraphReadGuard(AudioEngine& e) noexcept
         : engine(&e), graph(engine->acquire_graph()) {}
     ~GraphReadGuard() {
@@ -585,7 +586,7 @@ void AudioEngine::stop() noexcept {
             }
     stop_captures();
     stop_renders();
-    clear_expired_retired(/*force=*/true);
+    reap_retired_graphs(/*force=*/true);
 }
 
 // ---- track graph swap(同舊 rack 的 grace 模式)----
@@ -789,7 +790,9 @@ bool AudioEngine::swap_graph() noexcept {
     }
     last_route_plan_ = fresh->route_plan;
     latency_generation_.fetch_add(1, std::memory_order_relaxed);
-    TrackGraph* old = rt_graph_.exchange(fresh, std::memory_order_acq_rel);
+    // seq_cst:與 acquire_graph 的「登記→取圖」SC 全序成對(#15)
+    TrackGraph* old = rt_graph_.exchange(fresh, std::memory_order_seq_cst);
+    retired_graphs_.retire(old, GetTickCount64());
     // Commit 後才發布共享 delay 的 target，candidate 失敗時現行 graph 不會
     // 提前看到新 latency。Audio thread 仍只在下一個 block boundary 套用。
     const auto transition_samples =
@@ -800,8 +803,7 @@ bool AudioEngine::swap_graph() noexcept {
     for (auto& pending : pending_dry_delays)
         if (pending.reused)
             (void)pending.line->set_delay(pending.target, transition_samples);
-    if (old != nullptr) retired_graphs_.retire(old, GetTickCount64());
-    clear_expired_retired(false);
+    reap_retired_graphs(false);
     return true;
 }
 
@@ -817,9 +819,9 @@ bool AudioEngine::swap_safety_graph() noexcept {
         }
     }
     safe->route_plan = plan_route_suspension(active->route_plan);
-    TrackGraph* old = rt_graph_.exchange(safe, std::memory_order_acq_rel);
-    if (old != nullptr) retired_graphs_.retire(old, GetTickCount64());
-    clear_expired_retired(false);
+    TrackGraph* old = rt_graph_.exchange(safe, std::memory_order_seq_cst);
+    retired_graphs_.retire(old, GetTickCount64());
+    reap_retired_graphs(false);
     return true;
 }
 
@@ -1003,8 +1005,8 @@ std::optional<Failure> AudioEngine::prepare_monitor_variants() {
 }
 
 void AudioEngine::retire_graph() noexcept {
-    TrackGraph* old = rt_graph_.exchange(nullptr, std::memory_order_acq_rel);
-    if (old != nullptr) retired_graphs_.retire(old, GetTickCount64());
+    TrackGraph* old = rt_graph_.exchange(nullptr, std::memory_order_seq_cst);
+    retired_graphs_.retire(old, GetTickCount64());
 }
 
 bool AudioEngine::rebuild_asio_channels(std::string& err) {
@@ -1049,25 +1051,24 @@ bool AudioEngine::rebuild_asio_channels(std::string& err) {
     return true;
 }
 
-void AudioEngine::clear_expired_retired(bool force) noexcept {
+void AudioEngine::reap_retired_graphs(bool force) noexcept {
     // force 仍受 reader 門閂(#15):stop 時 publisher thread 還活著,
     // 可能恰在遍歷;沒刪掉的留在佇列,引擎解構(thread 收完)再全清。
     retired_graphs_.reap(GetTickCount64(), force);
 }
 
 // ---- reader 門閂(#15):RT callback / publisher 取圖的唯一入口 ----
-// 先登記(計數本體在 retire queue,永不釋放),再雙讀驗證指標未變。驗證通過
-// 前絕不解引用;未通過退登記重試(指標在兩次 load 之間被換掉)。控制面 swap
-// 後,退休圖要等 grace 期滿「且」reader 歸零才可能被 reap,登記持續到 release
-// —— reader 卡再久也只會讓圖晚刪,不會被使用中釋放。
+// 計數本體在 retire queue(engine 成員,永不釋放)。登記與取圖都 seq_cst:
+// SC 全序保證,若 reaper 的計數檢查讀不到本登記,則本登記在 SC 序中晚於檢查,
+// 取圖更晚 —— 必已越過 unlink,拿不到任何已退休(可能已刪)的圖。單次 load
+// 即足:圖只有「現行」與「已 unlink 入隊」兩態,後者靠登記擋刪、計數檢查擋刪。
+// 登記持續到 release —— reader 卡再久也只會讓圖晚刪,不會被使用中釋放。
 const TrackGraph* AudioEngine::acquire_graph() noexcept {
-    for (;;) {
-        retired_graphs_.reader_enter();
-        TrackGraph* g = rt_graph_.load(std::memory_order_acquire);
-        if (g != nullptr && g == rt_graph_.load(std::memory_order_acquire)) return g;
-        retired_graphs_.reader_exit();
-        if (g == nullptr) return nullptr;
-    }
+    retired_graphs_.reader_enter();
+    TrackGraph* g = rt_graph_.load(std::memory_order_seq_cst);
+    if (g != nullptr) return g;
+    retired_graphs_.reader_exit();
+    return nullptr;
 }
 
 void AudioEngine::release_graph() noexcept {
@@ -1880,7 +1881,7 @@ void AudioEngine::process(const AudioBlock& block) noexcept {
         block.frames > kMaxBlockFrames ? kMaxBlockFrames : block.frames;
     // reader 門閂(純 atomic = RT-safe):整個 block 期間擋退休回收(#15)
     GraphReadGuard guard(*this);
-    TrackGraph* g = guard.graph;
+    const TrackGraph* g = guard.graph;
     if (g == nullptr || frames == 0) return;  // 輸出已由 asio_device 清零 = 靜音
 
     // 1) 清所有軌的 summing bus(16 軌 @512f = 8K floats,可忽略)

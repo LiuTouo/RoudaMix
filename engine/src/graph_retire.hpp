@@ -26,7 +26,10 @@ public:
     // 回傳本次釋放的圖數。force = 忽略 grace,但仍受 reader 門閂:stop 路徑
     // publisher thread 還活著,可能恰在遍歷;引擎解構時 thread 已收,才真的全清。
     std::size_t reap(std::uint64_t now, bool force) {
-        const bool readers = readers_.load(std::memory_order_acquire) != 0;
+        // seq_cst:與 reader 的「登記(SC)→ 取圖(SC)」成對,見
+        // AudioEngine::acquire_graph — SC 全序封死「檢查讀到舊 0、reader 拿到
+        // 已刪圖」的形式洞。
+        const bool readers = readers_.load(std::memory_order_seq_cst) != 0;
         std::size_t freed = 0;
         std::vector<Entry> still;
         still.reserve(entries_.size());
@@ -42,7 +45,7 @@ public:
         return freed;
     }
 
-    void reader_enter() noexcept { readers_.fetch_add(1, std::memory_order_acquire); }
+    void reader_enter() noexcept { readers_.fetch_add(1, std::memory_order_seq_cst); }
     void reader_exit() noexcept { readers_.fetch_sub(1, std::memory_order_release); }
     bool readers_active() const noexcept {
         return readers_.load(std::memory_order_acquire) != 0;
