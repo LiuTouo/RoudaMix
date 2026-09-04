@@ -473,39 +473,57 @@ void AudioEngine::handle_track_failed(std::uint32_t track_id) {
 std::optional<Failure> AudioEngine::start(const std::string& device_key,
                                           std::optional<std::uint32_t> sample_rate,
                                           std::optional<std::uint32_t> buffer_size) {
-    if (device_.running())
+    if (device_.running() || (clock_ != nullptr && clock_->running()))
         return failure(Err::kAlreadyRunning, "already running");
     // 面板開著時 driver 不能重開(controlPanel 多為 modal,detach thread 還在裡面)
     if (panel_open_.load(std::memory_order_acquire) > 0)
         return failure(Err::kDeviceOpenFailed, "hardware panel is open; close it first");
-    // 換裝置或換取樣率:整個 driver 重開。部分 driver(SSL 實測)在已 init 的
-    // instance 上 setSampleRate 回 OK 但 callback 從此不來 —— 重 init 才是真換率
-    if (!device_.clsid().empty() &&
-        (device_.clsid() != device_key ||
-         (sample_rate.has_value() &&
-          *sample_rate != device_.capability().current_sample_rate))) {
-        device_.close();
-    }
+    const bool wasapi_master = device_key == kWasapiMasterKey;
+    std::uint32_t rate = 0;
+    std::uint32_t block = 0;
     std::string err;
-    if (!device_.probe(device_key, err)) return failure(Err::kDeviceOpenFailed, std::move(err));
-    const auto& cap = device_.capability();
-    const std::uint32_t rate = sample_rate.value_or(cap.current_sample_rate);
-    const std::uint32_t buffer = buffer_size.value_or(0);  // 0 = driver preferred
+    std::unique_ptr<WasapiClock> new_clock;
+    const DeviceCapability* cap = nullptr;
+    if (wasapi_master) {
+        // M6:WASAPI master — 系統預設輸出當時脈 + 監聽。create 不 Start
+        // (要先拿 block_size 初始化 plugin)
+        Failure clock_failure{};
+        new_clock = WasapiClock::create(this, sample_rate, clock_failure);
+        if (new_clock == nullptr)
+            return failure(clock_failure.code, std::move(clock_failure.message));
+        rate = new_clock->rate();
+        block = new_clock->block_size();
+    } else {
+        // 換裝置或換取樣率:整個 driver 重開。部分 driver(SSL 實測)在已 init 的
+        // instance 上 setSampleRate 回 OK 但 callback 從此不來 —— 重 init 才是真換率
+        if (!device_.clsid().empty() &&
+            (device_.clsid() != device_key ||
+             (sample_rate.has_value() &&
+              *sample_rate != device_.capability().current_sample_rate))) {
+            device_.close();
+        }
+        if (!device_.probe(device_key, err)) return failure(Err::kDeviceOpenFailed, std::move(err));
+        cap = &device_.capability();
+        rate = sample_rate.value_or(cap->current_sample_rate);
+        const std::uint32_t buffer = buffer_size.value_or(0);  // 0 = driver preferred
 
-    // 從所有軌的 source/output 收集 ASIO channel 聯集(M5:軌道自選 pair)
-    std::vector<std::uint32_t> in_chans, out_chans;
-    asio_channel_union(tracks_, in_chans, out_chans);
+        // 從所有軌的 source/output 收集 ASIO channel 聯集(M5:軌道自選 pair)
+        std::vector<std::uint32_t> in_chans, out_chans;
+        asio_channel_union(tracks_, in_chans, out_chans);
 
-    if (!device_.prepare(rate, in_chans, out_chans, buffer, err)) {
-        device_.close();
-        return failure(Err::kDeviceOpenFailed, std::move(err));
+        if (!device_.prepare(rate, in_chans, out_chans, buffer, err)) {
+            device_.close();
+            return failure(Err::kDeviceOpenFailed, std::move(err));
+        }
+        block = device_.block_size();
     }
-    device_.set_callback(this);
+    if (!wasapi_master) device_.set_callback(this);
 
     // 失敗回滾 guard:capture/render/plugin 已啟動後任何一步失敗,全部收乾淨
-    // (不留背景 pump、不留 initialized 殘態、不留半開的 device)
+    // (不留背景 pump、不留 initialized 殘態、不留半開的 device/clock)
     struct StartRollback {
         AudioEngine* e;
+        std::unique_ptr<WasapiClock> clock;  // WASAPI master:成功才交出
         bool armed{true};
         ~StartRollback() {
             if (!armed) return;
@@ -519,8 +537,10 @@ std::optional<Failure> AudioEngine::start(const std::string& device_key,
                         if (s.monitor_shadow) s.monitor_shadow->terminate();
                     }
             e->device_.close();
+            // clock 隨 guard 解構 = stop + join pump(未成功交出)
         }
     } rollback{this};
+    rollback.clock = std::move(new_clock);
 
     // M5b/M5c/M6:app capture + mic capture + wasapi render 啟動(失敗 = 該軌
     // track_error,不擋 start;其他軌照跑)
@@ -547,7 +567,7 @@ std::optional<Failure> AudioEngine::start(const std::string& device_key,
         for (auto& slot : t.chain) {
             if (!slot.plugin) continue;
             slot.plugin->terminate();
-            if (!slot.plugin->initialize(static_cast<double>(rate), device_.block_size())) {
+            if (!slot.plugin->initialize(static_cast<double>(rate), block)) {
                 return failure(Err::kDeviceOpenFailed,
                                "plugin '" + slot.name + "' init failed: " +
                                    slot.plugin->last_error());  // rollback guard 收 capture/render/plugin/device
@@ -555,14 +575,13 @@ std::optional<Failure> AudioEngine::start(const std::string& device_key,
             refresh_latency(slot);
             if (slot.monitor_shadow) {
                 slot.monitor_shadow->terminate();
-                if (!slot.monitor_shadow->initialize(static_cast<double>(rate),
-                                                     device_.block_size())) {
+                if (!slot.monitor_shadow->initialize(static_cast<double>(rate), block)) {
                     return failure(Err::kDeviceOpenFailed,
                                    "monitor shadow '" + slot.name + "' init failed: " +
                                        slot.monitor_shadow->last_error());
                 }
                 if (!pre_roll_shadow(*slot.monitor_shadow, slot.param_values, rate,
-                                     device_.block_size(), err))
+                                     block, err))
                     return failure(Err::kDeviceOpenFailed, std::move(err));
                 slot.monitor_latency_samples = slot.monitor_shadow->latency_samples();
                 slot.monitor_latency_known = true;
@@ -574,25 +593,40 @@ std::optional<Failure> AudioEngine::start(const std::string& device_key,
         return failure(Err::kDeviceOpenFailed,
                        "PDC plan exceeds latency or memory safety limits");
 
-    const std::uint64_t callbacks_before = device_.callbacks();
-    if (!device_.start(err))
-        return failure(Err::kDeviceOpenFailed,
-                       std::string("ASIO start failed after rack ready: ") + err);
-    // SSL 這類 driver:start() 回 OK 但硬體時脈沒換時 callback 從不來(死流)。
-    // 短等驗證沒 callback 就明確失敗,引導用硬體面板改率(600ms:Start 鍵可感知延遲)
-    Sleep(600);
-    if (device_.callbacks() == callbacks_before)
-        return failure(Err::kDeviceOpenFailed,
-                       "driver did not deliver audio callbacks at " + std::to_string(rate) +
-                           " Hz; open hardware panel, set rate there, then Start again");
+    if (wasapi_master) {
+        // liveness 同 ASIO 慣例:short 等待 + callback 必須前進(死流 = 明確失敗)
+        const std::uint64_t callbacks_before = rollback.clock->callbacks();
+        if (!rollback.clock->start(err))
+            return failure(Err::kDeviceOpenFailed,
+                           std::string("wasapi start failed: ") + err);
+        Sleep(600);
+        if (rollback.clock->callbacks() == callbacks_before)
+            return failure(Err::kDeviceOpenFailed,
+                           "wasapi render stream did not deliver callbacks at " +
+                               std::to_string(rate) + " Hz");
+        clock_ = std::move(rollback.clock);
+    } else {
+        const std::uint64_t callbacks_before = device_.callbacks();
+        if (!device_.start(err))
+            return failure(Err::kDeviceOpenFailed,
+                           std::string("ASIO start failed after rack ready: ") + err);
+        // SSL 這類 driver:start() 回 OK 但硬體時脈沒換時 callback 從不來(死流)。
+        // 短等驗證沒 callback 就明確失敗,引導用硬體面板改率(600ms:Start 鍵可感知延遲)
+        Sleep(600);
+        if (device_.callbacks() == callbacks_before)
+            return failure(Err::kDeviceOpenFailed,
+                           "driver did not deliver audio callbacks at " + std::to_string(rate) +
+                               " Hz; open hardware panel, set rate there, then Start again");
+    }
     rollback.armed = false;
 
     rt_sample_rate_.store(rate, std::memory_order_relaxed);
     last_device_key_ = device_key;  // session 用:stop 後存檔仍記得裝置
     last_sample_rate_ = rate;
-    last_buffer_size_ = device_.block_size();
-    meters_.set_runtime(static_cast<float>(rate), device_.block_size(),
-                        cap.input_latency, cap.output_latency);
+    last_buffer_size_ = block;
+    meters_.set_runtime(static_cast<float>(rate), block,
+                        wasapi_master ? 0u : cap->input_latency,
+                        wasapi_master ? clock_->output_latency() : cap->output_latency);
 
     if (shm_ == nullptr && shm_mapping_ == nullptr) {
         shm_mapping_ = telemetry_create(&shm_);
@@ -655,9 +689,9 @@ std::optional<Failure> AudioEngine::start(const std::string& device_key,
                         ? g->strip_plan.table.data()
                         : nullptr;
                 const auto strip_count = g != nullptr ? g->strip_plan.table.size() : 0;
-                meters_.publish(*shm_, device_.xruns(), strip_table, strip_count,
+                meters_.publish(*shm_, stream_xruns(), strip_table, strip_count,
                                 plugin_ids, plugin_variants, plugin_count,
-                                device_.running());
+                                stream_running());
             }
         });
     }
@@ -665,6 +699,10 @@ std::optional<Failure> AudioEngine::start(const std::string& device_key,
 }
 
 void AudioEngine::stop() noexcept {
+    if (clock_ != nullptr) {
+        clock_->stop();  // join pump 在 retire_graph 之前(同 ASIO 順序)
+        clock_.reset();
+    }
     device_.stop();
     // RT 停 callback 後退 graph、卸 plugin(下次 start 依新 rate 重建)
     retire_graph();
@@ -720,8 +758,15 @@ bool AudioEngine::commit_graph_candidate() {
             t.src_r = resolve(imap, t.source.asio_in_ch + 1);
         }
         if (t.output.type == TrackOutput::kAsioOut) {
-            t.out_l = resolve(omap, t.output.asio_out_ch);
-            t.out_r = resolve(omap, t.output.asio_out_ch + 1);
+            if (clock_ != nullptr) {
+                // M6 WASAPI master:kAsioOut sink 全部塌縮到 clock 立體聲 scratch
+                // (該 mode 下 ASIO pair 是虛構的;engine strip 規則不受影響)
+                t.out_l = 0;
+                t.out_r = 1;
+            } else {
+                t.out_l = resolve(omap, t.output.asio_out_ch);
+                t.out_r = resolve(omap, t.output.asio_out_ch + 1);
+            }
         }
         t.track_strip = strips.tracks[ti].track_strip;
         t.chain_strips = strips.tracks[ti].chain_strips;
@@ -2031,6 +2076,7 @@ void AudioEngine::clear_all_tracks() {
 // controlPanel() 多數 driver 是 modal(關面板才返回)— 呼叫端(detach thread)
 // 會在裡面待到面板關閉;panel_open_ 期間 start() 拒絕(driver 銷毀 race)
 std::optional<Failure> AudioEngine::open_control_panel() {
+    if (clock_ != nullptr) return failure(Err::kNotRunning, "no ASIO device (wasapi master mode)");
     if (!device_.running()) return failure(Err::kNotRunning, "not running");
     std::string err;
     panel_open_.fetch_add(1, std::memory_order_acq_rel);
@@ -2042,20 +2088,36 @@ std::optional<Failure> AudioEngine::open_control_panel() {
 
 EngineStatusInfo AudioEngine::status() const {
     EngineStatusInfo s;
-    s.running = device_.running();
-    s.device_key = device_.running() ? device_.clsid() : "";
+    s.running = stream_running();
+    s.device_key = stream_running()
+                       ? (clock_ != nullptr ? std::string(kWasapiMasterKey) : device_.clsid())
+                       : std::string();
     s.sample_rate =
-        device_.running() ? static_cast<float>(rt_sample_rate_.load(std::memory_order_relaxed))
-                          : 0.0F;
-    s.buffer_size = device_.running() ? device_.block_size() : 0;
-    if (device_.running() && device_.capability().latency_valid) {
+        stream_running() ? static_cast<float>(rt_sample_rate_.load(std::memory_order_relaxed))
+                         : 0.0F;
+    s.buffer_size = stream_running() ? stream_block() : 0;
+    if (clock_ != nullptr) {
+        if (stream_running()) s.output_latency = clock_->output_latency();
+    } else if (stream_running() && device_.capability().latency_valid) {
         s.input_latency = device_.capability().input_latency;
         s.output_latency = device_.capability().output_latency;
     }
-    s.xruns = device_.xruns();
+    s.xruns = stream_xruns();
     s.track_count = static_cast<std::uint32_t>(tracks_.size());
     s.plugin_fails = rt_plugin_fails_.load(std::memory_order_relaxed);
     return s;
+}
+
+bool AudioEngine::stream_running() const noexcept {
+    return clock_ != nullptr ? clock_->running() : device_.running();
+}
+
+std::uint32_t AudioEngine::stream_block() const noexcept {
+    return clock_ != nullptr ? clock_->block_size() : device_.block_size();
+}
+
+std::uint64_t AudioEngine::stream_xruns() const noexcept {
+    return clock_ != nullptr ? clock_->xruns() : device_.xruns();
 }
 
 TelemetryStripPlan AudioEngine::telemetry_strip_plan() const {

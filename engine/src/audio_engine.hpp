@@ -21,8 +21,13 @@
 #include "rack.hpp"
 #include "telemetry.hpp"
 #include "track_graph.hpp"
+#include "wasapi_clock.hpp"
 
 namespace rmx {
+
+// start(device_key) 的 WASAPI master sentinel(CLSID 是 GUID 字串,無碰撞;
+// session deviceKey / UI lastWorkingDevice 透明持久化)
+inline constexpr char kWasapiMasterKey[] = "wasapi";
 
 struct EngineStatusInfo {
     bool running{};
@@ -200,6 +205,7 @@ private:
     std::optional<Failure> prepare_monitor_variants();
 
     AsioDevice device_;
+    std::unique_ptr<WasapiClock> clock_{nullptr};  // 非 null = WASAPI master mode
     MeterAccumulator meters_;
     TelemetryBlockShm* shm_{};
     HANDLE shm_mapping_{};
@@ -259,6 +265,10 @@ private:
     void stop_mics() noexcept;
     std::function<void(std::uint32_t)> capture_failed_cb_;
     std::function<void(std::uint32_t, bool)> latency_changed_cb_;
+    // ASIO / WASAPI master 共用查詢(以 clock_ 分流;避免分支撒滿呼叫點)
+    [[nodiscard]] bool stream_running() const noexcept;
+    [[nodiscard]] std::uint32_t stream_block() const noexcept;
+    [[nodiscard]] std::uint64_t stream_xruns() const noexcept;
 };
 
 }  // namespace rmx
