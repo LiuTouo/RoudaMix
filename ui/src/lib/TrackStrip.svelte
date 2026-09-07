@@ -11,6 +11,8 @@
   import { MutationQueue, mutKey } from "./mutations";
   import { reorderLane } from "./laneOrder";
   import { pluginMenuItems } from "./pluginMenu";
+  import { pluginTransfer, PLUGIN_DRAG_TYPE, beginPluginDrag, endPluginDrag,
+    copyPlugin, pastePlugin, duplicatePlugin } from "./pluginTransfer";
   import {
     beginLatencyPolicy,
     beginMonitorBypass,
@@ -50,6 +52,7 @@
     meterView = {},
     metered = true,
     latencyEnabled = false,
+    pluginCopyEnabled = false,
     // 掃描 job 由 App 統一跑(共用 registry,所有軌同一份清單;進度/取消也在 App)
     scanModules = [],
     scanFailed = [],
@@ -69,6 +72,7 @@
     meterView?: MeterStripView;
     metered?: boolean;
     latencyEnabled?: boolean;
+    pluginCopyEnabled?: boolean;
     scanModules?: ScanModule[];
     scanFailed?: ScanFailure[];
     scanRunning?: boolean;
@@ -491,52 +495,108 @@
   }
 
   // ---- VST 鏈拖曳排序(move_plugin = erase+insert 最終位置;▲▼ 已移除)----
-  let plugDrag = $state<number | null>(null); // 被拖 instanceId
+  const plugDrag = $derived($pluginTransfer.drag?.instanceId ?? null);
   let plugDropAt = $state<number | null>(null); // 插入位(chain index)
+  $effect(() => { if (!$pluginTransfer.drag) plugDropAt = null; });
 
   function onPlugDragStart(e: DragEvent, slot: RackSlot) {
-    if ((e.target as HTMLElement).closest?.("button, input")) {
+    if ($pluginTransfer.busy || (e.target as HTMLElement).closest?.("button, input")) {
       e.preventDefault(); // 電源/移除鈕不開拖曳
       return;
     }
     e.stopPropagation(); // 別 bubble 到 lane 的軌道拖曳(會蓋 ghost + 誤開軌道排序)
-    plugDrag = slot.instanceId;
-    e.dataTransfer?.setData("text/plain", String(slot.instanceId));
+    beginPluginDrag({ instanceId: slot.instanceId, trackId: track.trackId, copyable: !isPh(slot) });
+    plugDropAt = null;
+    e.dataTransfer?.setData(PLUGIN_DRAG_TYPE, String(slot.instanceId));
     if (e.dataTransfer) {
-      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.effectAllowed = pluginCopyEnabled && !isPh(slot) ? "copyMove" : "move";
       const row = (e.target as HTMLElement).closest<HTMLElement>(".plug");
       if (row) mountDragGhost(e.dataTransfer, row, row.offsetWidth || 170);
     }
   }
-  function onPlugDragOver(e: DragEvent, i: number) {
-    if (plugDrag === null || !e.dataTransfer) return;
+  function onPlugDragOver(e: DragEvent) {
+    const source = $pluginTransfer.drag;
+    if (!source || !e.dataTransfer) return;
+    e.stopPropagation();
+    const copying = source.trackId !== track.trackId;
+    if ($pluginTransfer.busy || (copying && (!pluginCopyEnabled || !source.copyable))) {
+      plugDropAt = null;
+      e.dataTransfer.dropEffect = "none";
+      return;
+    }
     e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    plugDropAt = e.clientY < r.top + r.height / 2 ? i : i + 1;
+    const rows = [...(e.currentTarget as HTMLElement).querySelectorAll<HTMLElement>(".vstlist > .plug")];
+    const before = rows.findIndex((row) => {
+      const rect = row.getBoundingClientRect();
+      return e.clientY < rect.top + rect.height / 2;
+    });
+    const pos = before < 0 ? rows.length : before;
+    const from = track.plugins.findIndex((slot) => slot.instanceId === plugDrag);
+    // 原位上下緣均不會改變排序，不顯示誤導的有效落點。
+    const moves = copying || (from >= 0 && pos !== from && pos !== from + 1);
+    plugDropAt = moves ? pos : null;
+    e.dataTransfer.dropEffect = moves ? (copying ? "copy" : "move") : "none";
+  }
+  function onPlugDragLeave(e: DragEvent) {
+    const target = e.relatedTarget;
+    if (!(target instanceof Node) || !(e.currentTarget as HTMLElement).contains(target)) plugDropAt = null;
   }
   function onPlugDrop(e: DragEvent) {
-    if (plugDrag === null) return;
+    const source = $pluginTransfer.drag;
+    if (!source) return;
     e.preventDefault();
+    e.stopPropagation();
+    onPlugDragOver(e); // 放下位置與當下顯示的插入位使用同一個判定。
     const from = track.plugins.findIndex((s) => s.instanceId === plugDrag);
-    if (from >= 0 && plugDropAt !== null) {
+    if (source.trackId !== track.trackId && plugDropAt !== null) {
+      void runPluginTransfer(() => duplicatePlugin(source.instanceId, track.trackId, plugDropAt!));
+    } else if (from >= 0 && plugDropAt !== null) {
       let ni = plugDropAt > from ? plugDropAt - 1 : plugDropAt; // 先移除造成左移要補回
       ni = Math.max(0, Math.min(ni, track.plugins.length - 1));
       if (ni !== from) {
         err = "";
-        engineCommand("move_plugin", { instanceId: plugDrag, newIndex: ni }).catch(
+        engineCommand("move_plugin", { instanceId: source.instanceId, newIndex: ni }).catch(
           (e2) => (err = errorText(e2)),
         );
       }
     }
-    plugDrag = null;
+    endPluginDrag();
     plugDropAt = null;
     removeDragGhost();
   }
   function onPlugDragEnd() {
-    plugDrag = null;
+    endPluginDrag();
     plugDropAt = null;
     removeDragGhost();
+  }
+
+  async function runPluginTransfer(action: () => Promise<void>) {
+    err = "";
+    try { await action(); } catch (e) { err = errorText(e); }
+  }
+  function pasteAt(afterId?: number) {
+    const index = afterId === undefined ? track.plugins.length
+      : track.plugins.findIndex((slot) => slot.instanceId === afterId) + 1;
+    if (afterId !== undefined && index === 0) return;
+    void runPluginTransfer(() => pastePlugin(track.trackId, index));
+  }
+  function rackMenu(e: MouseEvent | KeyboardEvent) {
+    if (!pluginCopyEnabled || (e.target as HTMLElement).closest(".plug, button, input")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    openMenu("clientX" in e ? e.clientX : rect.left, "clientY" in e ? e.clientY : rect.top,
+      `${track.name} 的 VST 機架`, [{ label: "貼上",
+        disabled: !$pluginTransfer.clipboard || $pluginTransfer.busy, run: () => pasteAt() }]);
+  }
+  function pluginMenuKey(e: KeyboardEvent, slot?: RackSlot) {
+    if (e.key !== "ContextMenu" && !(e.shiftKey && e.key === "F10")) return;
+    if (e.target !== e.currentTarget) return;
+    if (slot) {
+      e.preventDefault(); e.stopPropagation();
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      plugMenu({ clientX: rect.left, clientY: rect.top }, slot);
+    } else rackMenu(e);
   }
 
   // ---- placeholder 回收:重試載入(原路徑)/重新定位(挑新檔,同 instanceId 原位)----
@@ -685,7 +745,7 @@
       engineCommand("move_plugin", { instanceId: slot.instanceId, newIndex: ni }),
     );
   }
-  function plugMenu(e: MouseEvent, slot: RackSlot) {
+  function plugMenu(e: { clientX: number; clientY: number }, slot: RackSlot) {
     const i = track.plugins.findIndex((s) => s.instanceId === slot.instanceId);
     openMenu(
       e.clientX,
@@ -697,6 +757,10 @@
         chainLength: track.plugins.length,
         latencyEnabled,
         monitorBypassShown: shownMonitorBypass(slot),
+        copy: pluginCopyEnabled ? { disabled: $pluginTransfer.busy,
+          run: () => void runPluginTransfer(() => copyPlugin(slot.instanceId)) } : undefined,
+        paste: pluginCopyEnabled ? { disabled: !$pluginTransfer.clipboard || $pluginTransfer.busy,
+          run: () => pasteAt(slot.instanceId) } : undefined,
         run: {
           editor: () => void openEditor(slot),
           move: (to) => plugMove(slot, to),
@@ -706,6 +770,11 @@
     );
   }
 </script>
+
+<svelte:window
+  ondragend={() => { if ($pluginTransfer.drag) onPlugDragEnd(); }}
+  ondrop={() => { if ($pluginTransfer.drag) onPlugDragEnd(); }}
+/>
 
 <div
   class="strip"
@@ -916,12 +985,23 @@
 
   <div class="lower">
   <div class="vstcol">
-  <div class="vst" bind:this={vstBox} style={boxH !== null ? `flex:0 0 auto; height:${boxH}px` : ""}>
+  <!-- 機架是可聚焦的右鍵選單入口，保留 group 語意及內部控制項。 -->
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+  <div class="vst" bind:this={vstBox} style={boxH !== null ? `flex:0 0 auto; height:${boxH}px` : ""}
+    role="group" aria-label={`${track.name} 的 VST 機架`}
+    tabindex={pluginCopyEnabled ? 0 : undefined}
+    aria-busy={$pluginTransfer.busy}
+    class:emptydrop={plugDropAt === 0 && track.plugins.length === 0}
+    oncontextmenu={rackMenu} onkeydown={(e) => pluginMenuKey(e)}
+    ondragover={onPlugDragOver} ondragleave={onPlugDragLeave} ondrop={onPlugDrop}>
     <div class="vsthead">
       <span>VST 機架 ({track.plugins.length})</span>
+      {#if $pluginTransfer.busy}<span class="dim" role="status">處理中…</span>{/if}
     </div>
-    <div class="vstlist">
+    <div class="vstlist" role="list" aria-label={`${track.name} 的插件順序`}>
       {#each track.plugins as s, i (s.instanceId)}
+        <!-- 可聚焦的插件選單入口，同時維持 listitem 語意。 -->
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
         <div
           class="plug"
           class:placeholder={isPh(s)}
@@ -930,17 +1010,20 @@
           class:dropbefore={plugDropAt === i}
           class:dropafter={plugDropAt === i + 1 && plugDropAt === track.plugins.length}
           role="listitem"
+          tabindex="0"
+          onkeydown={(e) => pluginMenuKey(e, s)}
           aria-label="plugin {s.name}"
           ondragstart={(e) => onPlugDragStart(e, s)}
-          ondragover={(e) => onPlugDragOver(e, i)}
-          ondrop={onPlugDrop}
           ondragend={onPlugDragEnd}
           oncontextmenu={(e) => {
             if ((e.target as HTMLElement).closest("button")) return;
             e.preventDefault();
+            e.stopPropagation();
             plugMenu(e, s);
           }}
-          data-tooltip={isPh(s) ? undefined : "拖曳調整 plugin chain 順序；按右鍵開啟操作選單。"}
+          data-tooltip={isPh(s) ? undefined : pluginCopyEnabled
+            ? "同軌拖曳調整順序；拖到其他音軌複製目前設定；右鍵可複製與貼上。"
+            : "拖曳調整 plugin chain 順序；按右鍵開啟操作選單。"}
         >
           {#if isPh(s)}
             <!-- missing/broken:原鏈位保留,不參與 DSP;提供重試/重新定位/移除 -->
@@ -1462,6 +1545,9 @@
   }
   .plug.dragging {
     opacity: 0.35;
+  }
+  .vst.emptydrop {
+    box-shadow: inset 0 0 0 2px var(--accent);
   }
   .plug.dropbefore {
     box-shadow: inset 0 2px 0 0 var(--accent);

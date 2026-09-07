@@ -80,6 +80,8 @@ private:
     using AddPluginRequest = router_request::AddPlugin;
     using InstanceRequest = router_request::Instance;
     using MovePluginRequest = router_request::MovePlugin;
+    using PastePluginRequest = router_request::PastePlugin;
+    using DuplicatePluginRequest = router_request::DuplicatePlugin;
     using BypassRequest = router_request::Bypass;
     using RetryPluginRequest = router_request::RetryPlugin;
     using SetParamRequest = router_request::SetParam;
@@ -141,6 +143,11 @@ private:
     Outcome handle_add_plugin(const AddPluginRequest& request);
     Outcome handle_remove_plugin(const InstanceRequest& request);
     Outcome handle_move_plugin(const MovePluginRequest& request);
+    Outcome handle_copy_plugin(const InstanceRequest& request);
+    Outcome handle_paste_plugin(const PastePluginRequest& request);
+    Outcome handle_duplicate_plugin(const DuplicatePluginRequest& request);
+    Outcome insert_plugin_copy(const PluginSnapshot& snapshot, std::uint32_t track_id,
+                               std::size_t index);
     Outcome handle_set_bypass(const BypassRequest& request);
     Outcome handle_set_monitor_bypass(const BypassRequest& request);
     Outcome handle_retry_plugin(const RetryPluginRequest& request);
@@ -161,6 +168,8 @@ private:
 
     std::mutex engine_mutex_;
     AudioEngine engine_;
+    std::optional<PluginSnapshot> plugin_clipboard_;
+    std::uint64_t clipboard_sequence_{};
     std::uint64_t epoch_{};
     std::uint64_t revision_{};
     nlohmann::json last_scan_ = nlohmann::json::array();

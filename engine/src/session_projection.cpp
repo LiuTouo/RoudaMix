@@ -157,7 +157,7 @@ nlohmann::json snapshot_json(const AudioEngine& engine, std::uint64_t epoch,
                              std::uint64_t revision, const nlohmann::json& last_scan) {
     const auto status = status_json(engine, revision);
     auto snapshot = make_snapshot_json(epoch, status, status.at("tracks"));
-    snapshot["capabilities"] = nlohmann::json::array({"pluginLatencyPdcV1"});
+    snapshot["capabilities"] = nlohmann::json::array({"pluginLatencyPdcV1", "pluginCopyV1"});
     snapshot["telemetryStrips"] = status.at("telemetryStrips");
     snapshot["lastScan"] = last_scan;
     return snapshot;

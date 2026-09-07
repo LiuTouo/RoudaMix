@@ -42,10 +42,22 @@ struct EngineStatusInfo {
     std::string error;        // 最近錯誤(空 = 無)
 };
 
+// 值快照：不持有來源 instance、佇列或 editor，來源刪除後仍可貼上。
+struct PluginSnapshot {
+    std::string module_path, class_id, name;
+    Vst3RuntimeState state;
+    std::vector<std::pair<std::uint32_t, double>> params;
+    bool bypass{}, monitor_bypass{};
+};
+
 class AudioEngine final : public IAudioCallback {
 public:
     AudioEngine();
     ~AudioEngine();
+
+    std::optional<Failure> capture_plugin(std::uint32_t instance_id, PluginSnapshot& snapshot);
+    std::optional<Failure> insert_plugin_snapshot(const PluginSnapshot& snapshot,
+        std::uint32_t track_id, std::size_t index, std::uint32_t& instance_id);
 
     // 裝置列舉 + 輕量 probe(開 driver 讀能力後即關;單 driver 崩由上層 SEH 吸收)
     struct DeviceSummary {
@@ -203,6 +215,8 @@ private:
     static void refresh_latency(RackSlot& slot) noexcept;
     std::optional<Failure> ensure_monitor_shadows();
     std::optional<Failure> prepare_monitor_variants();
+    std::optional<Failure> with_quiescent_plugin_graph(
+        const std::function<std::optional<Failure>()>& action, bool publish);
 
     AsioDevice device_;
     std::unique_ptr<WasapiClock> clock_{nullptr};  // 非 null = WASAPI master mode

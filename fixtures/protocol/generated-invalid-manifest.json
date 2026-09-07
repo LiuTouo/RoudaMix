@@ -149,6 +149,38 @@
         "classId"
       ]
     },
+    "copy_plugin": {
+      "missing": [
+        "instanceId"
+      ],
+      "wrongType": [
+        "instanceId"
+      ]
+    },
+    "paste_plugin": {
+      "missing": [
+        "clipboardId",
+        "trackId",
+        "newIndex"
+      ],
+      "wrongType": [
+        "clipboardId",
+        "trackId",
+        "newIndex"
+      ]
+    },
+    "duplicate_plugin": {
+      "missing": [
+        "instanceId",
+        "trackId",
+        "newIndex"
+      ],
+      "wrongType": [
+        "instanceId",
+        "trackId",
+        "newIndex"
+      ]
+    },
     "remove_plugin": {
       "missing": [
         "instanceId"

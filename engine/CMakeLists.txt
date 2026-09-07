@@ -333,6 +333,19 @@ if(MSVC)
 endif()
 add_test(NAME latency_fixture COMMAND latency_fixture_test $<TARGET_FILE:rmx_latency_fixture>)
 
+# 完整的 Router + 引擎複製測試，使用確定性 VST 與正式 worker preflight。
+get_target_property(RMX_COPY_TEST_SOURCES router_test SOURCES)
+list(REMOVE_ITEM RMX_COPY_TEST_SOURCES tests/router_test.cpp)
+add_executable(plugin_copy_test tests/plugin_copy_test.cpp ${RMX_COPY_TEST_SOURCES})
+target_include_directories(plugin_copy_test PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/generated")
+target_include_directories(plugin_copy_test SYSTEM PRIVATE third_party)
+target_link_libraries(plugin_copy_test PRIVATE asio_sdk vst3_sdk user32 ole32 gdi32 gdiplus dwmapi mmdevapi psapi)
+add_dependencies(plugin_copy_test rmx_latency_fixture roudamix-worker)
+if(MSVC)
+    target_compile_options(plugin_copy_test PRIVATE /W4 /utf-8)
+endif()
+add_test(NAME plugin_copy COMMAND plugin_copy_test $<TARGET_FILE:rmx_latency_fixture>)
+
 # VST registry 純檔案邏輯：fingerprint、增量命中、去重、原子持久化。
 add_executable(vst_registry_test tests/vst_registry_test.cpp src/vst_registry.cpp)
 target_include_directories(vst_registry_test PRIVATE src)

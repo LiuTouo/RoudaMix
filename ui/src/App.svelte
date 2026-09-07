@@ -8,6 +8,7 @@
   } from "@tauri-apps/plugin-autostart";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import TrackStrip from "./lib/TrackStrip.svelte";
+  import { resetPluginTransfer } from "./lib/pluginTransfer";
   import LatencyDrawer from "./lib/LatencyDrawer.svelte";
   import ContextMenu from "./lib/ContextMenu.svelte";
   import { mountDragGhost, removeDragGhost } from "./lib/ghost";
@@ -76,6 +77,7 @@
   let snap = $state<unknown>(null);
   let status = $state<EngineStatus | null>(null);
   let latencyEnabled = $state(false); // legacy view prop；實際 gate = pluginLatencyPdcV1 capability
+  let pluginCopyEnabled = $state(false);
   let latencyDrawerOpen = $state(false);
   let meters = $state<MetersFrame | null>(null);
   let devices = $state<DeviceInfo[]>([]);
@@ -224,6 +226,8 @@
   const scanNotice = $derived(scanJob.error);
   /** 快照事件、status 事件與主動 get_snapshot 共用的唯一權威縮減入口。 */
   function applyAuthoritativeStatus(payload: AuthoritativeStatusPayload): void {
+    if (payload.capabilities !== undefined)
+      pluginCopyEnabled = payload.capabilities.includes("pluginCopyV1");
     const applied = applyStatus(
       {
         status,
@@ -323,6 +327,10 @@
 
       sub(
       await onConnection((c) => {
+        if (!c.connected || epochChanged(conn.epoch, c.epoch)) {
+          resetPluginTransfer();
+          pluginCopyEnabled = false;
+        }
         // P1-A:reconnect epoch 對齊 —— engine 換代重連,本地一次性旗標作廢重跑
         if (epochChanged(conn.epoch, c.epoch)) {
           ensuredDefaults = false;
@@ -671,7 +679,10 @@
   let restoreError = $state(""); // 啟動恢復失敗(檔案不存在/損壞)→ 頂列提示
   type SessionMutationTag = "startup-restore" | "manual-restore";
   function restoreSession(tag: SessionMutationTag, path: string) {
-    return mutations.run(mutKey.session, tag, () => engineCommand("load_session", { path }));
+    return mutations.run(mutKey.session, tag, () => {
+      resetPluginTransfer();
+      return engineCommand("load_session", { path });
+    });
   }
 
   async function startupRestore(): Promise<void> {
@@ -1460,6 +1471,7 @@
             {meterView}
             metered={t.metered !== false}
             {latencyEnabled}
+            {pluginCopyEnabled}
             scanModules={scanModules}
             scanFailed={scanFailed}
             scanRunning={scanRunning}
@@ -1529,6 +1541,7 @@
             {meterView}
             metered={t.metered !== false}
             {latencyEnabled}
+            {pluginCopyEnabled}
             scanModules={scanModules}
             scanFailed={scanFailed}
             scanRunning={scanRunning}

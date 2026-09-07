@@ -116,6 +116,9 @@ render 裝置,`list_render_devices` 列 endpoints)。每軌一條 VST 鏈
 | `retry_plugin` | placeholder 重試載入:與 `add_plugin` 同規 worker preflight;`path` 帶了 = 重新定位到新 module 路徑。原 instanceId/鏈位/params/bypass 保留;非 placeholder → `bad_command`;載入再失敗 = 維持 placeholder、`plugin_load_failed`;載入成功 = 使用者核准該 module(#13),以 path+fingerprint 寫回 registry,下次 session restore 閘門放行 |
 | `remove_plugin` | — |
 | `move_plugin` | 所屬軌鏈內重排 |
+| `copy_plugin` | `pluginCopyV1` capability。擷取目前 component/controller state、宿主參數及兩種 bypass；引擎保留最後成功快照，回傳 `clipboardId` 與 `name`。不增加 revision。來源刪除／修改不影響快照；重新連線或載入 session 清除。 |
+| `paste_plugin` | 依 `clipboardId` 在 `trackId` 的 `newIndex` 插入獨立實例；位置接受 0 到鏈長。回傳 `instanceId`、`trackId`、`tracks`，成功增加一次 revision。過期剪貼簿為 `bad_command`。 |
+| `duplicate_plugin` | 放下時擷取 `instanceId` 的目前設定並插入目標，結果及插入語意同貼上；不改寫剪貼簿。即使目標已有同款插件，也新增實例。 |
 | `set_bypass` | — |
 | `set_monitor_bypass` | 只讓所有 low-latency outputs 略過該 plugin；Stream primary 不受影響 |
 | `set_param` | value normalized [0,1];高頻(旋鈕)—— 成功只 reply、不廣播 status、不動 epoch;權威值見 `status.tracks[].plugins[].params` |
@@ -128,6 +131,12 @@ render 裝置,`list_render_devices` 列 endpoints)。每軌一條 VST 鏈
 | `load_session` | best-effort 全軌重建(壞軌略過不整體失敗;dests 以舊 id→新 id map 重接);消失/壞掉的 plugin = 原鏈位保留 placeholder(name/path/classId/bypass/params 全存,不參與 DSP),詳情列在 `missing`;#13 信任閘門:檔案內 pluginPath 需為本機絕對路徑,且為掃描核准、內容未變的 registry 成員(app spawn 時以 `ROUDAMIX_VST_REGISTRY` 指定;env 未設 = 只擋非本機路徑,registry 檔壞 = fail closed),未過閘 = placeholder(`plugin_unapproved`),按 retry 明確核准才載;`roudamixSession != 2` 一律 `session_io` 拒載(v1 不支援,現況不動);不自動 start;成功 = mutation(廣播 status) |
 | `ensure_system_outputs` | 系統輸出補齊:monitor/stream 恰好各一條(缺 = 補,重複 = 留第一個其餘降級);新 session 或載入後缺 role 時 UI 呼;沒變動 = no-op(不動 epoch) |
 | `shutdown_engine` | 回 ack 後退出 |
+
+插件複製於控制執行緒擷取完整狀態；播放中暫掛安全旁通圖並等待 reader 歸零，
+最多等待 2 秒，逾時回復原圖並回報 `plugin_state_failed`。placeholder 不可複製。
+建立副本沿用 worker preflight，先還原 state、重放參數、初始化及離線預跑，
+再準備監聽分岔並發布音訊圖；失敗回復原鏈與音訊圖，不保留半成品。
+此操作允許短暫旁通，不保證無縫音訊切換。
 
 `list_render_devices` 列出 WASAPI render endpoints，供串流軌選擇裝置。
 `list_audio_apps` 列出預設 render 裝置的 active audio sessions；名稱採 exe basename，

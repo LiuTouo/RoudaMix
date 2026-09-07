@@ -9,11 +9,12 @@
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "test": "npm run test:node && npm run test:modules",
     "test:node": "node --test \"src/lib/*.test.ts\"",
-    "test:modules": "vitest run src/lib/vitest/applyStatus.test.ts src/lib/vitest/deviceStream.test.ts"
+    "test:modules": "vitest run src/lib/vitest"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^5",
     "@tauri-apps/api": "^2",
+    "jsdom": "^30.0.1",
     "svelte": "^5",
     "svelte-check": "^4",
     "typescript": "^5",

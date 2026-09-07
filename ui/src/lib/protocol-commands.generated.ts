@@ -2,7 +2,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { AudioApp, CaptureDevice, DeviceInfo, EngineStatus, ParamInfo, RenderDevice, Snapshot, Track } from "./types";
 
-export type CommandKind = "ping" | "get_snapshot" | "get_latency_report" | "list_devices" | "list_audio_apps" | "list_render_devices" | "list_capture_devices" | "start" | "stop" | "open_device_panel" | "track_add" | "track_remove" | "track_set" | "track_set_source" | "track_set_dests" | "track_set_output" | "track_set_output_latency_policy" | "track_move" | "start_scan" | "cancel_scan" | "add_plugin" | "remove_plugin" | "move_plugin" | "set_bypass" | "set_monitor_bypass" | "retry_plugin" | "set_param" | "get_params" | "open_editor" | "close_editor" | "save_preset" | "load_preset" | "save_session" | "load_session" | "ensure_system_outputs" | "set_editor_owner" | "shutdown_engine";
+export type CommandKind = "ping" | "get_snapshot" | "get_latency_report" | "list_devices" | "list_audio_apps" | "list_render_devices" | "list_capture_devices" | "start" | "stop" | "open_device_panel" | "track_add" | "track_remove" | "track_set" | "track_set_source" | "track_set_dests" | "track_set_output" | "track_set_output_latency_policy" | "track_move" | "start_scan" | "cancel_scan" | "add_plugin" | "copy_plugin" | "paste_plugin" | "duplicate_plugin" | "remove_plugin" | "move_plugin" | "set_bypass" | "set_monitor_bypass" | "retry_plugin" | "set_param" | "get_params" | "open_editor" | "close_editor" | "save_preset" | "load_preset" | "save_session" | "load_session" | "ensure_system_outputs" | "set_editor_owner" | "shutdown_engine";
 export type ErrorCode = "unsupported_version" | "bad_frame" | "bad_command" | "not_running" | "already_running" | "device_open_failed" | "device_lost" | "track_not_found" | "cycle_detected" | "device_busy" | "app_not_found" | "unsupported_windows" | "plugin_not_found" | "plugin_load_failed" | "plugin_no_editor" | "param_not_found" | "session_io" | "preset_io" | "plugin_state_failed" | "internal";
 type EmptyCommandKind = "ping" | "get_snapshot" | "get_latency_report" | "list_devices" | "list_audio_apps" | "list_render_devices" | "list_capture_devices" | "stop" | "open_device_panel" | "cancel_scan" | "ensure_system_outputs" | "shutdown_engine";
 
@@ -42,6 +42,9 @@ export interface CommandPayloads {
   "start_scan": { "roots"?: Array<string> };
   "cancel_scan": Record<string, never>;
   "add_plugin": { "trackId": number; "path": string; "classId"?: string };
+  "copy_plugin": { "instanceId": number };
+  "paste_plugin": { "clipboardId": string; "trackId": number; "newIndex": number };
+  "duplicate_plugin": { "instanceId": number; "trackId": number; "newIndex": number };
   "remove_plugin": { "instanceId": number };
   "move_plugin": { "instanceId": number; "newIndex": number };
   "set_bypass": { "instanceId": number; "bypassed": boolean };
@@ -82,6 +85,9 @@ export interface CommandResults {
   "start_scan": { "jobId": number; "reused": boolean };
   "cancel_scan": { "jobId": number; "cancelling": boolean };
   "add_plugin": { "instanceId": number; "trackId": number; "tracks": Array<Track> };
+  "copy_plugin": { "clipboardId": string; "name": string };
+  "paste_plugin": { "instanceId": number; "trackId": number; "tracks": Array<Track> };
+  "duplicate_plugin": { "instanceId": number; "trackId": number; "tracks": Array<Track> };
   "remove_plugin": { "tracks": Array<Track> };
   "move_plugin": { "tracks": Array<Track> };
   "set_bypass": { "tracks": Array<Track> };
@@ -122,6 +128,9 @@ export interface CommandErrors {
   "start_scan": never;
   "cancel_scan": never;
   "add_plugin": "plugin_load_failed";
+  "copy_plugin": "plugin_not_found" | "plugin_state_failed";
+  "paste_plugin": "bad_command" | "track_not_found" | "plugin_load_failed" | "plugin_state_failed";
+  "duplicate_plugin": "bad_command" | "track_not_found" | "plugin_not_found" | "plugin_load_failed" | "plugin_state_failed";
   "remove_plugin": "plugin_not_found" | "plugin_state_failed" | "bad_command";
   "move_plugin": "bad_command";
   "set_bypass": "plugin_not_found" | "plugin_state_failed" | "bad_command";

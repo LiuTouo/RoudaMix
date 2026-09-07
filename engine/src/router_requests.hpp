@@ -157,6 +157,25 @@ struct MovePlugin {
           new_index(payload.at("newIndex").get<std::size_t>()) {}
 };
 
+struct PastePlugin {
+    std::string clipboard_id;
+    std::uint32_t track_id;
+    std::size_t new_index;
+    explicit PastePlugin(const nlohmann::json& payload)
+        : clipboard_id(payload.at("clipboardId").get<std::string>()),
+          track_id(payload.at("trackId").get<std::uint32_t>()),
+          new_index(payload.at("newIndex").get<std::size_t>()) {}
+};
+
+struct DuplicatePlugin {
+    std::uint32_t instance_id, track_id;
+    std::size_t new_index;
+    explicit DuplicatePlugin(const nlohmann::json& payload)
+        : instance_id(payload.at("instanceId").get<std::uint32_t>()),
+          track_id(payload.at("trackId").get<std::uint32_t>()),
+          new_index(payload.at("newIndex").get<std::size_t>()) {}
+};
+
 struct Bypass {
     std::uint32_t instance_id;
     bool bypassed;

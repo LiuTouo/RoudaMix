@@ -1331,6 +1331,115 @@
               "$ref": "#/$defs/u64"
             },
             "kind": {
+              "const": "copy_plugin"
+            },
+            "payload": {
+              "type": "object",
+              "required": [
+                "instanceId"
+              ],
+              "properties": {
+                "instanceId": {
+                  "$ref": "#/$defs/u32"
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "protocolVersion",
+            "id",
+            "kind",
+            "payload"
+          ],
+          "properties": {
+            "protocolVersion": {
+              "const": 2
+            },
+            "id": {
+              "$ref": "#/$defs/u64"
+            },
+            "kind": {
+              "const": "paste_plugin"
+            },
+            "payload": {
+              "type": "object",
+              "required": [
+                "clipboardId",
+                "trackId",
+                "newIndex"
+              ],
+              "properties": {
+                "clipboardId": {
+                  "type": "string"
+                },
+                "trackId": {
+                  "$ref": "#/$defs/u32"
+                },
+                "newIndex": {
+                  "$ref": "#/$defs/u32"
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "protocolVersion",
+            "id",
+            "kind",
+            "payload"
+          ],
+          "properties": {
+            "protocolVersion": {
+              "const": 2
+            },
+            "id": {
+              "$ref": "#/$defs/u64"
+            },
+            "kind": {
+              "const": "duplicate_plugin"
+            },
+            "payload": {
+              "type": "object",
+              "required": [
+                "instanceId",
+                "trackId",
+                "newIndex"
+              ],
+              "properties": {
+                "instanceId": {
+                  "$ref": "#/$defs/u32"
+                },
+                "trackId": {
+                  "$ref": "#/$defs/u32"
+                },
+                "newIndex": {
+                  "$ref": "#/$defs/u32"
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "protocolVersion",
+            "id",
+            "kind",
+            "payload"
+          ],
+          "properties": {
+            "protocolVersion": {
+              "const": 2
+            },
+            "id": {
+              "$ref": "#/$defs/u64"
+            },
+            "kind": {
               "const": "remove_plugin"
             },
             "payload": {

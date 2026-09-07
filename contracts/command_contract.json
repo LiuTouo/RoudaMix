@@ -472,6 +472,58 @@
       "errors": ["plugin_load_failed"]
     },
     {
+      "kind": "copy_plugin",
+      "payload": {
+        "type": "object", "required": ["instanceId"],
+        "properties": { "instanceId": { "$ref": "#/definitions/u32" } }
+      },
+      "result": {
+        "type": "object", "required": ["clipboardId", "name"],
+        "properties": { "clipboardId": { "type": "string" }, "name": { "type": "string" } }
+      },
+      "errors": ["plugin_not_found", "plugin_state_failed"]
+    },
+    {
+      "kind": "paste_plugin",
+      "payload": {
+        "type": "object", "required": ["clipboardId", "trackId", "newIndex"],
+        "properties": {
+          "clipboardId": { "type": "string" },
+          "trackId": { "$ref": "#/definitions/u32" },
+          "newIndex": { "$ref": "#/definitions/u32" }
+        }
+      },
+      "result": {
+        "type": "object", "required": ["instanceId", "trackId", "tracks"],
+        "properties": {
+          "instanceId": { "$ref": "#/definitions/u32" },
+          "trackId": { "$ref": "#/definitions/u32" },
+          "tracks": { "$ref": "#/definitions/trackArray" }
+        }
+      },
+      "errors": ["bad_command", "track_not_found", "plugin_load_failed", "plugin_state_failed"]
+    },
+    {
+      "kind": "duplicate_plugin",
+      "payload": {
+        "type": "object", "required": ["instanceId", "trackId", "newIndex"],
+        "properties": {
+          "instanceId": { "$ref": "#/definitions/u32" },
+          "trackId": { "$ref": "#/definitions/u32" },
+          "newIndex": { "$ref": "#/definitions/u32" }
+        }
+      },
+      "result": {
+        "type": "object", "required": ["instanceId", "trackId", "tracks"],
+        "properties": {
+          "instanceId": { "$ref": "#/definitions/u32" },
+          "trackId": { "$ref": "#/definitions/u32" },
+          "tracks": { "$ref": "#/definitions/trackArray" }
+        }
+      },
+      "errors": ["bad_command", "track_not_found", "plugin_not_found", "plugin_load_failed", "plugin_state_failed"]
+    },
+    {
       "kind": "remove_plugin",
       "payload": {
         "type": "object",

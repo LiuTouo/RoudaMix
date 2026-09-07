@@ -62,6 +62,7 @@ Router::~Router() { shutdown(); }
 
 void Router::connect(std::uint64_t generation, FrameSink sink) {
     std::lock_guard<std::mutex> engine_lock(engine_mutex_);
+    plugin_clipboard_.reset();
     nlohmann::json last_scan;
     {
         std::lock_guard<std::mutex> scan_lock(scan_mutex_);
@@ -217,6 +218,9 @@ const std::unordered_map<std::string, Router::Route>& Router::routes() {
         {"add_plugin", &Router::route<AddPluginRequest, &Router::handle_add_plugin>},
         {"remove_plugin", &Router::route<InstanceRequest, &Router::handle_remove_plugin>},
         {"move_plugin", &Router::route<MovePluginRequest, &Router::handle_move_plugin>},
+        {"copy_plugin", &Router::route<InstanceRequest, &Router::handle_copy_plugin>},
+        {"paste_plugin", &Router::route<PastePluginRequest, &Router::handle_paste_plugin>},
+        {"duplicate_plugin", &Router::route<DuplicatePluginRequest, &Router::handle_duplicate_plugin>},
         {"set_bypass", &Router::route<BypassRequest, &Router::handle_set_bypass>},
         {"set_monitor_bypass", &Router::route<BypassRequest, &Router::handle_set_monitor_bypass>},
         {"retry_plugin", &Router::route<RetryPluginRequest, &Router::handle_retry_plugin>},
@@ -642,6 +646,42 @@ Router::Outcome Router::handle_remove_plugin(const InstanceRequest& request) {
     return success({{"tracks", session::tracks_json(engine_)}}, Effect::kDirty);
 }
 
+Router::Outcome Router::handle_copy_plugin(const InstanceRequest& request) {
+    PluginSnapshot snapshot;
+    if (auto fail = engine_.capture_plugin(request.instance_id, snapshot))
+        return failure(std::move(*fail));
+    plugin_clipboard_ = std::move(snapshot);
+    ++clipboard_sequence_;
+    return success({{"clipboardId", std::to_string(clipboard_sequence_)},
+                    {"name", plugin_clipboard_->name}});
+}
+
+Router::Outcome Router::insert_plugin_copy(const PluginSnapshot& snapshot,
+                                           std::uint32_t track_id, std::size_t index) {
+    std::string error;
+    if (session::preflight_plugin(engine_, snapshot.module_path, snapshot.class_id, error) !=
+        sandbox::PreflightFailure::kNone)
+        return failure(Err::kPluginLoadFailed, std::move(error));
+    std::uint32_t instance_id{};
+    if (auto fail = engine_.insert_plugin_snapshot(snapshot, track_id, index, instance_id))
+        return failure(std::move(*fail));
+    return success({{"instanceId", instance_id}, {"trackId", track_id},
+                    {"tracks", session::tracks_json(engine_)}}, Effect::kDirty);
+}
+
+Router::Outcome Router::handle_paste_plugin(const PastePluginRequest& request) {
+    if (!plugin_clipboard_ || request.clipboard_id != std::to_string(clipboard_sequence_))
+        return failure(Err::kBadCommand, "plugin clipboard is empty or expired");
+    return insert_plugin_copy(*plugin_clipboard_, request.track_id, request.new_index);
+}
+
+Router::Outcome Router::handle_duplicate_plugin(const DuplicatePluginRequest& request) {
+    PluginSnapshot snapshot;
+    if (auto fail = engine_.capture_plugin(request.instance_id, snapshot))
+        return failure(std::move(*fail));
+    return insert_plugin_copy(snapshot, request.track_id, request.new_index);
+}
+
 Router::Outcome Router::handle_move_plugin(const MovePluginRequest& request) {
     if (auto fail = engine_.move_plugin(request.instance_id, request.new_index))
         return failure(std::move(*fail));
@@ -791,6 +831,7 @@ Router::Outcome Router::handle_save_session(const SaveSessionRequest& request) {
 }
 
 Router::Outcome Router::handle_load_session(const LoadSessionRequest& request) {
+    plugin_clipboard_.reset();
     nlohmann::json applied;
     if (auto fail = session::load(engine_, request.path, applied))
         return failure(std::move(*fail));

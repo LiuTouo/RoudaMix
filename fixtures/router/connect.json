@@ -6,7 +6,7 @@
       "payload": {
         "epoch": 0,
         "engineVersion": "0.1.0",
-        "capabilities": ["pluginLatencyPdcV1"],
+        "capabilities": ["pluginLatencyPdcV1", "pluginCopyV1"],
         "telemetryStrips": [
           {
             "id": 0,

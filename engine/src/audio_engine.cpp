@@ -1098,20 +1098,20 @@ std::optional<Failure> AudioEngine::ensure_monitor_shadows() {
                 return failure(Err::kPluginStateFailed,
                                "monitor shadow state restore failed for '" + slot.name +
                                    "': " + state_err);
-            if (device_.running() &&
+            if (stream_running() &&
                 !shadow->initialize(
                     static_cast<double>(rt_sample_rate_.load(std::memory_order_relaxed)),
-                    device_.block_size()))
+                    stream_block()))
                 return failure(Err::kPluginStateFailed,
                                "monitor shadow init failed for '" + slot.name + "': " +
                                    shadow->last_error());
             for (const auto& [id, value] : slot.param_values) {
                 shadow->set_param_normalized(id, value);
             }
-            if (device_.running() &&
+            if (stream_running() &&
                 !pre_roll_shadow(*shadow, slot.param_values,
                                  rt_sample_rate_.load(std::memory_order_relaxed),
-                                 device_.block_size(), state_err))
+                                 stream_block(), state_err))
                 return failure(Err::kPluginStateFailed,
                                "monitor shadow pre-roll failed for '" + slot.name + "': " +
                                    state_err);
@@ -1154,7 +1154,7 @@ std::optional<Failure> AudioEngine::prepare_monitor_variants() {
                                    return slot.shadow == ShadowDisposition::kCreate;
                                });
         });
-    if (device_.running() && missing) {
+    if (stream_running() && missing) {
         // 只在 RT snapshot 暫時 bypass；master/user intent 不變，失敗時不用
         // 回填整份 bypass vector，也不會污染 Session dirty 狀態。
         if (!swap_safety_graph())
@@ -1163,7 +1163,7 @@ std::optional<Failure> AudioEngine::prepare_monitor_variants() {
         Sleep(60);
     }
     if (auto fail = ensure_monitor_shadows()) {
-        if (device_.running()) (void)swap_graph();
+        if (stream_running()) (void)swap_graph();
         return fail;
     }
     return std::nullopt;
@@ -1668,6 +1668,110 @@ std::vector<AudioEngine::PluginTabInfo> AudioEngine::plugin_tabs() const {
         }
     }
     return tabs;
+}
+
+std::optional<Failure> AudioEngine::with_quiescent_plugin_graph(
+    const std::function<std::optional<Failure>()>& action, bool publish) {
+    // 在發布安全圖之前備妥回復資源；失敗收尾不得再配置正常圖。
+    const auto* active = rt_graph_.load(std::memory_order_acquire);
+    std::unique_ptr<TrackGraph> original(active ? new TrackGraph(*active) : nullptr);
+    std::vector<std::vector<RackSlot>> chains;
+    if (publish) {
+        chains.reserve(tracks_.size());
+        for (const auto& track : tracks_) chains.push_back(track.chain);
+    }
+    if (!swap_safety_graph())
+        return failure(Err::kPluginStateFailed, "cannot prepare plugin copy safety graph");
+    struct Restore {
+        AudioEngine& engine;
+        std::unique_ptr<TrackGraph>& graph;
+        std::vector<std::vector<RackSlot>>& chains;
+        bool committed{};
+        ~Restore() {
+            if (committed) return;
+            for (std::size_t i = 0; i < chains.size(); ++i)
+                engine.tracks_[i].chain.swap(chains[i]);
+            auto* safe = engine.rt_graph_.exchange(graph.release(), std::memory_order_seq_cst);
+            try { engine.retired_graphs_.retire(safe, GetTickCount64()); } catch (...) {}
+        }
+    } restore{*this, original, chains};
+    // 新 reader 只取得安全圖；觀察 reader 歸零才保證旧圖的 process 已退出。
+    const auto deadline = GetTickCount64() + 2000;
+    while (retired_graphs_.readers_active()) {
+        if (GetTickCount64() >= deadline)
+            return failure(Err::kPluginStateFailed, "timed out waiting for plugin processing to finish");
+        Sleep(1);
+    }
+    if (auto fail = action()) return fail;
+    if (publish) {
+        if (!swap_graph())
+            return failure(Err::kPluginStateFailed, "PDC plan exceeds latency or memory safety limits");
+        restore.committed = true;
+    }
+    return std::nullopt;
+}
+
+std::optional<Failure> AudioEngine::capture_plugin(std::uint32_t instance_id,
+                                                  PluginSnapshot& snapshot) {
+    const auto* slot = find_slot(instance_id);
+    if (!slot) return failure(Err::kPluginNotFound, "unknown source instanceId");
+    if (!slot->plugin || slot->availability != RackSlot::Availability::kOk)
+        return failure(Err::kPluginStateFailed, "cannot copy an unavailable plugin");
+    PluginSnapshot candidate;
+    candidate.module_path = slot->module_path;
+    candidate.class_id = slot->class_id;
+    candidate.name = slot->name;
+    candidate.params = slot->param_values;
+    candidate.bypass = slot->bypass;
+    candidate.monitor_bypass = slot->monitor_bypass;
+    auto fail = with_quiescent_plugin_graph([&]() -> std::optional<Failure> {
+        std::string error;
+        if (!slot->plugin->capture_runtime_state(candidate.state, error))
+            return failure(Err::kPluginStateFailed, std::move(error));
+        return std::nullopt;
+    }, false);
+    if (!fail) snapshot = std::move(candidate);
+    return fail;
+}
+
+std::optional<Failure> AudioEngine::insert_plugin_snapshot(const PluginSnapshot& snapshot,
+    std::uint32_t track_id, std::size_t index, std::uint32_t& instance_id) {
+    auto* track = find_track_mut(track_id);
+    if (!track) return failure(Err::kTrackNotFound, "unknown destination trackId");
+    if (index > track->chain.size()) return failure(Err::kBadCommand, "invalid plugin insertion index");
+    RackSlot slot;
+    slot.plugin = std::make_shared<Vst3Plugin>(snapshot.module_path, snapshot.class_id);
+    if (!slot.plugin->loaded()) return failure(Err::kPluginLoadFailed, slot.plugin->last_error());
+    std::string error;
+    if (!slot.plugin->restore_runtime_state(snapshot.state, error))
+        return failure(Err::kPluginStateFailed, std::move(error));
+    const auto live_rate = rt_sample_rate_.load(std::memory_order_relaxed);
+    const auto rate = live_rate > 0 ? live_rate : (last_sample_rate_ > 0 ? last_sample_rate_ : 48000u);
+    const auto block = live_rate > 0 ? stream_block() : 512u;
+    if (!slot.plugin->initialize(rate, block))
+        return failure(Err::kPluginLoadFailed, slot.plugin->last_error());
+    slot.param_values = snapshot.params;
+    for (const auto& [id, value] : slot.param_values) slot.plugin->set_param_normalized(id, value);
+    // 離線預跑亦把尚未經來源 RT 消化的宿主參數套入 DSP，避免預設值先發聲。
+    if (!pre_roll_shadow(*slot.plugin, slot.param_values, rate, block, error))
+        return failure(Err::kPluginStateFailed, std::move(error));
+    if (live_rate == 0) slot.plugin->terminate();
+    slot.instance_id = next_instance_id_++;
+    slot.module_path = snapshot.module_path;
+    slot.class_id = snapshot.class_id;
+    slot.name = snapshot.name;
+    slot.bypass = snapshot.bypass;
+    slot.monitor_bypass = snapshot.monitor_bypass;
+    refresh_latency(slot);
+    bind_latency_callback(slot);
+    const auto new_id = slot.instance_id;
+    auto fail = with_quiescent_plugin_graph([&]() -> std::optional<Failure> {
+        track->chain.insert(track->chain.begin() + index, std::move(slot));
+        // 所有舊 reader 已離開，監聽分岔可安全擷取其他插件狀態。
+        return ensure_monitor_shadows();
+    }, true);
+    if (!fail) instance_id = new_id;
+    return fail;
 }
 
 std::optional<Failure> AudioEngine::add_plugin(std::uint32_t track_id, const std::string& module_path,

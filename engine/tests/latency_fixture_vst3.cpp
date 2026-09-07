@@ -23,6 +23,7 @@ constexpr std::uint32_t kMaxLatency = 192000;
 const FUID kProcessorUid(0x52584C50, 0x44434658, 0x54555245, 0x30303031);
 const FUID kControllerUid(0x52584C43, 0x44434658, 0x54555245, 0x30303031);
 std::atomic<IComponentHandler*> g_component_handlers[16]{};
+std::atomic<std::uint32_t> g_next_opaque_state{1};
 
 bool write_exact(IBStream* stream, const void* data, int32 bytes) {
     int32 written = 0;
@@ -120,7 +121,8 @@ public:
         const std::uint8_t fail = fail_.load(std::memory_order_acquire) ? 1u : 0u;
         return write_exact(state, &latency, sizeof(latency)) &&
                        write_exact(state, &cpu, sizeof(cpu)) &&
-                       write_exact(state, &fail, sizeof(fail))
+                       write_exact(state, &fail, sizeof(fail)) &&
+                       write_exact(state, &opaque_state_, sizeof(opaque_state_))
                    ? kResultOk
                    : kResultFalse;
     }
@@ -136,6 +138,9 @@ public:
         latency_.store(latency, std::memory_order_release);
         cpu_.store(std::clamp(cpu, 0.0, 1.0), std::memory_order_release);
         fail_.store(fail != 0, std::memory_order_release);
+        // 舊 fixture preset 沒有此尾欄也可載入；新實例的預設值彼此不同。
+        std::uint32_t opaque = 0;
+        if (read_exact(state, &opaque, sizeof(opaque))) opaque_state_ = opaque;
         std::fill(ring_l_.begin(), ring_l_.end(), 0.0F);
         std::fill(ring_r_.begin(), ring_r_.end(), 0.0F);
         write_ = 0;
@@ -143,6 +148,8 @@ public:
     }
 
 private:
+    // 不暴露成參數，驗證複製有還原 component state，而非只重放 params。
+    std::uint32_t opaque_state_{g_next_opaque_state.fetch_add(1)};
     std::atomic<std::uint32_t> latency_{};
     std::atomic<double> cpu_{};
     std::atomic<bool> fail_{};
