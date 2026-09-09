@@ -51,6 +51,8 @@ MIT、MPL 標準文字來自 SPDX license-list-data；上游只有 MIT 宣告的
 
 ASIO host 輔助程式的 BSD 條款與 SDK 的 GPLv3 選擇均保留；VST3、nlohmann/json 的 MIT 及
 IBM Plex Sans TC 的 OFL 全文也包含在內。MPL 相依元件的來源隨 Rust vendor 提供。
+WebView2 SDK loader 1.0.3650.58 的 BSD 與 NOTICE 全文取自 Microsoft 官方同版本 NuGet 套件，
+這與另外安裝的 WebView2 Runtime 授權不同。
 未修改的第三方原始碼保留原版權聲明，RoudaMix 變更可依 tag 與提交記錄辨識。
 
 下載包只包含正式程式、必要 runtime／資源、授權、版本資料；不包含 `.pdb`、`.map`、

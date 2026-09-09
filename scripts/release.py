@@ -104,6 +104,10 @@ def notices():
         [("LICENSE.MIT", (ROOT / "packaging/licenses/nlohmann-json-MIT.txt").read_text())])
     add("IBM Plex Sans TC", "vendored", "OFL-1.1", "https://github.com/IBM/plex",
         [("OFL", (ROOT / "packaging/licenses/IBM-Plex-OFL.txt").read_text(encoding="utf-8"))])
+    add("Microsoft WebView2 SDK loader", "1.0.3650.58", "BSD-3-Clause",
+        "https://www.nuget.org/packages/Microsoft.Web.WebView2/1.0.3650.58",
+        [(name, (ROOT / "packaging/licenses" / name).read_text(encoding="utf-8")) for name in
+         ("Microsoft-WebView2-SDK-BSD.txt", "Microsoft-WebView2-SDK-NOTICE.txt")])
     metadata = json.loads(run("cargo", "metadata", "--locked", "--format-version", "1",
                               "--filter-platform", "x86_64-pc-windows-msvc"))
     included = {n["id"] for n in metadata["resolve"]["nodes"]}
