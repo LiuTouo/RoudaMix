@@ -9,6 +9,7 @@ test('English chapters keep their key result visible and support orientation cha
   for (let stage = 0; stage < 7; stage++) {
     await page.locator('.chapter-nav a').nth(stage).click();
     await expect(page.locator('.scene')).toHaveAttribute('data-stage', String(stage));
+    await page.locator('.scene-presentation').evaluate(async element => { await Promise.allSettled(element.getAnimations().map(animation => animation.finished)); });
     const key = stage === 1 ? '.settings-card' : stage === 2 ? '.plugin-slot' : stage === 3 || stage === 4 ? '.output-result' : stage > 4 ? '.destination-app' : '.track-label';
     for (const locator of await page.locator(key).all()) {
       const box = await locator.boundingBox();
@@ -27,17 +28,22 @@ test('English chapters keep their key result visible and support orientation cha
   await expect(page.locator('.scene')).toHaveAttribute('data-stage', '4');
 });
 
-test('desktop wheel settles without a second scrub delay and cursor reports page progress', async ({ page }, info) => {
+test('desktop wheel has a short inertial tail and then settles at the intended position', async ({ page }, info) => {
   test.skip(info.project.name !== 'desktop');
   await page.goto('./');
   await page.mouse.move(600, 300);
   await expect(page.locator('.cursor')).toBeVisible();
   await page.mouse.wheel(0, 800);
-  await page.waitForTimeout(750);
+  await page.waitForTimeout(160);
+  const early = await page.evaluate(() => scrollY);
+  await page.waitForTimeout(400);
+  const tail = await page.evaluate(() => scrollY);
+  expect(tail - early).toBeGreaterThan(100);
+  expect(tail).toBeLessThan(795);
+  await page.waitForTimeout(800);
   const settled = await page.evaluate(() => scrollY);
-  expect(settled).toBeGreaterThan(770);
-  await page.waitForTimeout(150);
-  expect(Math.abs(await page.evaluate(() => scrollY) - settled)).toBeLessThan(10);
+  expect(settled).toBeGreaterThan(790);
+  expect(settled).toBeLessThan(805);
   const progress = await page.locator('.cursor').getAttribute('style');
   expect(progress).not.toContain('--page-progress:0deg');
 });

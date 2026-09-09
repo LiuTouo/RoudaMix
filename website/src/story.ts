@@ -1,5 +1,5 @@
 export const chapters = ['open', 'input', 'plugin', 'route', 'listen', 'obs', 'voice'] as const;
-export const motion = { scrollViewports: 8, smoothingSeconds: 0.7, crossfadeSeconds: 0.06 };
+export const motion = { scrollViewports: 8, smoothingSeconds: 1.2, crossfadeSeconds: 0.06 };
 
 export function storyState(progress: number) {
   const p = Math.max(0, Math.min(1, Number.isFinite(progress) ? progress : 0));

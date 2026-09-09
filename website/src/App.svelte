@@ -10,6 +10,7 @@
   import { chapters, chapterProgress, storyState, motion } from './story';
   import { publication } from './config';
   import { chooseMotion, prefersStaticSite, readMotionPreference } from './motionPreference';
+  import { installPanelStack } from './panelStack';
 
   const locale: Locale = /\/en\/?$/.test(location.pathname) ? 'en' : 'zh';
   const t = content[locale];
@@ -23,6 +24,8 @@
   let cursorActive = $state(false);
   let cursorVisible = $state(false);
   let currentSection = $state('top');
+  let chapterCovered = $state(false);
+  let storyCovered = $state(false);
   let storyElement: HTMLElement;
   let cursorElement: HTMLDivElement;
   let lenis: Lenis | undefined;
@@ -45,9 +48,9 @@
     const direction = stage >= lastCopyStage ? 1 : -1;
     lastCopyStage = stage;
     const animations = Array.from(node.children).filter(element => !element.classList.contains('sr-only')).map((element, index) => element.animate([
-      { opacity: 0, transform: `translateY(${direction * 28}px)`, filter: 'blur(4px)' },
+      { opacity: 0, transform: `translateY(${direction * 64}px)`, filter: 'blur(4px)' },
       { opacity: 1, transform: 'translateY(0)', filter: 'blur(0px)' },
-    ], { duration: 600, delay: index * 55, easing: 'cubic-bezier(.22,1,.36,1)', fill: 'backwards' }));
+    ], { duration: 820, delay: index * 45, easing: 'cubic-bezier(.22,1,.36,1)', fill: 'backwards' }));
     return () => animations.forEach(animation => animation.cancel());
   });
 
@@ -58,7 +61,8 @@
     ++navigationVersion;
     const requestVersion = navigationVersion;
     latestNavigation = id;
-    let target = element.getBoundingClientRect().top + window.scrollY - 84;
+    const anchor = document.getElementById(`${id}-start`) ?? element;
+    let target = anchor.getBoundingClientRect().top + window.scrollY - 84;
     if (index >= 0 && !reduced && trigger) target = trigger.start + chapterProgress(index) * (trigger.end - trigger.start);
     if (id === 'top') target = 0;
     navigationTween?.kill();
@@ -106,25 +110,29 @@
         revealObserver.unobserve(entry.target);
       }
     }, { threshold: 0.08 });
-    document.querySelectorAll('.section-heading,.guide-steps article,.download,.faq details').forEach(element => revealObserver.observe(element));
+    document.querySelectorAll('.section-heading,.guide-steps article,.download h2,.download .lead,.download-actions,.faq details').forEach(element => revealObserver.observe(element));
+    const disposeStack = installPanelStack(Array.from(document.querySelectorAll<HTMLElement>('.stack-surface')));
     media.add({ all: '(min-width: 0px)', desktop: '(hover: hover) and (pointer: fine)', reduce: '(prefers-reduced-motion: reduce)' }, (context) => {
       reduced = prefersStaticSite();
       document.documentElement.dataset.motion = reduced ? 'reduced' : 'full';
       if (!reduced && context.conditions?.desktop) {
-        lenis = new Lenis({ duration: motion.smoothingSeconds, smoothWheel: true, syncTouch: false });
+        lenis = new Lenis({ duration: motion.smoothingSeconds, easing: t => 1 - Math.pow(1 - t, 3), smoothWheel: true, syncTouch: false });
         lenis.on('scroll', ScrollTrigger.update);
         gsap.ticker.lagSmoothing(0);
       }
       const frame = (time: number) => { lenis?.raf(time * 1000); };
       gsap.ticker.add(frame);
       // CSS owns sticky layout; ScrollTrigger only reads a deterministic 0–1 clock.
-      trigger = ScrollTrigger.create({ trigger: storyElement, start: 'top top', end: 'bottom bottom', onUpdate: self => { progress = self.progress; } });
+      // Numeric bounds stay tied to normal flow even while the story panel is pinned.
+      trigger = ScrollTrigger.create({ trigger: storyElement, start: () => 0, end: () => Math.max(1, storyElement.offsetHeight - innerHeight), onUpdate: self => { progress = self.progress; } });
       return () => { gsap.ticker.remove(frame); lenis?.destroy(); lenis = undefined; trigger?.kill(); };
     });
     const updatePage = () => {
       pageProgress = Math.max(0, Math.min(1, window.scrollY / Math.max(1, document.documentElement.scrollHeight - innerHeight)));
       const guide = document.getElementById('guide')!.getBoundingClientRect().top;
       const download = document.getElementById('download')!.getBoundingClientRect().top;
+      chapterCovered = guide < innerHeight;
+      storyCovered = guide <= 88;
       currentSection = download < innerHeight * 0.5 ? 'download' : guide < innerHeight * 0.5 ? 'guide' : window.scrollY > 60 ? 'story' : 'top';
       if (reduced && currentSection === 'story') {
         const active = chapters.findLastIndex(id => document.getElementById(id)!.getBoundingClientRect().top < innerHeight * 0.5);
@@ -173,6 +181,7 @@
       cancelAnimationFrame(ready); clearTimeout(resizeTimer); media.revert();
       navigationTween?.kill();
       revealObserver.disconnect(); reveals.forEach(animation => animation.cancel());
+      disposeStack();
       window.removeEventListener('wheel', interruptScroll); window.removeEventListener('touchstart', interruptScroll); window.removeEventListener('keydown', interruptScroll);
       window.removeEventListener('orientationchange', rememberOrientation);
       window.removeEventListener('scroll', updatePage); window.removeEventListener('resize', resize); window.removeEventListener('pointermove', pointer); document.documentElement.removeEventListener('pointerleave', leave); window.removeEventListener('hashchange', hash);
@@ -193,7 +202,7 @@
 </header>
 
 <main id="top" tabindex="-1" class:reduced>
-  <section class="story" id="story" bind:this={storyElement} style={`--scroll-vh:${motion.scrollViewports * 100}svh`} aria-label={t.chapterLabel}>
+  <section class="story stack-surface" id="story" bind:this={storyElement} style={`--scroll-vh:${motion.scrollViewports * 100}svh`} aria-label={t.chapterLabel}>
     {#if !reduced}
       <div class="story-sticky">
         <div class="ambient-grid" aria-hidden="true"></div>
@@ -214,7 +223,7 @@
             {/if}
             <span class="sr-only" id="story-heading" tabindex="-1">{t.scenes[sceneState.stage][0]}</span>
           </div>
-          <Scene {progress} {locale} />
+          <Scene {progress} {locale} covered={storyCovered} />
         </div>
         <div class="story-bottom"><span class="scroll-instruction"><span aria-hidden="true">↓</span>{t.scroll}</span><a href="#guide" onclick={(event) => { event.preventDefault(); navigateTo('guide'); }}>{t.skip} <span aria-hidden="true">↘</span></a></div>
       </div>
@@ -224,23 +233,26 @@
     {/if}
   </section>
 
-  <nav class="chapter-nav" class:out-of-story={currentSection === 'guide' || currentSection === 'download'} aria-label={t.chapterLabel}>
+  <nav class="chapter-nav" class:out-of-story={chapterCovered} aria-label={t.chapterLabel}>
     {#each chapters as id, index}<a href={`#${id}`} aria-label={`${index + 1}. ${t.scenes[index][2]}`} aria-current={sceneState.stage === index ? 'step' : undefined} onclick={(event) => { event.preventDefault(); navigateTo(id); }}><span class="mono">0{index + 1}</span><span class="chapter-name">{t.scenes[index][2]}</span><i style={`--fill:${sceneState.stage > index ? 1 : sceneState.stage === index ? sceneState.local : 0}`}></i></a>{/each}
   </nav>
 
-  <section class="guide section-wrap" id="guide" tabindex="-1">
+  <span id="guide-start" class="section-anchor" aria-hidden="true"></span>
+  <section class="guide section-wrap stack-surface cover-panel" id="guide" tabindex="-1">
     <div class="section-heading"><p class="eyebrow">{t.guideLabel}</p><h2>{t.guideTitle}</h2><p class="lead">{t.guideIntro}</p></div>
     <div class="guide-steps">{#each t.steps as step, index}<article><span class="step-number mono">0{index + 1}</span><div><h3>{step[0]}</h3><p>{step[1]}</p>{#if index === 4}<a class="text-link" href="https://vb-audio.com/Cable/">VB-Audio / VB-CABLE ↗</a>{/if}</div></article>{/each}</div>
   </section>
 
-  <section class="download section-wrap" id="download" tabindex="-1">
+  <span id="download-start" class="section-anchor" aria-hidden="true"></span>
+  <section class="download section-wrap stack-surface cover-panel" id="download" tabindex="-1">
     <div class="download-top"><span class="eyebrow">MAKE IT YOUR MIX</span><span class="mono">ROUDAMIX / WINDOWS</span></div>
     <h2>{t.downloadTitle}</h2><p class="lead">{t.downloadBody}</p>
     <div class="download-actions">{#if publication.release}<a class="button primary" href={publication.release.url}>{t.nav[2]} v{publication.release.version} ↗</a>{:else}<p class="release-pending"><span class="live-dot"></span>{t.availability}</p>{/if}<a class="text-link" href={publication.repository}>{t.github} ↗</a></div>
     <p class="requirements">{t.requirements}</p>
   </section>
 
-  <section class="faq section-wrap"><p class="eyebrow">GOOD TO KNOW / FAQ</p><h2>{t.faqTitle}</h2><div>{#each t.faq as item}<details><summary>{item[0]}<span aria-hidden="true">＋</span></summary><p>{item[1]}</p></details>{/each}</div></section>
+  <span id="faq-start" class="section-anchor" aria-hidden="true"></span>
+  <section class="faq section-wrap stack-surface cover-panel" id="faq"><p class="eyebrow">GOOD TO KNOW / FAQ</p><h2>{t.faqTitle}</h2><div>{#each t.faq as item}<details><summary>{item[0]}<span aria-hidden="true">＋</span></summary><p>{item[1]}</p></details>{/each}</div></section>
 </main>
 
 <footer class="section-wrap"><div><a class="brand" href="#top" onclick={(event) => { event.preventDefault(); navigateTo('top'); }}><img src={`${import.meta.env.BASE_URL}brand.png`} alt="" />RoudaMix.</a><p>{t.footer}</p></div><span class="mono">GPL-3.0-only · 2026</span><button class="motion-toggle" onclick={() => chooseMotion(reduced ? 'full' : 'reduced')}>{locale === 'zh' ? (reduced ? '開啟動畫' : '靜態閱讀') : (reduced ? 'Enable motion' : 'Static reading')}</button><a href="#top" onclick={(event) => { event.preventDefault(); navigateTo('top'); }}>{t.back} ↑</a></footer>

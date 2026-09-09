@@ -1,0 +1,9 @@
+.section-anchor{display:block;height:0;pointer-events:none}
+html[data-motion='full'] .stack-surface{position:sticky;top:var(--stack-top,0px)}
+.story.stack-surface{z-index:1;background-color:#090b12}
+.cover-panel{width:100%;max-width:none;min-height:100svh;margin-inline:0;isolation:isolate;background-color:#10121c;padding-inline:max(var(--space),calc((100% - 1440px)/2 + var(--space)));box-shadow:0 -30px 70px #0008;border-top:1px solid #514862}
+.guide.cover-panel{z-index:2;background-color:#10121c}
+.download.cover-panel{z-index:3;background-color:#171320;display:flex;flex-direction:column;justify-content:center}
+.faq.cover-panel{z-index:4;background-color:#0e141b;align-content:center}
+footer.section-wrap{position:relative;z-index:5;background:#090b12}
+html[data-motion='reduced'] .cover-panel{min-height:0;box-shadow:none}
