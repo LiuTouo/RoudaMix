@@ -3,8 +3,9 @@
   import { workflowMotion } from './workflowMotion';
   import { content, type Locale } from './content';
   import MotionPointer from './MotionPointer.svelte';
-  let { progress, locale, staticView = false }: { progress: number; locale: Locale; staticView?: boolean } = $props();
-  const m = $derived(workflowMotion(progress));
+  import { heroMotion } from './heroMotion';
+  let { progress, locale, staticView = false, paused = false, overviewPhase }: { progress: number; locale: Locale; staticView?: boolean; paused?: boolean; overviewPhase?: number } = $props();
+  const m = $derived(overviewPhase === undefined ? workflowMotion(progress) : heroMotion(overviewPhase));
   const t = $derived(content[locale]);
   const zh = $derived(locale === 'zh');
   const signalBars = Array.from({ length: 37 }, (_, i) => 12 + Math.abs(Math.sin(i * 2.7) * Math.cos(i * 0.63)) * 62);
@@ -20,7 +21,7 @@
   });
 </script>
 
-<div bind:this={root} class="scene animated-workflow" class:static-view={staticView} class:started={m.stage > 0} data-stage={m.stage}
+<div bind:this={root} class="scene animated-workflow" class:demo-paused={paused} class:static-view={staticView} class:started={m.stage > 0} data-stage={m.stage}
   style={`--signal-offset:${-progress * 1800}px; --launch-scale:${0.82 + m.launch * 0.18}; --launch-rotate:${(1 - m.launch) * -5}deg; --focus:${m.focus}; --monitor-route:${m.monitorRoute}; --stream-route:${m.streamRoute}; --bypass:${m.bypassMix}; --input-reveal:${m.inputReveal}`}>
   <div class="signal-orbit" aria-hidden="true"></div>
   <div class="source-cloud" aria-hidden="true">

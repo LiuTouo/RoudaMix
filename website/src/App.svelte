@@ -4,7 +4,7 @@
   import { ScrollTrigger } from 'gsap/ScrollTrigger';
   import Lenis from 'lenis';
   import 'lenis/dist/lenis.css';
-  import Scene from './Scene.svelte';
+  import Scene from './ScenePlayback.svelte';
   import AudioDemo from './AudioDemo.svelte';
   import { content, type Locale } from './content';
   import { chapters, chapterProgress, storyState, motion } from './story';
@@ -24,10 +24,28 @@
   let cursorElement: HTMLDivElement;
   let lenis: Lenis | undefined;
   let trigger: ScrollTrigger | undefined;
+  let navigationTween: gsap.core.Tween | undefined;
+  let navigationDestination: string | null = null;
+  let copyElement = $state<HTMLDivElement>();
+  let lastCopyStage = -1;
   let navigationVersion = 0;
   let latestNavigation = 'top';
   const sceneState = $derived(storyState(progress));
+  const chapterIndex = $derived(sceneState.stage);
   const languageHash = $derived(currentSection === 'story' ? chapters[sceneState.stage] : currentSection);
+
+  $effect(() => {
+    const stage = chapterIndex;
+    const node = copyElement;
+    if (!node || reduced) return;
+    const direction = stage >= lastCopyStage ? 1 : -1;
+    lastCopyStage = stage;
+    const animations = Array.from(node.children).filter(element => !element.classList.contains('sr-only')).map((element, index) => element.animate([
+      { opacity: 0, transform: `translateY(${direction * 28}px)`, filter: 'blur(4px)' },
+      { opacity: 1, transform: 'translateY(0)', filter: 'blur(0px)' },
+    ], { duration: 600, delay: index * 55, easing: 'cubic-bezier(.22,1,.36,1)', fill: 'backwards' }));
+    return () => animations.forEach(animation => animation.cancel());
+  });
 
   function navigateTo(id: string, updateHistory = true) {
     const index = chapters.indexOf(id as typeof chapters[number]);
@@ -38,17 +56,41 @@
     let target = element.getBoundingClientRect().top + window.scrollY - 84;
     if (index >= 0 && !reduced && trigger) target = trigger.start + chapterProgress(index) * (trigger.end - trigger.start);
     if (id === 'top') target = 0;
-    if (lenis) lenis.scrollTo(target, { immediate: true });
-    else window.scrollTo({ top: target, behavior: 'instant' });
-    ScrollTrigger.update();
+    navigationTween?.kill();
+    navigationDestination = updateHistory && !reduced ? id : null;
+    window.dispatchEvent(new Event('roudamix:navigate'));
     if (updateHistory) history.pushState(null, '', `#${id}`);
     const focus = index >= 0 && !reduced ? document.getElementById('story-heading') : element;
-    focus?.focus({ preventScroll: true });
+    const move = (position: number) => {
+      if (lenis) lenis.scrollTo(position, { immediate: true });
+      else window.scrollTo({ top: position, behavior: 'instant' });
+      ScrollTrigger.update();
+    };
+    const arrive = () => { navigationDestination = null; focus?.focus({ preventScroll: true }); window.dispatchEvent(new Event('roudamix:chapter-ready')); };
+    if (updateHistory && !reduced) {
+      const scroll = { position: window.scrollY };
+      navigationTween = gsap.to(scroll, { position: target, duration: Math.min(1.25, 0.65 + Math.abs(target - scroll.position) / 14000), ease: 'power3.inOut', onUpdate: () => move(scroll.position), onComplete: arrive });
+    } else { move(target); arrive(); }
   }
 
   onMount(() => {
     gsap.registerPlugin(ScrollTrigger);
     const media = gsap.matchMedia();
+    const interruptScroll = () => { navigationTween?.kill(); navigationDestination = null; };
+    window.addEventListener('wheel', interruptScroll, { passive: true });
+    window.addEventListener('touchstart', interruptScroll, { passive: true });
+    window.addEventListener('keydown', interruptScroll);
+    const reveals: Animation[] = [];
+    const revealObserver = new IntersectionObserver(entries => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        if (!matchMedia('(prefers-reduced-motion: reduce)').matches) reveals.push(entry.target.animate([
+          { opacity: 0, transform: 'translateY(35px)' }, { opacity: 1, transform: 'translateY(0)' },
+        ], { duration: 750, easing: 'cubic-bezier(.22,1,.36,1)' }));
+        revealObserver.unobserve(entry.target);
+      }
+    }, { threshold: 0.08 });
+    document.querySelectorAll('.section-heading,.guide-steps article,.download,.faq details').forEach(element => revealObserver.observe(element));
     media.add({ all: '(min-width: 0px)', desktop: '(hover: hover) and (pointer: fine)', reduce: '(prefers-reduced-motion: reduce)' }, (context) => {
       reduced = !!context.conditions?.reduce;
       if (!reduced && context.conditions?.desktop) {
@@ -87,7 +129,8 @@
       if (resizeChapter === null) {
         resizeChapter = sceneState.stage;
         resizingStory = currentSection === 'story';
-        resizeNavigationVersion = navigationVersion;
+        // An in-flight page turn must finish at its destination after resize.
+        resizeNavigationVersion = navigationDestination !== null ? navigationVersion - 1 : navigationVersion;
       }
     };
     const resize = () => {
@@ -111,6 +154,9 @@
     const ready = requestAnimationFrame(() => { ScrollTrigger.refresh(); hash(); updatePage(); });
     return () => {
       cancelAnimationFrame(ready); clearTimeout(resizeTimer); media.revert();
+      navigationTween?.kill();
+      revealObserver.disconnect(); reveals.forEach(animation => animation.cancel());
+      window.removeEventListener('wheel', interruptScroll); window.removeEventListener('touchstart', interruptScroll); window.removeEventListener('keydown', interruptScroll);
       window.removeEventListener('orientationchange', rememberOrientation);
       window.removeEventListener('scroll', updatePage); window.removeEventListener('resize', resize); window.removeEventListener('pointermove', pointer); document.documentElement.removeEventListener('pointerleave', leave); window.removeEventListener('hashchange', hash);
     };
@@ -134,7 +180,7 @@
       <div class="story-sticky">
         <div class="ambient-grid" aria-hidden="true"></div>
         <div class="story-layout">
-          <div class="story-copy" data-chapter={chapters[sceneState.stage]}>
+          <div class="story-copy" bind:this={copyElement} data-chapter={chapters[sceneState.stage]}>
             {#if sceneState.stage === 0}
               <p class="eyebrow"><span class="live-dot"></span>{t.eyebrow}</p>
               <h1>{t.hero[0]}<br /><span>{t.hero[1]}</span></h1>

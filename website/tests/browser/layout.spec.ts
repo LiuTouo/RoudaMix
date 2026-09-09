@@ -1,5 +1,9 @@
 import { test, expect } from '@playwright/test';
 
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('roudamix-demo-mode', 'scrub'));
+});
+
 test('English chapters keep their key result visible and support orientation changes', async ({ page }, info) => {
   await page.goto('en/');
   for (let stage = 0; stage < 7; stage++) {

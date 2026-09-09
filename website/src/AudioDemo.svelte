@@ -44,7 +44,8 @@
     const hide = () => { if (document.hidden) pauseDemo(); };
     document.addEventListener('visibilitychange', hide);
     window.addEventListener('pagehide', pauseDemo);
-    return () => { ++request; observer.disconnect(); clearInterval(timer); player.destroy(); document.removeEventListener('visibilitychange', hide); window.removeEventListener('pagehide', pauseDemo); };
+    window.addEventListener('roudamix:navigate', pauseDemo);
+    return () => { ++request; observer.disconnect(); clearInterval(timer); player.destroy(); document.removeEventListener('visibilitychange', hide); window.removeEventListener('pagehide', pauseDemo); window.removeEventListener('roudamix:navigate', pauseDemo); };
   });
 </script>
 
