@@ -1,5 +1,17 @@
 import { test, expect, type Page } from '@playwright/test';
 
+async function pressAudioControl(page: Page, name: string) {
+  const control = page.getByRole('button', { name, exact: true });
+  await expect(control).toBeVisible();
+  await expect(control).toBeEnabled();
+  const box = (await control.boundingBox())!;
+  expect(box.y).toBeGreaterThanOrEqual(0);
+  expect(box.y + box.height).toBeLessThanOrEqual(page.viewportSize()!.height);
+  // This is a scroll-controlled presentation. Protocol scrollIntoView can change
+  // the chapter even for a visible sticky descendant; click where the user does.
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+}
+
 // Generated test-only PCM; never copied to public/ or advertised as a demo.
 function sample(seconds = 3) {
   const rate = 8000;
@@ -35,18 +47,18 @@ test('real Web Audio clock stays aligned through switch, pause, resume and chapt
   await prepare(page);
   const events = () => page.evaluate(() => (window as unknown as { audioEvents: { starts: number[][]; stops: number } }).audioEvents);
   expect((await events()).starts).toEqual([]);
-  await page.getByRole('button', { name: 'Play sample', exact: true }).click();
+  await pressAudioControl(page, 'Play sample');
   await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
   await expect.poll(async () => Number(await page.locator('.audio-demo progress').getAttribute('value'))).toBeGreaterThan(0.15);
   const starts = (await events()).starts;
   expect(starts).toHaveLength(2);
   expect(starts[0]).toEqual(starts[1]);
-  await page.getByRole('button', { name: 'Stream', exact: true }).click();
+  await pressAudioControl(page, 'Stream');
   await expect(page.getByRole('button', { name: 'Stream', exact: true })).toHaveAttribute('aria-pressed', 'true');
   expect((await events()).starts).toHaveLength(2);
-  await page.getByRole('button', { name: 'Pause', exact: true }).click();
+  await pressAudioControl(page, 'Pause');
   expect((await events()).stops).toBe(2);
-  await page.getByRole('button', { name: 'Play sample', exact: true }).click();
+  await pressAudioControl(page, 'Play sample');
   await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
   const resumed = (await events()).starts;
   expect(resumed[2]).toEqual(resumed[3]);
@@ -57,7 +69,7 @@ test('real Web Audio clock stays aligned through switch, pause, resume and chapt
 
 test('failed audio leaves a readable scene and retry control', async ({ page }) => {
   await prepare(page, true);
-  await page.getByRole('button', { name: 'Play sample', exact: true }).click();
+  await pressAudioControl(page, 'Play sample');
   await expect(page.getByRole('status')).toContainText('could not load');
   await expect(page.locator('.scene-heading')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Play sample', exact: true })).toBeVisible();
@@ -69,12 +81,12 @@ test('leaving during download cancels playback; language navigation closes audio
     await new Promise(resolve => setTimeout(resolve, 350));
     await route.fulfill({ contentType: 'audio/wav', body: sample() }).catch(() => {});
   });
-  await page.getByRole('button', { name: 'Play sample', exact: true }).click();
+  await pressAudioControl(page, 'Play sample');
   await page.locator('.chapter-nav a').nth(5).click();
   await page.waitForTimeout(450);
   expect(await page.evaluate(() => (window as unknown as { audioEvents: { starts: number[][] } }).audioEvents.starts.length)).toBe(0);
   await page.locator('.chapter-nav a').nth(4).click();
-  await page.getByRole('button', { name: 'Play sample', exact: true }).click();
+  await pressAudioControl(page, 'Play sample');
   await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
   await page.locator('.language').click();
   await expect(page.locator('html')).toHaveAttribute('lang', 'zh-Hant');
