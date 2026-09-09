@@ -26,6 +26,7 @@
   let trigger: ScrollTrigger | undefined;
   let navigationTween: gsap.core.Tween | undefined;
   let navigationDestination: string | null = null;
+  let navigating = $state(false);
   let copyElement = $state<HTMLDivElement>();
   let lastCopyStage = -1;
   let navigationVersion = 0;
@@ -52,12 +53,14 @@
     const element = document.getElementById(index >= 0 && !reduced ? 'story' : id);
     if (!element) return;
     ++navigationVersion;
+    const requestVersion = navigationVersion;
     latestNavigation = id;
     let target = element.getBoundingClientRect().top + window.scrollY - 84;
     if (index >= 0 && !reduced && trigger) target = trigger.start + chapterProgress(index) * (trigger.end - trigger.start);
     if (id === 'top') target = 0;
     navigationTween?.kill();
     navigationDestination = updateHistory && !reduced ? id : null;
+    navigating = navigationDestination !== null;
     window.dispatchEvent(new Event('roudamix:navigate'));
     if (updateHistory) history.pushState(null, '', `#${id}`);
     const focus = index >= 0 && !reduced ? document.getElementById('story-heading') : element;
@@ -66,7 +69,17 @@
       else window.scrollTo({ top: position, behavior: 'instant' });
       ScrollTrigger.update();
     };
-    const arrive = () => { navigationDestination = null; focus?.focus({ preventScroll: true }); window.dispatchEvent(new Event('roudamix:chapter-ready')); };
+    const arrive = () => {
+      navigationDestination = null;
+      window.dispatchEvent(new Event('roudamix:chapter-ready'));
+      // The visible audio controls are only usable after the page and text settle.
+      const entrances = copyElement?.getAnimations({ subtree: true }) ?? [];
+      void Promise.allSettled(entrances.map(animation => animation.finished)).then(() => {
+        if (requestVersion !== navigationVersion) return;
+        navigating = false;
+        focus?.focus({ preventScroll: true });
+      });
+    };
     if (updateHistory && !reduced) {
       const scroll = { position: window.scrollY };
       navigationTween = gsap.to(scroll, { position: target, duration: Math.min(1.25, 0.65 + Math.abs(target - scroll.position) / 14000), ease: 'power3.inOut', onUpdate: () => move(scroll.position), onComplete: arrive });
@@ -76,7 +89,7 @@
   onMount(() => {
     gsap.registerPlugin(ScrollTrigger);
     const media = gsap.matchMedia();
-    const interruptScroll = () => { navigationTween?.kill(); navigationDestination = null; };
+    const interruptScroll = () => { navigationTween?.kill(); navigationDestination = null; navigating = false; };
     window.addEventListener('wheel', interruptScroll, { passive: true });
     window.addEventListener('touchstart', interruptScroll, { passive: true });
     window.addEventListener('keydown', interruptScroll);
@@ -191,7 +204,7 @@
               <p class="eyebrow"><span class="chapter-number mono">0{sceneState.stage + 1} / 07</span>{t.scenes[sceneState.stage][2]}</p>
               <h2 class="scene-heading">{t.scenes[sceneState.stage][0]}</h2>
               <p class="lead">{t.scenes[sceneState.stage][1]}</p>
-              {#if sceneState.stage === 4}<AudioDemo {locale} active={sceneState.stage === 4} />{/if}
+              {#if sceneState.stage === 4}<AudioDemo {locale} active={sceneState.stage === 4} suspended={navigating} />{/if}
               {#if sceneState.stage === 6}<a class="text-link" href="#guide" onclick={(event) => { event.preventDefault(); navigateTo('guide'); }}>{t.nav[1]} <span aria-hidden="true">↗</span></a>{/if}
             {/if}
             <span class="sr-only" id="story-heading" tabindex="-1">{t.scenes[sceneState.stage][0]}</span>

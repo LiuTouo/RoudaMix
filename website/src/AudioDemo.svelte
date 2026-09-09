@@ -3,7 +3,7 @@
   import { DualAudio } from './audio';
   import { publication } from './config';
   import { content, type Locale } from './content';
-  let { locale, active }: { locale: Locale; active: boolean } = $props();
+  let { locale, active, suspended = false }: { locale: Locale; active: boolean; suspended?: boolean } = $props();
   const player = new DualAudio();
   let root: HTMLDivElement;
   let visible = $state(false);
@@ -36,7 +36,7 @@
       if (current === request) busy = false;
     }
   }
-  $effect(() => { if (!active || !visible) pauseDemo(); });
+  $effect(() => { if (!active || !visible || suspended) pauseDemo(); });
   onMount(() => {
     const observer = new IntersectionObserver(([entry]) => { visible = entry.isIntersecting; });
     observer.observe(root);
@@ -52,9 +52,9 @@
 <div class="audio-demo" bind:this={root}>
   {#if publication.audio}
     <div class="audio-controls">
-      <button class="button small" onclick={toggleDemo}>{busy ? t.loading : playing ? t.pause : t.play}</button>
-      <button aria-pressed={selected === 0} onclick={() => { selected = 0; player.select(0); }}>{t.monitor}</button>
-      <button aria-pressed={selected === 1} onclick={() => { selected = 1; player.select(1); }}>{t.stream}</button>
+      <button class="button small" disabled={suspended} onclick={toggleDemo}>{busy ? t.loading : playing ? t.pause : t.play}</button>
+      <button disabled={suspended} aria-pressed={selected === 0} onclick={() => { selected = 0; player.select(0); }}>{t.monitor}</button>
+      <button disabled={suspended} aria-pressed={selected === 1} onclick={() => { selected = 1; player.select(1); }}>{t.stream}</button>
     </div>
     <progress aria-label={t.position} value={position} max={player.duration || 1}></progress>
     <span class="mono">{position.toFixed(1)} s</span>
