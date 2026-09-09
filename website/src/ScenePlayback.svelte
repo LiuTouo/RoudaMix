@@ -31,7 +31,7 @@
         phase = mode === 'scrub' || performance.now() < manualUntil ? next.local : 0;
         previousStage = next.stage;
         sceneAnimation?.cancel();
-        if (node && !staticView && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        if (node && !staticView && document.documentElement.dataset.motion !== 'reduced') {
           sceneAnimation = node.animate([
             { transform: `translate3d(${direction * 64}px,24px,0) scale(.94) rotateY(${direction * -7}deg)`, opacity: 0.25 },
             { transform: 'translate3d(0,0,0) scale(1) rotateY(0deg)', opacity: 1 },

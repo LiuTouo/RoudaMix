@@ -61,6 +61,8 @@ npm run test:build
 
 `prefers-reduced-motion: reduce` 改為七個可順序閱讀的靜態區塊。圖形化操作不是可操作的混音器；真實控制項均提供文字名稱，未使用原生 `title` 提示，也未新增個別 tooltip。
 
+若 Windows 或瀏覽器要求減少動態，頁首會顯示靜態模式說明與「開啟動畫」。訪客可自行開啟本站動畫，不需改動作業系統；也可從頁尾切回靜態閱讀。`?motion=full`／`?motion=reduced` 可直接指定網站模式，優先於儲存的 `roudamix-motion-preference`，最後才採用系統設定。JS 與 CSS 共用 `<html data-motion>`，避免已選擇開啟、動畫卻仍被 CSS 媒體查詢關閉。語言切換會保留明確選擇。
+
 ## 接入試聽音檔
 
 目前 `publication.audio = null`，公開頁不顯示播放按鈕、不請求音訊。測試動態產生短 PCM 訊號，只在測試 HTTP 攔截中使用，絕不打包或當作正式試聽。

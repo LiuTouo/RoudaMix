@@ -1,5 +1,11 @@
 # 工作流動畫規格
 
+## 真實 Windows 環境的動態偏好
+
+在實際 Orca / Electron 43 瀏覽器檢查公開頁面，得到 `prefers-reduced-motion: true`、7 個 `.static-chapter`、沒有 `.scene-presentation`；同機 Win32 `SPI_GETCLIENTAREAANIMATION` 回傳 false。先前無頭 Chromium 回傳 false，因此沒有重現使用者的靜態模式。這是環境差異，不能以無頭瀏覽器的預設值代表實際使用者。
+
+網站仍預設尊重系統設定，但加入明確的「開啟動畫」控制。選擇優先序為網址 `motion=full/reduced`、已儲存網站偏好、系統偏好。CSS、Svelte 呈現與 GSAP 使用同一個有效結果；不修改 Windows 設定。`tests/browser/motionPreference.spec.ts` 固定系統為 reduce，驗證明確開啟後的實際粒子座標有移動，並涵蓋語言切換、重新整理與切回靜態。
+
 ## 參考與實作方向
 
 參考 [United Carriers](https://unitedcarriers.com/) 的連續物件敘事：捲動帶動物件的位置與交接，物件在下一個處理步驟延續存在。本網站以同一個 RoudaMix 視窗、同一條音訊取代貨物，不複製參考站的品牌或素材。
