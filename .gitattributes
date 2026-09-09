@@ -1,0 +1,7 @@
+# Generated artifacts are compared byte-for-byte with the generator's LF output.
+contracts/protocol.schema.json text eol=lf
+ui/src/lib/*.generated.ts text eol=lf
+fixtures/protocol/generated-invalid-manifest.json text eol=lf
+fixtures/protocol/invalid/generated_*.json text eol=lf
+# Keep upstream legal documents verbatim, including their whitespace.
+packaging/licenses/** -whitespace

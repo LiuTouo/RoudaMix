@@ -21,6 +21,8 @@ const bridge = parseLines(
     "src-tauri/Cargo.toml",
     "--bin",
     "protocol_probe",
+    "--features",
+    "protocol-probe",
     "--",
     fixtures,
   ]).stdout,

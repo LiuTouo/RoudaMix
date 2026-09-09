@@ -1,0 +1,22 @@
+{
+  "crate:alloc-stdlib@0.2.4": ["upstream/alloc-stdlib-LICENSE.txt"],
+  "crate:defmt-parser@1.0.0": ["upstream/defmt-LICENSE-MIT.txt", "upstream/defmt-LICENSE-APACHE.txt"],
+  "crate:selectors@0.36.1": ["standard/MPL-2.0.txt"],
+  "crate:tauri-plugin@2.6.3": ["upstream/tauri-LICENSE_MIT.txt", "upstream/tauri-LICENSE_APACHE-2.0.txt"],
+  "crate:unic-char-property@0.9.0": ["upstream/unic-LICENSE-MIT.txt", "upstream/unic-LICENSE-APACHE.txt"],
+  "crate:unic-char-range@0.9.0": ["upstream/unic-LICENSE-MIT.txt", "upstream/unic-LICENSE-APACHE.txt"],
+  "crate:unic-common@0.9.0": ["upstream/unic-LICENSE-MIT.txt", "upstream/unic-LICENSE-APACHE.txt"],
+  "crate:unic-ucd-ident@0.9.0": ["upstream/unic-LICENSE-MIT.txt", "upstream/unic-LICENSE-APACHE.txt"],
+  "crate:unic-ucd-version@0.9.0": ["upstream/unic-LICENSE-MIT.txt", "upstream/unic-LICENSE-APACHE.txt"],
+  "crate:webview2-com@0.38.2": ["upstream/webview2-rs-LICENSE.txt"],
+  "crate:webview2-com-macros@0.8.1": ["upstream/webview2-rs-LICENSE.txt"],
+  "crate:webview2-com-sys@0.38.2": ["upstream/webview2-rs-LICENSE.txt"],
+  "npm:@tauri-apps/cli-win32-x64-msvc@2.11.4": ["upstream/tauri-cli-LICENSE.txt"],
+  "npm:@esbuild/win32-x64@0.25.12": ["upstream/esbuild-LICENSE.txt"],
+  "npm:@rollup/rollup-win32-x64-gnu@4.63.0": ["upstream/rollup-LICENSE.txt"],
+  "npm:@rollup/rollup-win32-x64-msvc@4.63.0": ["upstream/rollup-LICENSE.txt"],
+  "npm:is-reference@3.0.3": ["upstream/is-reference-declared-MIT.txt"],
+  "npm:locate-character@3.0.0": ["upstream/locate-character-declared-MIT.txt"],
+  "npm:saxes@6.0.0": ["upstream/saxes-LICENSE.txt"],
+  "npm:stackback@0.0.2": ["upstream/stackback-declared-MIT.txt"]
+}

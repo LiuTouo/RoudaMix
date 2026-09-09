@@ -20,6 +20,8 @@ const bridgeCodes = parseCodes(
     "src-tauri/Cargo.toml",
     "--bin",
     "protocol_probe",
+    "--features",
+    "protocol-probe",
     "--",
     "--error-codes",
   ]).stdout,

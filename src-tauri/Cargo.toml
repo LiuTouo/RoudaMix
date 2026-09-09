@@ -1,8 +1,18 @@
 [package]
 name = "roudamix-app"
+default-run = "roudamix-app"
+license = "GPL-3.0-only"
 version.workspace = true
 edition.workspace = true
 description = "RoudaMix UI bridge (Tauri 2)"
+
+[features]
+protocol-probe = []
+
+[[bin]]
+name = "protocol_probe"
+path = "src/bin/protocol_probe.rs"
+required-features = ["protocol-probe"]
 
 [lib]
 name = "roudamix_app_lib"

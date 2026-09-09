@@ -5,6 +5,9 @@
 /dist/
 /output/
 /src-tauri/WebView2Runtime/
+/.scratch/
+/.gitnexus/
+__pycache__/
 
 # Dependencies
 node_modules/
