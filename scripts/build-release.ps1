@@ -68,5 +68,6 @@ Copy-Item -LiteralPath target/release-legal/BUILD-INFO.json -Destination $artifa
 $sums = Get-ChildItem -LiteralPath $artifactRoot -File | Sort-Object Name | ForEach-Object {
     "{0}  {1}" -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name
 }
-Set-Content -LiteralPath (Join-Path $artifactRoot 'SHA256SUMS.txt') -Value $sums -Encoding ascii
+# GNU sha256sum on the Linux publishing runner treats CR as part of the filename.
+[IO.File]::WriteAllText((Join-Path $artifactRoot 'SHA256SUMS.txt'), (($sums -join "`n") + "`n"), [Text.Encoding]::ASCII)
 Write-Host "Release assets ready: $artifactRoot"
