@@ -203,7 +203,7 @@
             <p class="eyebrow"><span class="live-dot"></span>{t.eyebrow}</p>
             <h1>{t.hero[0]}<br /><span>{t.hero[1]}</span></h1>
             <p class="lead">{t.intro}</p>
-            <div class="hero-actions"><a class="button primary" href="#download" onclick={(event) => { event.preventDefault(); navigateTo('download'); }}>{t.cta}<span aria-hidden="true">↗</span></a><span class="availability">{t.availability}</span></div>
+            <div class="hero-actions"><a class="button primary" href="#download" onclick={(event) => { event.preventDefault(); navigateTo('download'); }}>{t.cta}<span aria-hidden="true">↗</span></a></div>
             <p class="platform mono">WINDOWS x64 <span>/</span> VST3 HOST <span>/</span> YOUR MIX</p>
           {:else}
             <p class="eyebrow"><span class="chapter-number mono">0{sceneState.stage + 1} / 07</span>{t.scenes[sceneState.stage][2]}</p>
@@ -234,7 +234,7 @@
   <section class="download section-wrap stack-surface cover-panel" id="download" tabindex="-1">
     <div class="download-top"><span class="eyebrow">MAKE IT YOUR MIX</span><span class="mono">ROUDAMIX / WINDOWS</span></div>
     <h2>{t.downloadTitle}</h2><p class="lead">{t.downloadBody}</p>
-    <div class="download-actions">{#if latest}<a class="button primary" href={latest.setupUrl}>{t.nav[2]} v{latest.version} ↗</a><a class="text-link" href={latest.portableUrl}>{t.portable} ↗</a>{:else}<p class="release-pending"><span class="live-dot"></span>{t.availability}</p>{/if}<a class="text-link" href={publication.repository}>{t.github} ↗</a></div>
+    <div class="download-actions">{#if latest}<a class="button primary" href={latest.setupUrl}>{t.nav[2]} v{latest.version} ↗</a><a class="text-link" href={latest.portableUrl}>{t.portable} ↗</a>{/if}<a class="text-link" href={publication.repository}>{t.github} ↗</a></div>
     <p class="requirements">{t.requirements}</p>
   </section>
 

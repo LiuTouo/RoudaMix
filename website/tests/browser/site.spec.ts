@@ -9,7 +9,6 @@ test('both language routes work on direct open and refresh; no fake controls', a
     await expect(page.locator('h1')).toBeVisible();
     await page.reload();
     await expect(page.locator('html')).toHaveAttribute('lang', route ? 'en' : 'zh-Hant');
-    await expect(page.locator('.release-pending')).toBeAttached();
     await expect(page.locator('a[download], [title], audio[autoplay]')).toHaveCount(0);
     await expect(page.locator('.download-actions a')).toHaveCount(1);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

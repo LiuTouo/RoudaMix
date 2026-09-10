@@ -87,18 +87,9 @@ audio: {
 
 ## 接入正式 Release
 
-目前 `publication.release = null`，顯示「Windows 版即將提供」。不使用現有測試 ZIP。
+下載按鈕由 `src/release.ts` 呼叫 GitHub API（`releases/latest`）自動解析最新正式版本，取出 `RoudaMix-<version>-windows-x64-setup.exe` 與 `RoudaMix-<version>-windows-x64-portable.zip` 兩個附件；副檔名須與 `.github/workflows/release.yml` 上傳的檔名一致。API 失敗或附件不齊時只顯示 GitHub 連結，不出現「即將提供」文案。
 
-正式公開 Release 完成後，填入真實版本與完整 HTTPS 下載 URL：
-
-```ts
-release: {
-  version: 'X.Y.Z',
-  url: 'https://github.com/LiuTouo/RoudaMix/releases/download/vX.Y.Z/RoudaMix-X.Y.Z-windows-x64-portable.zip',
-},
-```
-
-以上是接入格式，不能原樣當作下載網址。同步更新 `content.ts` 的準備中文案、需求與發行資訊，再以未登入瀏覽器確認附件可下載。若專案名稱或部署帳號更動，同步調整 Vite base、兩份 HTML metadata 與公開資源路徑。
+發佈新版後，以未登入瀏覽器確認附件可下載。若專案名稱或部署帳號更動，同步調整 Vite base、兩份 HTML metadata 與公開資源路徑。
 
 ## GitHub Pages
 

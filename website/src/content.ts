@@ -4,7 +4,7 @@ export const content = {
     nav: ['探索操作', '快速入門', '下載'], skip: '跳至教學', language: 'English',
     eyebrow: '為直播、創作與每一次開麥', hero: ['你的聲音，', '由你分流。'],
     intro: '把麥克風、遊戲與語音帶進同一個工作區。加上你的 VST3 外掛，分別決定自己與觀眾聽見什麼。',
-    cta: '取得 RoudaMix', explore: '跟著聲音，往下探索', availability: 'Windows 版即將提供',
+    cta: '取得 RoudaMix', explore: '跟著聲音，往下探索',
     scroll: '捲動探索 · 約 1 分鐘', signal: ['麥克風', '遊戲', '語音'],
     chapterLabel: '操作章節', demo: '操作示意 · 非執行中的程式',
     scenes: [
@@ -20,14 +20,14 @@ export const content = {
     audioSoon: '雙路試聽音檔準備中。你仍可繼續閱讀操作示意。', play: '播放試聽', pause: '暫停', audioError: '試聽載入失敗，請稍後重試；教學仍可正常閱讀。', loading: '正在載入試聽…', position: '試聽進度',
     guideLabel: 'QUICK START / 快速入門', guideTitle: '從第一次開啟，\n到第一場直播。', guideIntro: '把這份設定留在手邊。照著走，讓每一路聲音到對的地方。',
     steps: [
-      ['解壓，開啟程式', '取得正式 Windows x64 版本後，完整解壓縮，再執行 RoudaMix.exe。可攜版需要 WebView2 Evergreen Runtime；更新時保留 data 資料夾。'],
+      ['解壓，開啟程式', '下載 Windows x64 版本，完整解壓縮，再執行 RoudaMix.exe。可攜版需要 WebView2 Evergreen Runtime；更新時保留 data 資料夾。'],
       ['設定裝置與麥克風', '開啟設定 → 音訊 / Session → 裝置，選擇「系統音訊 (WASAPI)」，必要時按 Start。按「＋ Audio」，在輸入選擇麥克風。App 軌可另外選擇正在發聲的遊戲或語音程式。'],
       ['加入你的 VST3', '先安裝 Windows x64 VST3 外掛，再於 RoudaMix 掃描外掛。從音軌的外掛清單加入效果。示範的 Reverb 是用途標示，不是內建外掛名稱。'],
       ['接好監聽與串流', '在輸入軌的目的地同時選監聽與串流。監聽輸出指定耳機，延遲政策選 Low Latency；串流保留 Full PDC。若要自己略過效果，啟用該外掛的 Monitor Bypass（M）。'],
       ['安裝並設定 VB-CABLE', '從 VB-Audio 官方網站安裝 VB-CABLE，依安裝程式指示重新啟動。RoudaMix 的串流輸出指定 CABLE Input；這是虛擬線材接收聲音的一端。'],
       ['讓 OBS 收到聲音', '在 OBS 來源新增「音訊輸入擷取」，裝置選 CABLE Output。確認電平有反應，錄一小段驗證。避免同時擷取同一麥克風或重複的桌面音訊，造成疊音。Discord 則到「語音與視訊」設定輸入裝置。'],
     ],
-    downloadTitle: '下一次開麥，\n讓聲音照你的方式走。', downloadBody: '正式 Windows 版本準備中。先熟悉設定，公開版本就緒後，這裡會提供下載。',
+    downloadTitle: '下一次開麥，\n讓聲音照你的方式走。', downloadBody: '下載正式 Windows 版本，照著快速入門設定，讓每一路聲音到對的地方。',
     requirements: 'Windows 10 / 11 · x64 · WebView2', github: '查看 GitHub 專案', portable: '下載可攜版 (Portable)', back: '回到頂端',
     faqTitle: '開始之前，你可能想知道',
     faq: [
@@ -42,7 +42,7 @@ export const content = {
     nav: ['Explore', 'Quick start', 'Download'], skip: 'Skip to guide', language: '繁體中文',
     eyebrow: 'FOR STREAMERS, CREATORS & EVERY OPEN MIC', hero: ['Your sound.', 'Your routing.'],
     intro: 'Bring your mic, game and voice chat into one workspace. Add your VST3 plugins. Choose what you hear, and what your audience hears.',
-    cta: 'Get RoudaMix', explore: 'Follow the sound', availability: 'Windows release coming soon',
+    cta: 'Get RoudaMix', explore: 'Follow the sound',
     scroll: 'SCROLL TO EXPLORE · ABOUT 1 MIN', signal: ['Microphone', 'Game', 'Voice chat'],
     chapterLabel: 'Workflow chapters', demo: 'Illustrated workflow · not a running app',
     scenes: [
@@ -58,14 +58,14 @@ export const content = {
     audioSoon: 'The two listening samples are being prepared. Keep exploring the illustrated workflow.', play: 'Play sample', pause: 'Pause', audioError: 'The sample could not load. Try again later; the guide remains available.', loading: 'Loading samples…', position: 'Listening position',
     guideLabel: 'QUICK START / GET CONNECTED', guideTitle: 'From your first launch\nto your first stream.', guideIntro: 'Keep this setup nearby. Get every signal to the right destination, one step at a time.',
     steps: [
-      ['Extract and launch', 'Once the official Windows x64 release is available, extract the whole archive and run RoudaMix.exe. The portable build needs WebView2 Evergreen Runtime. Keep your data folder when updating.'],
+      ['Extract and launch', 'Download the Windows x64 build, extract the whole archive and run RoudaMix.exe. The portable build needs WebView2 Evergreen Runtime. Keep your data folder when updating.'],
       ['Choose a device and microphone', 'Open Settings → Audio / Session → Device and select System audio (WASAPI), labelled「系統音訊 (WASAPI)」in the app. Press Start if needed. Add an Audio track with「＋ Audio」and select your microphone as input. Use an App track to select a game or voice app that is playing audio.'],
       ['Add your VST3', 'Install a Windows x64 VST3 plugin, then scan for plugins in RoudaMix. Add an effect from the track’s plugin list. Reverb describes our example effect; it is not the name of a bundled plugin.'],
       ['Route the monitor and stream', 'Select both monitor and stream as input-track destinations. Choose your headphones for the monitor output and set its policy to Low Latency. Keep the stream on Full PDC. Enable the plugin’s Monitor Bypass (M) to skip it in your monitor mix.'],
       ['Install and configure VB-CABLE', 'Install VB-CABLE from the official VB-Audio website and restart as instructed. Set the RoudaMix stream output to CABLE Input, the receiving end of the virtual cable.'],
       ['Capture the audio in OBS', 'Add an Audio Input Capture source in OBS and select CABLE Output. Check the meter and make a short test recording. Avoid capturing the same microphone or desktop audio twice. For Discord, select the input device under Voice & Video.'],
     ],
-    downloadTitle: 'Your next open mic.\nYour way to sound.', downloadBody: 'The Windows release is being prepared. Explore the setup now; the download will appear here when a public build is ready.',
+    downloadTitle: 'Your next open mic.\nYour way to sound.', downloadBody: 'Download the Windows release and follow the quick start to get every signal to the right place.',
     requirements: 'Windows 10 / 11 · x64 · WebView2', github: 'View project on GitHub', portable: 'Download Portable version', back: 'Back to top',
     faqTitle: 'A few things before you start',
     faq: [

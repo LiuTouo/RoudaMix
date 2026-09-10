@@ -23,6 +23,12 @@ test('built files serve both language entries and their assets without SPA fallb
   const browser = await chromium.launch();
   try {
     const base = `http://127.0.0.1:${server.address().port}/RoudaMix/`;
+    const robots = await readFile(resolve(root, 'robots.txt'), 'utf8');
+    assert.match(robots, /^Sitemap: https:\/\/liutouo\.github\.io\/RoudaMix\/sitemap\.xml$/m);
+    const sitemap = await readFile(resolve(root, 'sitemap.xml'), 'utf8');
+    for (const loc of ['https://liutouo.github.io/RoudaMix/', 'https://liutouo.github.io/RoudaMix/en/']) {
+      assert.match(sitemap, new RegExp(`<loc>${loc.replace(/\//g, '\\/')}<\\/loc>`));
+    }
     const page = await browser.newPage();
     const failures = [];
     page.on('pageerror', error => failures.push(error.message));
@@ -33,12 +39,16 @@ test('built files serve both language entries and their assets without SPA fallb
       assert.match(html, new RegExp(`<html lang="${language}">`));
       assert.match(html, new RegExp(title));
       assert.match(html, /property="og:description"/);
+      assert.match(html, /name="google-site-verification" content="[^"]+"/);
+      assert.match(html, /"@type":\s*"SoftwareApplication"/);
+      assert.match(html, /rel="alternate" hreflang="x-default"/);
+      assert.match(html, /<div id="app">[\s\S]*<h1>RoudaMix<\/h1>/);
       await page.goto(`${base}${route}#obs`);
       await page.waitForSelector('.scene[data-stage="5"]');
       await page.reload();
       await page.waitForSelector('.scene[data-stage="5"]');
       assert.equal(await page.locator('[title]').count(), 0);
-      assert.equal(await page.locator('.release-pending').count(), 1);
+      assert.equal(await page.locator('.download-actions a').count(), 1);
       assert.equal(await page.locator('.brand img').first().evaluate(image => image.naturalWidth > 0), true);
     }
     assert.deepEqual(failures, []);
