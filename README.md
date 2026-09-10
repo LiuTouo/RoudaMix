@@ -2,6 +2,8 @@
 
 Windows x64 音訊混音與 VST3 外掛宿主。
 
+官網(操作教學與快速入門)：<https://liutouo.github.io/RoudaMix/>
+
 ## 下載
 
 從 [Releases](https://github.com/LiuTouo/RoudaMix/releases) 下載：
