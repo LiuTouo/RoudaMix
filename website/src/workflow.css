@@ -82,7 +82,6 @@
 .animated-workflow .app-monogram>span,.app-title>span { grid-area:1/1;margin:0;color:inherit;font-size:inherit; }
 .animated-workflow .app-monogram>span { align-self:center;justify-self:center; }
 .connection-confirmation { position:absolute;bottom:6px;left:64px;color:var(--cyan)!important;font-size:8px!important; }
-.static-view .signal-packet { display:none; }
 
 @media(max-width:760px){
   .animated-workflow.started { padding-top:46px; }
@@ -120,8 +119,6 @@
   .animated-workflow .destination-app { bottom:-12px;padding:5px 8px 18px; }
   .connection-confirmation { bottom:1px; }
 }
-html[data-motion='reduced'] .animated-workflow .signal-packet,html[data-motion='reduced'] .demo-pointer { display:none!important; }
-html[data-motion='reduced'] .animated-workflow .waveform i,html[data-motion='reduced'] .animated-workflow .meter-running>i { animation:none!important; }
 
 @media(max-width:760px){
   .animated-workflow[data-stage='3'],.animated-workflow[data-stage='4'],.animated-workflow[data-stage='5'],.animated-workflow[data-stage='6'] { padding-top:0; }
@@ -163,14 +160,6 @@ html[data-motion='reduced'] .animated-workflow .waveform i,html[data-motion='red
   .scene-presentation .playback-toolbar button{min-height:30px}
   .scene-presentation .workflow-instruction{display:none}
 }
-html[data-motion='reduced'] .scene-presentation{transform:none!important}html[data-motion='reduced'] .playback-toolbar{display:none}
-
-.motion-toggle{min-height:44px;padding:8px 14px;border-radius:5px;white-space:nowrap;font-size:12px;color:var(--purple)}
-.motion-notice{display:flex;align-items:center;gap:24px;max-width:860px;padding:20px 24px;margin-bottom:40px;border:1px solid #665579;border-radius:8px;background:#242033}
-.motion-notice p{font-size:14px;max-width:580px;color:#dbd5ec}
-.static-intro .motion-notice .button{margin-top:0;flex-shrink:0}
-@media(max-width:760px){.motion-notice{align-items:flex-start;flex-direction:column;gap:16px;padding:18px}.motion-notice p{font-size:13px}}
-@media(max-width:500px){.site-header.motion-static .nav-download{display:none}.site-header .motion-toggle{font-size:11px;padding:8px 10px}}
 
 @media(max-width:760px){
   .scene-presentation .scene[data-stage='0'] .settings-card,.scene-presentation .scene[data-stage='0'] .workspace-sidebar{display:none}

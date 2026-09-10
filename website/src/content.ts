@@ -28,7 +28,7 @@ export const content = {
       ['讓 OBS 收到聲音', '在 OBS 來源新增「音訊輸入擷取」，裝置選 CABLE Output。確認電平有反應，錄一小段驗證。避免同時擷取同一麥克風或重複的桌面音訊，造成疊音。Discord 則到「語音與視訊」設定輸入裝置。'],
     ],
     downloadTitle: '下一次開麥，\n讓聲音照你的方式走。', downloadBody: '正式 Windows 版本準備中。先熟悉設定，公開版本就緒後，這裡會提供下載。',
-    requirements: 'Windows 10 / 11 · x64 · WebView2', github: '查看 GitHub 專案', back: '回到頂端',
+    requirements: 'Windows 10 / 11 · x64 · WebView2', github: '查看 GitHub 專案', portable: '下載可攜版 (Portable)', back: '回到頂端',
     faqTitle: '開始之前，你可能想知道',
     faq: [
       ['需要哪些額外軟體？', '可攜版需 WebView2 Evergreen Runtime。VST3 外掛與虛擬音訊裝置（例如 VB-CABLE）須自行安裝；使用 ASIO 時也需要硬體對應驅動。'],
@@ -66,7 +66,7 @@ export const content = {
       ['Capture the audio in OBS', 'Add an Audio Input Capture source in OBS and select CABLE Output. Check the meter and make a short test recording. Avoid capturing the same microphone or desktop audio twice. For Discord, select the input device under Voice & Video.'],
     ],
     downloadTitle: 'Your next open mic.\nYour way to sound.', downloadBody: 'The Windows release is being prepared. Explore the setup now; the download will appear here when a public build is ready.',
-    requirements: 'Windows 10 / 11 · x64 · WebView2', github: 'View project on GitHub', back: 'Back to top',
+    requirements: 'Windows 10 / 11 · x64 · WebView2', github: 'View project on GitHub', portable: 'Download Portable version', back: 'Back to top',
     faqTitle: 'A few things before you start',
     faq: [
       ['What else do I need?', 'The portable build needs WebView2 Evergreen Runtime. Install VST3 plugins and virtual audio devices such as VB-CABLE separately. ASIO also requires the appropriate hardware driver.'],

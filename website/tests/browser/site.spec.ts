@@ -3,6 +3,7 @@ import { test, expect } from '@playwright/test';
 test('both language routes work on direct open and refresh; no fake controls', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
+  await page.route('**/api.github.com/**', route => route.abort());
   for (const route of ['', 'en/']) {
     await page.goto(route || './');
     await expect(page.locator('h1')).toBeVisible();
@@ -14,6 +15,22 @@ test('both language routes work on direct open and refresh; no fake controls', a
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   }
   expect(errors).toEqual([]);
+});
+
+test('download section resolves the latest GitHub release with a portable link', async ({ page }) => {
+  await page.route('**/api.github.com/repos/LiuTouo/RoudaMix/releases/latest', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+      tag_name: 'v0.9.9',
+      assets: [
+        { name: 'RoudaMix-0.9.9-windows-x64-portable.zip', state: 'uploaded', browser_download_url: 'https://example.com/portable.zip' },
+        { name: 'RoudaMix-0.9.9-windows-x64-setup.exe', state: 'uploaded', browser_download_url: 'https://example.com/setup.exe' },
+      ],
+    }) });
+  });
+  await page.goto('./');
+  await expect(page.locator('.download-actions .button')).toHaveAttribute('href', 'https://example.com/setup.exe');
+  await expect(page.locator('.download-actions .button')).toHaveText(/v0\.9\.9/);
+  await expect(page.locator('.download-actions .text-link').first()).toHaveAttribute('href', 'https://example.com/portable.zip');
 });
 
 test('seven chapters support reverse, fast jumps and language preservation', async ({ page }, info) => {
@@ -58,14 +75,4 @@ test('keyboard skip, guide, FAQ and language survive narrow and landscape layout
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: info.outputPath(`viewport-${viewport.width}.png`) });
   }
-});
-
-test('reduced motion is a complete static readable sequence', async ({ page }, info) => {
-  await page.emulateMedia({ reducedMotion: 'reduce' });
-  await page.goto('en/#listen');
-  await expect(page.locator('.static-chapter')).toHaveCount(7);
-  await expect(page.locator('#listen')).toBeInViewport();
-  await expect(page.locator('.cursor')).not.toBeVisible();
-  await expect(page.locator('.chapter-nav')).not.toBeVisible();
-  await page.screenshot({ path: info.outputPath('reduced.png') });
 });

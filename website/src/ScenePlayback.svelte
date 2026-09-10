@@ -4,7 +4,7 @@
   import { storyState } from './story';
   import type { Locale } from './content';
 
-  let { progress, locale, staticView = false, covered = false }: { progress: number; locale: Locale; staticView?: boolean; covered?: boolean } = $props();
+  let { progress, locale, covered = false }: { progress: number; locale: Locale; covered?: boolean } = $props();
   type Mode = 'auto' | 'paused' | 'scrub';
   let mode = $state<Mode>('auto');
   let phase = $state(0);
@@ -14,7 +14,7 @@
   let visible = false;
   let sceneAnimation: Animation | undefined;
   const raw = $derived(storyState(progress));
-  const displayed = $derived(staticView || mode === 'scrub' ? raw.local : phase);
+  const displayed = $derived(mode === 'scrub' ? raw.local : phase);
 
   function setMode(next: Mode) {
     if (mode === 'scrub') phase = raw.local;
@@ -31,7 +31,7 @@
         phase = mode === 'scrub' || performance.now() < manualUntil ? next.local : 0;
         previousStage = next.stage;
         sceneAnimation?.cancel();
-        if (node && !staticView && document.documentElement.dataset.motion !== 'reduced') {
+        if (node) {
           sceneAnimation = node.animate([
             { transform: `translate3d(0,${direction * 110}px,0) scale(.955) rotateX(${direction * 4}deg)`, opacity: 0.12, offset: 0 },
             { transform: `translate3d(0,${direction * -4}px,0) scale(1) rotateX(0deg)`, opacity: 1, offset: 0.82 },
@@ -43,7 +43,6 @@
   });
 
   onMount(() => {
-    if (staticView) return;
     try {
       const saved = localStorage.getItem('roudamix-demo-mode');
       if (saved === 'scrub' || saved === 'paused') mode = saved;
@@ -85,17 +84,13 @@
   });
 </script>
 
-{#if staticView}
-  <Scene {progress} {locale} staticView />
-{:else}
-  <div class="scene-presentation" bind:this={presentation} data-playback={mode} data-phase={displayed.toFixed(3)}>
-    <Scene progress={(raw.stage + displayed) / 7} {locale} {covered} paused={mode === 'paused'} overviewPhase={raw.stage === 0 && mode !== 'scrub' ? displayed : undefined} />
-    <div class="playback-toolbar">
-      <span class="playback-status"><i></i>{locale === 'zh' ? (mode === 'scrub' ? '捲動控制' : '操作示範') : (mode === 'scrub' ? 'Scroll control' : 'Workflow demo')}</span>
-      <button class="playback-toggle" aria-label={locale === 'zh' ? (mode === 'paused' ? '播放動畫' : '暫停動畫') : (mode === 'paused' ? 'Play animation' : 'Pause animation')} onclick={() => setMode(mode === 'paused' ? 'auto' : 'paused')}>{locale === 'zh' ? (mode === 'paused' ? '播放' : '暫停') : (mode === 'paused' ? 'Play' : 'Pause')}</button>
-      <button class="playback-replay" onclick={() => { setMode('auto'); phase = 0; }}>{locale === 'zh' ? '重播' : 'Replay'}</button>
-      <button class="playback-mode" aria-pressed={mode === 'scrub'} onclick={() => setMode(mode === 'scrub' ? 'auto' : 'scrub')}>{locale === 'zh' ? (mode === 'scrub' ? '自動演示' : '隨捲動') : (mode === 'scrub' ? 'Auto demo' : 'Scrub')}</button>
-      <span class="playback-progress" aria-hidden="true" style={`transform:scaleX(${displayed})`}></span>
-    </div>
+<div class="scene-presentation" bind:this={presentation} data-playback={mode} data-phase={displayed.toFixed(3)}>
+  <Scene progress={(raw.stage + displayed) / 7} {locale} {covered} paused={mode === 'paused'} overviewPhase={raw.stage === 0 && mode !== 'scrub' ? displayed : undefined} />
+  <div class="playback-toolbar">
+    <span class="playback-status"><i></i>{locale === 'zh' ? (mode === 'scrub' ? '捲動控制' : '操作示範') : (mode === 'scrub' ? 'Scroll control' : 'Workflow demo')}</span>
+    <button class="playback-toggle" aria-label={locale === 'zh' ? (mode === 'paused' ? '播放動畫' : '暫停動畫') : (mode === 'paused' ? 'Play animation' : 'Pause animation')} onclick={() => setMode(mode === 'paused' ? 'auto' : 'paused')}>{locale === 'zh' ? (mode === 'paused' ? '播放' : '暫停') : (mode === 'paused' ? 'Play' : 'Pause')}</button>
+    <button class="playback-replay" onclick={() => { setMode('auto'); phase = 0; }}>{locale === 'zh' ? '重播' : 'Replay'}</button>
+    <button class="playback-mode" aria-pressed={mode === 'scrub'} onclick={() => setMode(mode === 'scrub' ? 'auto' : 'scrub')}>{locale === 'zh' ? (mode === 'scrub' ? '自動演示' : '隨捲動') : (mode === 'scrub' ? 'Auto demo' : 'Scrub')}</button>
+    <span class="playback-progress" aria-hidden="true" style={`transform:scaleX(${displayed})`}></span>
   </div>
-{/if}
+</div>

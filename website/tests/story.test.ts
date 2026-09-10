@@ -25,8 +25,7 @@ test('both languages have every scene, guide step and FAQ', () => {
     for (const scene of language.scenes) assert.ok(scene.every(Boolean));
   }
 });
-test('unready publication never offers a fake download or sample', () => {
-  assert.equal(publication.release, null);
+test('unready publication never offers a fake sample', () => {
   assert.equal(publication.audio, null);
 });
 test('tooltip policy forbids native title attributes throughout the website', () => {

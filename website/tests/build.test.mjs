@@ -27,6 +27,7 @@ test('built files serve both language entries and their assets without SPA fallb
     const failures = [];
     page.on('pageerror', error => failures.push(error.message));
     page.on('response', response => { if (response.url().startsWith(base) && response.status() >= 400) failures.push(response.url()); });
+    await page.route('**/api.github.com/**', route => route.abort());
     for (const [route, language, title] of [['', 'zh-Hant', '你的聲音'], ['en/', 'en', 'Your sound']]) {
       const html = await readFile(resolve(root, route, 'index.html'), 'utf8');
       assert.match(html, new RegExp(`<html lang="${language}">`));

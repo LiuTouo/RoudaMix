@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 test('opaque full-width panels rise over the previous panel and leave long content readable', async ({ page }, info) => {
-  await page.goto('en/?motion=full');
+  await page.goto('en/');
   for (const id of ['guide', 'download', 'faq']) {
     const top = await page.locator(`#${id}-start`).evaluate(el => el.getBoundingClientRect().top + scrollY);
     await page.evaluate(top => scrollTo(0, top - innerHeight / 2), top);
@@ -29,15 +29,8 @@ test('opaque full-width panels rise over the previous panel and leave long conte
   expect((await page.locator('#guide').boundingBox())!.y).toBeGreaterThanOrEqual(0);
 });
 
-test('static reading retains normal document flow', async ({ page }) => {
-  await page.goto('en/?motion=reduced');
-  for (const id of ['story', 'guide', 'download', 'faq']) {
-    expect(await page.locator(`#${id}`).evaluate(el => getComputedStyle(el).position)).not.toBe('sticky');
-  }
-});
-
 test('a wheel chapter change has visible vertical travel and finishes after the wheel stops', async ({ page }) => {
-  await page.goto('en/?motion=full');
+  await page.goto('en/');
   await page.evaluate(() => scrollTo(0, (document.querySelector('#story')!.clientHeight - innerHeight) * .98 / 7));
   await page.waitForTimeout(1050);
   await page.mouse.wheel(0, 180);

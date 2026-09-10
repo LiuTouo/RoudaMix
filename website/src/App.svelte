@@ -9,16 +9,13 @@
   import { content, type Locale } from './content';
   import { chapters, chapterProgress, storyState, motion } from './story';
   import { publication } from './config';
-  import { chooseMotion, prefersStaticSite, readMotionPreference } from './motionPreference';
+  import { fetchLatestRelease, type LatestRelease } from './release';
   import { installPanelStack } from './panelStack';
 
   const locale: Locale = /\/en\/?$/.test(location.pathname) ? 'en' : 'zh';
   const t = content[locale];
   let progress = $state(0);
   let pageProgress = $state(0);
-  let reduced = $state(prefersStaticSite());
-  const explicitMotion = readMotionPreference();
-  const motionQuery = explicitMotion ? `?motion=${explicitMotion}` : '';
   let cursorX = $state(-100);
   let cursorY = $state(-100);
   let cursorActive = $state(false);
@@ -37,6 +34,7 @@
   let lastCopyStage = -1;
   let navigationVersion = 0;
   let latestNavigation = 'top';
+  let latest = $state<LatestRelease | null>(null);
   const sceneState = $derived(storyState(progress));
   const chapterIndex = $derived(sceneState.stage);
   const languageHash = $derived(currentSection === 'story' ? chapters[sceneState.stage] : currentSection);
@@ -44,7 +42,7 @@
   $effect(() => {
     const stage = chapterIndex;
     const node = copyElement;
-    if (!node || reduced) return;
+    if (!node) return;
     const direction = stage >= lastCopyStage ? 1 : -1;
     lastCopyStage = stage;
     const animations = Array.from(node.children).filter(element => !element.classList.contains('sr-only')).map((element, index) => element.animate([
@@ -56,21 +54,21 @@
 
   function navigateTo(id: string, updateHistory = true) {
     const index = chapters.indexOf(id as typeof chapters[number]);
-    const element = document.getElementById(index >= 0 && !reduced ? 'story' : id);
+    const element = document.getElementById(index >= 0 ? 'story' : id);
     if (!element) return;
     ++navigationVersion;
     const requestVersion = navigationVersion;
     latestNavigation = id;
     const anchor = document.getElementById(`${id}-start`) ?? element;
     let target = anchor.getBoundingClientRect().top + window.scrollY - 84;
-    if (index >= 0 && !reduced && trigger) target = trigger.start + chapterProgress(index) * (trigger.end - trigger.start);
+    if (index >= 0 && trigger) target = trigger.start + chapterProgress(index) * (trigger.end - trigger.start);
     if (id === 'top') target = 0;
     navigationTween?.kill();
-    navigationDestination = updateHistory && !reduced ? id : null;
+    navigationDestination = updateHistory ? id : null;
     navigating = navigationDestination !== null;
     window.dispatchEvent(new Event('roudamix:navigate'));
     if (updateHistory) history.pushState(null, '', `#${id}`);
-    const focus = index >= 0 && !reduced ? document.getElementById('story-heading') : element;
+    const focus = index >= 0 ? document.getElementById('story-heading') : element;
     const move = (position: number) => {
       if (lenis) lenis.scrollTo(position, { immediate: true });
       else window.scrollTo({ top: position, behavior: 'instant' });
@@ -87,13 +85,14 @@
         focus?.focus({ preventScroll: true });
       });
     };
-    if (updateHistory && !reduced) {
+    if (updateHistory) {
       const scroll = { position: window.scrollY };
       navigationTween = gsap.to(scroll, { position: target, duration: Math.min(1.25, 0.65 + Math.abs(target - scroll.position) / 14000), ease: 'power3.inOut', onUpdate: () => move(scroll.position), onComplete: arrive });
     } else { move(target); arrive(); }
   }
 
   onMount(() => {
+    fetchLatestRelease().then(release => { latest = release; });
     gsap.registerPlugin(ScrollTrigger);
     const media = gsap.matchMedia();
     const interruptScroll = () => { navigationTween?.kill(); navigationDestination = null; navigating = false; };
@@ -104,7 +103,7 @@
     const revealObserver = new IntersectionObserver(entries => {
       for (const entry of entries) {
         if (!entry.isIntersecting) continue;
-        if (!reduced) reveals.push(entry.target.animate([
+        reveals.push(entry.target.animate([
           { opacity: 0, transform: 'translateY(35px)' }, { opacity: 1, transform: 'translateY(0)' },
         ], { duration: 750, easing: 'cubic-bezier(.22,1,.36,1)' }));
         revealObserver.unobserve(entry.target);
@@ -112,10 +111,8 @@
     }, { threshold: 0.08 });
     document.querySelectorAll('.section-heading,.guide-steps article,.download h2,.download .lead,.download-actions,.faq details').forEach(element => revealObserver.observe(element));
     const disposeStack = installPanelStack(Array.from(document.querySelectorAll<HTMLElement>('.stack-surface')));
-    media.add({ all: '(min-width: 0px)', desktop: '(hover: hover) and (pointer: fine)', reduce: '(prefers-reduced-motion: reduce)' }, (context) => {
-      reduced = prefersStaticSite();
-      document.documentElement.dataset.motion = reduced ? 'reduced' : 'full';
-      if (!reduced && context.conditions?.desktop) {
+    media.add({ all: '(min-width: 0px)', desktop: '(hover: hover) and (pointer: fine)' }, (context) => {
+      if (context.conditions?.desktop) {
         lenis = new Lenis({ duration: motion.smoothingSeconds, easing: t => 1 - Math.pow(1 - t, 3), smoothWheel: true, syncTouch: false });
         lenis.on('scroll', ScrollTrigger.update);
         gsap.ticker.lagSmoothing(0);
@@ -134,10 +131,6 @@
       chapterCovered = guide < innerHeight;
       storyCovered = guide <= 88;
       currentSection = download < innerHeight * 0.5 ? 'download' : guide < innerHeight * 0.5 ? 'guide' : window.scrollY > 60 ? 'story' : 'top';
-      if (reduced && currentSection === 'story') {
-        const active = chapters.findLastIndex(id => document.getElementById(id)!.getBoundingClientRect().top < innerHeight * 0.5);
-        progress = chapterProgress(Math.max(0, active));
-      }
     };
     const pointer = (event: PointerEvent) => {
       cursorX = event.clientX; cursorY = event.clientY;
@@ -190,47 +183,41 @@
 </script>
 
 <a class="skip-link" href="#guide" onclick={(event) => { event.preventDefault(); navigateTo('guide'); }}>{t.skip}</a>
-<header class="site-header" class:motion-static={reduced}>
+<header class="site-header">
   <a class="brand" href="#top" onclick={(event) => { event.preventDefault(); navigateTo('top'); }}><img src={`${import.meta.env.BASE_URL}brand.png`} alt="" /><span>RoudaMix<span class="brand-period">.</span></span></a>
   <nav aria-label={locale === 'zh' ? '主要導覽' : 'Main navigation'}>
     <a class="explore-link" href="#open" onclick={(event) => { event.preventDefault(); navigateTo('open'); }}>{t.nav[0]}</a>
     <a href="#guide" onclick={(event) => { event.preventDefault(); navigateTo('guide'); }}>{t.nav[1]}</a>
-    <a class="language" href={`${import.meta.env.BASE_URL}${locale === 'zh' ? 'en/' : ''}${motionQuery}#${languageHash}`} lang={locale === 'zh' ? 'en' : 'zh-Hant'}>{t.language}</a>
-    {#if reduced}<button class="motion-toggle" onclick={() => chooseMotion('full')}>{locale === 'zh' ? '開啟動畫' : 'Enable motion'}</button>{/if}
+    <a class="language" href={`${import.meta.env.BASE_URL}${locale === 'zh' ? 'en/' : ''}#${languageHash}`} lang={locale === 'zh' ? 'en' : 'zh-Hant'}>{t.language}</a>
     <a class="nav-download" href="#download" onclick={(event) => { event.preventDefault(); navigateTo('download'); }}>{t.nav[2]} <span aria-hidden="true">↗</span></a>
   </nav>
 </header>
 
-<main id="top" tabindex="-1" class:reduced>
+<main id="top" tabindex="-1">
   <section class="story stack-surface" id="story" bind:this={storyElement} style={`--scroll-vh:${motion.scrollViewports * 100}svh`} aria-label={t.chapterLabel}>
-    {#if !reduced}
-      <div class="story-sticky">
-        <div class="ambient-grid" aria-hidden="true"></div>
-        <div class="story-layout">
-          <div class="story-copy" bind:this={copyElement} data-chapter={chapters[sceneState.stage]}>
-            {#if sceneState.stage === 0}
-              <p class="eyebrow"><span class="live-dot"></span>{t.eyebrow}</p>
-              <h1>{t.hero[0]}<br /><span>{t.hero[1]}</span></h1>
-              <p class="lead">{t.intro}</p>
-              <div class="hero-actions"><a class="button primary" href="#download" onclick={(event) => { event.preventDefault(); navigateTo('download'); }}>{t.cta}<span aria-hidden="true">↗</span></a><span class="availability">{t.availability}</span></div>
-              <p class="platform mono">WINDOWS x64 <span>/</span> VST3 HOST <span>/</span> YOUR MIX</p>
-            {:else}
-              <p class="eyebrow"><span class="chapter-number mono">0{sceneState.stage + 1} / 07</span>{t.scenes[sceneState.stage][2]}</p>
-              <h2 class="scene-heading">{t.scenes[sceneState.stage][0]}</h2>
-              <p class="lead">{t.scenes[sceneState.stage][1]}</p>
-              {#if sceneState.stage === 4}<AudioDemo {locale} active={sceneState.stage === 4} suspended={navigating} />{/if}
-              {#if sceneState.stage === 6}<a class="text-link" href="#guide" onclick={(event) => { event.preventDefault(); navigateTo('guide'); }}>{t.nav[1]} <span aria-hidden="true">↗</span></a>{/if}
-            {/if}
-            <span class="sr-only" id="story-heading" tabindex="-1">{t.scenes[sceneState.stage][0]}</span>
-          </div>
-          <Scene {progress} {locale} covered={storyCovered} />
+    <div class="story-sticky">
+      <div class="ambient-grid" aria-hidden="true"></div>
+      <div class="story-layout">
+        <div class="story-copy" bind:this={copyElement} data-chapter={chapters[sceneState.stage]}>
+          {#if sceneState.stage === 0}
+            <p class="eyebrow"><span class="live-dot"></span>{t.eyebrow}</p>
+            <h1>{t.hero[0]}<br /><span>{t.hero[1]}</span></h1>
+            <p class="lead">{t.intro}</p>
+            <div class="hero-actions"><a class="button primary" href="#download" onclick={(event) => { event.preventDefault(); navigateTo('download'); }}>{t.cta}<span aria-hidden="true">↗</span></a><span class="availability">{t.availability}</span></div>
+            <p class="platform mono">WINDOWS x64 <span>/</span> VST3 HOST <span>/</span> YOUR MIX</p>
+          {:else}
+            <p class="eyebrow"><span class="chapter-number mono">0{sceneState.stage + 1} / 07</span>{t.scenes[sceneState.stage][2]}</p>
+            <h2 class="scene-heading">{t.scenes[sceneState.stage][0]}</h2>
+            <p class="lead">{t.scenes[sceneState.stage][1]}</p>
+            {#if sceneState.stage === 4}<AudioDemo {locale} active={sceneState.stage === 4} suspended={navigating} />{/if}
+            {#if sceneState.stage === 6}<a class="text-link" href="#guide" onclick={(event) => { event.preventDefault(); navigateTo('guide'); }}>{t.nav[1]} <span aria-hidden="true">↗</span></a>{/if}
+          {/if}
+          <span class="sr-only" id="story-heading" tabindex="-1">{t.scenes[sceneState.stage][0]}</span>
         </div>
-        <div class="story-bottom"><span class="scroll-instruction"><span aria-hidden="true">↓</span>{t.scroll}</span><a href="#guide" onclick={(event) => { event.preventDefault(); navigateTo('guide'); }}>{t.skip} <span aria-hidden="true">↘</span></a></div>
+        <Scene {progress} {locale} covered={storyCovered} />
       </div>
-    {:else}
-      <div class="static-intro"><div class="motion-notice"><p>{locale === 'zh' ? '目前為靜態閱讀模式。若要觀看操作演示與捲動轉場，請開啟網站動畫。' : 'Static reading mode is active. Enable motion to watch the workflow demos and scroll transitions.'}</p><button class="button primary" onclick={() => chooseMotion('full')}>{locale === 'zh' ? '開啟網站動畫' : 'Enable website motion'}</button></div><p class="eyebrow">{t.eyebrow}</p><h1>{t.hero[0]}<br /><span>{t.hero[1]}</span></h1><p class="lead">{t.intro}</p><a class="button primary" href="#download">{t.cta} ↗</a></div>
-      {#each t.scenes as scene, index}<article class="static-chapter" id={chapters[index]} tabindex="-1"><div><p class="eyebrow">0{index + 1} / {scene[2]}</p><h2>{scene[0]}</h2><p class="lead">{scene[1]}</p>{#if index === 4}<AudioDemo {locale} active={true} />{/if}</div><Scene progress={chapterProgress(index)} {locale} staticView /></article>{/each}
-    {/if}
+      <div class="story-bottom"><span class="scroll-instruction"><span aria-hidden="true">↓</span>{t.scroll}</span><a href="#guide" onclick={(event) => { event.preventDefault(); navigateTo('guide'); }}>{t.skip} <span aria-hidden="true">↘</span></a></div>
+    </div>
   </section>
 
   <nav class="chapter-nav" class:out-of-story={chapterCovered} aria-label={t.chapterLabel}>
@@ -247,7 +234,7 @@
   <section class="download section-wrap stack-surface cover-panel" id="download" tabindex="-1">
     <div class="download-top"><span class="eyebrow">MAKE IT YOUR MIX</span><span class="mono">ROUDAMIX / WINDOWS</span></div>
     <h2>{t.downloadTitle}</h2><p class="lead">{t.downloadBody}</p>
-    <div class="download-actions">{#if publication.release}<a class="button primary" href={publication.release.url}>{t.nav[2]} v{publication.release.version} ↗</a>{:else}<p class="release-pending"><span class="live-dot"></span>{t.availability}</p>{/if}<a class="text-link" href={publication.repository}>{t.github} ↗</a></div>
+    <div class="download-actions">{#if latest}<a class="button primary" href={latest.setupUrl}>{t.nav[2]} v{latest.version} ↗</a><a class="text-link" href={latest.portableUrl}>{t.portable} ↗</a>{:else}<p class="release-pending"><span class="live-dot"></span>{t.availability}</p>{/if}<a class="text-link" href={publication.repository}>{t.github} ↗</a></div>
     <p class="requirements">{t.requirements}</p>
   </section>
 
@@ -255,5 +242,5 @@
   <section class="faq section-wrap stack-surface cover-panel" id="faq"><p class="eyebrow">GOOD TO KNOW / FAQ</p><h2>{t.faqTitle}</h2><div>{#each t.faq as item}<details><summary>{item[0]}<span aria-hidden="true">＋</span></summary><p>{item[1]}</p></details>{/each}</div></section>
 </main>
 
-<footer class="section-wrap"><div><a class="brand" href="#top" onclick={(event) => { event.preventDefault(); navigateTo('top'); }}><img src={`${import.meta.env.BASE_URL}brand.png`} alt="" />RoudaMix.</a><p>{t.footer}</p></div><span class="mono">GPL-3.0-only · 2026</span><button class="motion-toggle" onclick={() => chooseMotion(reduced ? 'full' : 'reduced')}>{locale === 'zh' ? (reduced ? '開啟動畫' : '靜態閱讀') : (reduced ? 'Enable motion' : 'Static reading')}</button><a href="#top" onclick={(event) => { event.preventDefault(); navigateTo('top'); }}>{t.back} ↑</a></footer>
+<footer class="section-wrap"><div><a class="brand" href="#top" onclick={(event) => { event.preventDefault(); navigateTo('top'); }}><img src={`${import.meta.env.BASE_URL}brand.png`} alt="" />RoudaMix.</a><p>{t.footer}</p></div><span class="mono">GPL-3.0-only · 2026</span><a href="#top" onclick={(event) => { event.preventDefault(); navigateTo('top'); }}>{t.back} ↑</a></footer>
 <div class="cursor" bind:this={cursorElement} class:active={cursorActive} class:visible={cursorVisible} aria-hidden="true" style={`transform:translate3d(${cursorX}px,${cursorY}px,0); --page-progress:${pageProgress * 360}deg`}><span></span></div>

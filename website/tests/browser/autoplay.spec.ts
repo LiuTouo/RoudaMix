@@ -41,11 +41,3 @@ test('chapter links scroll smoothly, animate the scene, and start that chapter d
   await expect(page.locator('.scene')).toHaveAttribute('data-stage', '1');
   await expect(page.locator('.device-menu')).toBeVisible();
 });
-
-test('reduced motion keeps static steps without auto playback or animated navigation', async ({ page }) => {
-  await page.emulateMedia({ reducedMotion: 'reduce' });
-  await page.goto('en/');
-  await expect(page.locator('.static-chapter')).toHaveCount(7);
-  await expect(page.locator('.playback-toolbar')).toHaveCount(0);
-  expect(await page.locator('.waveform i').first().evaluate(node => getComputedStyle(node).animationName)).toBe('none');
-});
