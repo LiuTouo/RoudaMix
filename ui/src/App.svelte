@@ -291,9 +291,11 @@
     // P2-M/P1-O 折衷:原生網頁右鍵選單全面不出現(去網頁感 —— 軌/插件右鍵走
     // 自訂主題選單);但「需要複製的文字區」與輸入框放行原生選單(右鍵 Copy /
     // 貼上),user-select 已開放、Ctrl+C 亦通 —— 複製能力不受影響
+    // 放行限文字輸入(複製/貼上);range/checkbox/color 等非文字控件照樣攔,
+    // 否則音量條右鍵會彈網頁選單。排除式選擇器與 c-theme.css 同款。
     const onCtx = (e: MouseEvent) => {
       const t = e.target as HTMLElement;
-      if (t.closest?.(".err, .notice-msg, .apppath, .dirpath, input, textarea")) return;
+      if (t.closest?.(".err, .notice-msg, .apppath, .dirpath, input:not([type='range'], [type='checkbox'], [type='color']), textarea")) return;
       e.preventDefault();
     };
     window.addEventListener("contextmenu", onCtx);
