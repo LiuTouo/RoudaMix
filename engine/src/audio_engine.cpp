@@ -1264,6 +1264,25 @@ std::optional<Failure> AudioEngine::track_add(TrackKind kind, const std::string&
     t.name = name.empty() ? (std::string(track_kind_str(kind)) + " " +
                              std::to_string(next_track_id_ - 1))
                           : name;
+    if (kind == TrackKind::kAudio && name.empty()) {
+        // 只看目前名稱，不沿用 track ID；全部改名後從 1 重新開始。
+        const std::string prefix = "輸入";
+        std::string largest = "0";
+        for (const auto& existing : tracks_) {
+            if (!existing.name.starts_with(prefix)) continue;
+            const auto number = existing.name.substr(prefix.size());
+            if (number.empty() || number.front() == '0' ||
+                number.find_first_not_of("0123456789") != std::string::npos) continue;
+            if (number.size() > largest.size() ||
+                (number.size() == largest.size() && number > largest)) largest = number;
+        }
+        // 十進位字串遞增，手動輸入很長的編號也不會溢位。
+        auto digit = largest.size();
+        while (digit > 0 && largest[digit - 1] == '9') largest[--digit] = '0';
+        if (digit == 0) largest.insert(0, "1");
+        else ++largest[digit - 1];
+        t.name = prefix + largest;
+    }
     if (color == 0) {
         // 調色盤輪替:8 色循環,不用使用者挑
         static constexpr std::uint32_t kPalette[] = {0x4da3ff, 0x3ddc84, 0xffb454, 0xff5c5c,

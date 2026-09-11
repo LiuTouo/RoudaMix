@@ -346,6 +346,10 @@ if(MSVC)
 endif()
 add_test(NAME plugin_copy COMMAND plugin_copy_test $<TARGET_FILE:rmx_latency_fixture>)
 
+add_test(NAME worker_error_ui COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+    -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/worker-error-ui.test.ps1"
+    -WorkerPath $<TARGET_FILE:roudamix-worker>)
+
 # VST registry 純檔案邏輯：fingerprint、增量命中、去重、原子持久化。
 add_executable(vst_registry_test tests/vst_registry_test.cpp src/vst_registry.cpp)
 target_include_directories(vst_registry_test PRIVATE src)

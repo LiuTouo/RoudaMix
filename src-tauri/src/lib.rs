@@ -17,6 +17,7 @@ use tauri::{
     AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder,
 };
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+use tauri_plugin_opener::OpenerExt;
 
 const AUTOSTART_ARG: &str = "--autostart";
 
@@ -60,9 +61,10 @@ fn ensure_main_window(app: &mut tauri::App) -> tauri::Result<()> {
 
 fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let show = MenuItemBuilder::with_id("show-dashboard", "顯示儀表板").build(app)?;
-    let license = MenuItemBuilder::with_id("show-license", "授權與原始碼").build(app)?;
+    let check = MenuItemBuilder::with_id("check-updates", "檢查更新").build(app)?;
+    let about = MenuItemBuilder::with_id("show-about", "關於 RoudaMix").build(app)?;
     let quit = MenuItemBuilder::with_id("quit", "結束程式").build(app)?;
-    let menu = MenuBuilder::new(app).items(&[&show, &license, &quit]).build()?;
+    let menu = MenuBuilder::new(app).items(&[&show, &check, &about, &quit]).build()?;
 
     let mut tray = TrayIconBuilder::with_id("main-tray")
         .menu(&menu)
@@ -70,20 +72,9 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
         .tooltip("RoudaMix")
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show-dashboard" => show_dashboard(app),
-            "show-license" => {
-                app.dialog()
-                    .message(format!(
-                        "RoudaMix {}\nCopyright (c) 2026 RoudaMix contributors.\n\n\
-                         本程式依 GNU GPL version 3 only 提供，無任何擔保。\n\
-                         你可以依 GPLv3 條款修改及再散布本程式。\n\n\
-                         完整授權與第三方聲明：程式旁的 licenses 資料夾。\n\
-                         對應原始碼：\nhttps://github.com/LiuTouo/RoudaMix/releases/tag/v{}",
-                        app.package_info().version,
-                        app.package_info().version
-                    ))
-                    .title("RoudaMix — 授權與原始碼")
-                    .kind(MessageDialogKind::Info)
-                    .show(|_| {});
+            "check-updates" | "show-about" => {
+                show_dashboard(app);
+                let _ = app.emit("tray-about-requested", event.id().as_ref() == "check-updates");
             }
             "quit" => {
                 // dirty 詢問由 WebView 管；先喚醒主視窗，dialog 才不會開在隱藏視窗裡。
@@ -114,6 +105,13 @@ fn quit_app(app: AppHandle) {
     app.exit(0);
 }
 
+#[tauri::command]
+fn open_release_page(app: AppHandle) -> Result<(), String> {
+    app.opener()
+        .open_url("https://github.com/LiuTouo/RoudaMix/releases/latest", None::<&str>)
+        .map_err(|error| error.to_string())
+}
+
 pub fn run() {
     tauri::Builder::default()
         // 官方 single-instance plugin 必須最先註冊；第二次啟動只喚醒既有視窗。
@@ -127,6 +125,7 @@ pub fn run() {
                 .show(|_| {});
         }))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_autostart::Builder::new()
                 .app_name("RoudaMix")
@@ -154,6 +153,7 @@ pub fn run() {
             settings::get_settings,
             settings::set_settings,
             settings::list_sessions,
+            open_release_page,
             quit_app
         ])
         .run(tauri::generate_context!())

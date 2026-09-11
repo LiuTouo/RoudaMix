@@ -156,6 +156,10 @@ int scan(const std::string& root) {
 }  // namespace
 
 int main(int argc, char** argv) {
+    // 背景 worker 必須把損壞 DLL 的 LoadLibrary 錯誤回傳給宿主，
+    // 不可停在 Windows「映像錯誤」對話框直到 sandbox timeout。
+    // 保留父程序的其他 error-mode 旗標，並涵蓋 verify 與 scan。
+    SetErrorMode(GetErrorMode() | SEM_FAILCRITICALERRORS);
     if (FAILED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED))) {
         std::fprintf(stderr, "CoInitializeEx failed\n");
         return 3;

@@ -50,6 +50,7 @@ pub struct Settings {
     pub close_behavior: Option<CloseBehavior>,
     /// 僅由 Windows 登入自動啟動時，讓主視窗保持隱藏並常駐系統匣。
     pub start_minimized_on_autostart: bool,
+    pub check_updates_on_startup: bool,
 }
 
 impl Default for Settings {
@@ -64,6 +65,7 @@ impl Default for Settings {
             last_working_buffer: None,
             close_behavior: None,
             start_minimized_on_autostart: false,
+            check_updates_on_startup: true,
         }
     }
 }
@@ -167,6 +169,10 @@ pub fn normalize(raw: Value) -> (Settings, Vec<String>) {
                 Some(value) => s.start_minimized_on_autostart = value,
                 None => warnings
                     .push("settings.startMinimizedOnAutostart 型別錯誤,已回復預設 false".into()),
+            },
+            "checkUpdatesOnStartup" => match v.as_bool() {
+                Some(value) => s.check_updates_on_startup = value,
+                None => warnings.push("settings.checkUpdatesOnStartup 型別錯誤,已回復預設 true".into()),
             },
             _ => {} // 未知鍵:保留策略(merge 寫回)
         }
@@ -327,6 +333,22 @@ mod tests {
         bak.set_extension("json.bak");
         let _ = fs::remove_file(&bak);
         p
+    }
+
+    #[test]
+    fn update_preference_defaults_validates_and_persists() {
+        assert!(normalize(serde_json::json!({})).0.check_updates_on_startup);
+        let (invalid, warnings) = normalize(serde_json::json!({"checkUpdatesOnStartup": "yes"}));
+        assert!(invalid.check_updates_on_startup);
+        assert_eq!(warnings.len(), 1);
+        let (settings, warnings) = normalize(serde_json::json!({"checkUpdatesOnStartup": false, "lastWorkingBuffer": 256}));
+        assert!(warnings.is_empty());
+        let path = tmp_path("update-preference");
+        save_to(&path, &merge(serde_json::json!({}), &settings)).unwrap();
+        let (loaded, warnings) = load_from(&path);
+        assert!(!loaded.check_updates_on_startup);
+        assert!(warnings.is_empty());
+        fs::remove_file(path).unwrap();
     }
 
     #[test]

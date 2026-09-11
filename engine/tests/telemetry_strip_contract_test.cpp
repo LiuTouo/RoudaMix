@@ -12,7 +12,38 @@
         }                                                                         \
     } while (0)
 
+static void check_input_names() {
+    rmx::AudioEngine engine;
+    std::uint32_t first = 0, second = 0, next = 0;
+    CHECK(!engine.track_add(rmx::TrackKind::kAudio, "", 0, first));
+    CHECK(engine.tracks().back().name == "輸入1");
+    CHECK(!engine.track_add(rmx::TrackKind::kAudio, "", 0, second));
+    CHECK(engine.tracks().back().name == "輸入2");
+    CHECK(!engine.track_set(first, "麥克風", {}, {}, {}));
+    CHECK(!engine.track_add(rmx::TrackKind::kAudio, "", 0, next));
+    CHECK(engine.tracks().back().name == "輸入3");
+    CHECK(!engine.track_remove(next));
+    CHECK(!engine.track_set(second, "吉他", {}, {}, {}));
+    CHECK(!engine.track_add(rmx::TrackKind::kAudio, "", 0, next));
+    CHECK(engine.tracks().back().name == "輸入1");
+    CHECK(!engine.track_add(rmx::TrackKind::kAudio, "輸入9", 0, next));
+    CHECK(engine.tracks().back().name == "輸入9");
+    CHECK(!engine.track_add(rmx::TrackKind::kAudio, "輸入12備用", 0, next));
+    CHECK(!engine.track_add(rmx::TrackKind::kAudio, "輸入099", 0, next));
+    CHECK(!engine.track_add(rmx::TrackKind::kAudio, "", 0, next));
+    CHECK(engine.tracks().back().name == "輸入10");
+    CHECK(!engine.track_add(rmx::TrackKind::kApp, "輸入20", 0, next));
+    CHECK(!engine.track_add(rmx::TrackKind::kAudio, "", 0, next));
+    CHECK(engine.tracks().back().name == "輸入21");
+    CHECK(!engine.track_add(rmx::TrackKind::kAudio, "輸入99999999999999999999", 0, next));
+    CHECK(!engine.track_add(rmx::TrackKind::kAudio, "", 0, next));
+    CHECK(engine.tracks().back().name == "輸入100000000000000000000");
+    CHECK(!engine.track_add(rmx::TrackKind::kApp, "", 0, next));
+    CHECK(engine.tracks().back().name == "app " + std::to_string(next));
+}
+
 int main() {
+    check_input_names();
     rmx::AudioEngine engine;
     std::uint32_t track_id = 0;
     CHECK(!engine.track_add(rmx::TrackKind::kAudio, "Metered", 0, track_id));

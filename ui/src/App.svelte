@@ -8,6 +8,7 @@
   } from "@tauri-apps/plugin-autostart";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import TrackStrip from "./lib/TrackStrip.svelte";
+  import UpdatePanel from "./lib/UpdatePanel.svelte";
   import { resetPluginTransfer } from "./lib/pluginTransfer";
   import LatencyDrawer from "./lib/LatencyDrawer.svelte";
   import ContextMenu from "./lib/ContextMenu.svelte";
@@ -527,6 +528,7 @@
   }
 
   type SettingsMutationTag =
+    | "check-updates"
     | "close-behavior"
     | "preferences"
     | "last-session"
@@ -1011,20 +1013,6 @@
     }
   }
 
-  // M6:mic 軌 = audio 軌 + 預設麥克風來源(空 deviceId = engine 端預設裝置;
-  // 具體裝置在 TrackStrip 輸入下拉的麥克風 optgroup 換)
-  async function addMicTrack() {
-    try {
-      const r = await engineCommand("track_add", { kind: "audio" });
-      await engineCommand("track_set_source", {
-        trackId: r.trackId,
-        source: { type: "wasapiIn" },
-      });
-    } catch (e) {
-      showNotice(e);
-    }
-  }
-
   // ---------- 拖曳排序(HTML5 DnD;事件委派在 lane,跨群組不 preventDefault = 不可放) ----------
   // P1-I:strip 位置純幾何計算(laneView.ts)—— 虛擬化後不在 DOM 的 strip 也算得對
 
@@ -1071,6 +1059,7 @@
       const el = (e.target as HTMLElement).closest?.("[data-track-id]") as HTMLElement | null;
       if (!el) return;
       drag = { id: Number(el.dataset.trackId), group };
+      dropAt = null;
       e.dataTransfer?.setData("text/plain", el.dataset.trackId ?? "");
       if (e.dataTransfer) {
         e.dataTransfer.effectAllowed = "move";
@@ -1080,14 +1069,24 @@
   }
   function onDragOver(group: LaneGroup) {
     return (e: DragEvent) => {
-      if (!drag || drag.group !== group || !e.dataTransfer) return;
+      if (!drag || !e.dataTransfer) return;
+      if (drag.group !== group) {
+        dropAt = null;
+        e.dataTransfer.dropEffect = "none";
+        return;
+      }
       e.preventDefault();
-      e.dataTransfer.dropEffect = "move";
-      dropAt = {
-        group,
-        pos: lanePos(e.currentTarget as HTMLElement, e.clientX, laneArr(group).length),
-      };
+      const arr = laneArr(group);
+      const pos = lanePos(e.currentTarget as HTMLElement, e.clientX, arr.length);
+      const from = arr.findIndex((track) => track.trackId === drag!.id);
+      const moves = from >= 0 && pos !== from && pos !== from + 1;
+      dropAt = moves ? { group, pos } : null;
+      e.dataTransfer.dropEffect = moves ? "move" : "none";
     };
+  }
+  function onDragLeave(e: DragEvent) {
+    const target = e.relatedTarget;
+    if (!(target instanceof Node) || !(e.currentTarget as HTMLElement).contains(target)) dropAt = null;
   }
   function onDrop(group: LaneGroup) {
     return (e: DragEvent) => {
@@ -1104,10 +1103,10 @@
           pos,
         );
         const target = reordered.indexOf(drag.id);
-        engineCommand("track_move", { trackId: drag.id, newIndex: target }).catch(() => {});
+        if (target !== tracks.findIndex((track) => track.trackId === drag!.id))
+          engineCommand("track_move", { trackId: drag.id, newIndex: target }).catch(() => {});
       }
-      drag = null;
-      dropAt = null;
+      onDragEnd();
     };
   }
   function onDragEnd() {
@@ -1291,6 +1290,21 @@
     void refreshAutostartState();
   }
 
+  async function updateCheckPreference(enabled: boolean): Promise<boolean> {
+    if (!appSettings) return false;
+    const previous = appSettings.checkUpdatesOnStartup;
+    appSettings.checkUpdatesOnStartup = enabled;
+    const patch = { checkUpdatesOnStartup: enabled };
+    const result = await writeSettings("check-updates", patch);
+    if (result.status === "completed") {
+      acceptSettingsReply(patch, result.value);
+      return true;
+    }
+    appSettings.checkUpdatesOnStartup = previous;
+    addNotice("error", "自動檢查更新偏好儲存失敗，請重試");
+    return false;
+  }
+
   async function pickSessionDir() {
     try {
       const d = await open({
@@ -1444,7 +1458,6 @@
       <div class="colhead">
         <span class="coltitle">輸入</span>
         <button class="mini" onclick={() => addTrack("audio")}>＋ Audio</button>
-        <button class="mini" onclick={() => addMicTrack()}>＋ Mic</button>
         <button class="mini" onclick={() => addTrack("app")}>＋ App</button>
         <button class="mini" onclick={() => addTrack("fx")}>＋ FX</button>
       </div>
@@ -1457,6 +1470,7 @@
         onscroll={(e) => onLaneScroll("input", e)}
         ondragstart={onDragStart("input")}
         ondragover={onDragOver("input")}
+        ondragleave={onDragLeave}
         ondrop={onDrop("input")}
         ondragend={onDragEnd}
       >
@@ -1480,7 +1494,7 @@
             onCancelScan={cancelScan}
             {openMenu}
             dropBefore={dropAt?.group === "input" && dropAt.pos === i}
-            dropAfter={dropAt?.group === "input" && dropAt.pos === i + 1}
+            dropAfter={dropAt?.group === "input" && dropAt.pos === i + 1 && dropAt.pos === inputTracks.length}
             dragging={drag?.id === t.trackId}
           />
         {:else}
@@ -1489,7 +1503,6 @@
             <p class="dim">還沒有輸入軌 —— 加入 Audio(App 軌抓程式聲音)、或從上次的 Session 恢復。</p>
             <div class="startrow">
               <button class="mini" onclick={() => addTrack("audio")}>＋ Audio 軌(麥克風/樂器)</button>
-              <button class="mini" onclick={() => addMicTrack()}>＋ Mic 軌(預設麥克風)</button>
               <button class="mini" onclick={() => addTrack("app")}>＋ App 軌(抓程式聲音)</button>
               <button class="mini" onclick={loadSession}>載入 Session…</button>
               {#if appSettings?.lastSessionPath}
@@ -1527,6 +1540,7 @@
         onscroll={(e) => onLaneScroll("output", e)}
         ondragstart={onDragStart("output")}
         ondragover={onDragOver("output")}
+        ondragleave={onDragLeave}
         ondrop={onDrop("output")}
         ondragend={onDragEnd}
       >
@@ -1550,7 +1564,7 @@
             onCancelScan={cancelScan}
             {openMenu}
             dropBefore={dropAt?.group === "output" && dropAt.pos === i}
-            dropAfter={dropAt?.group === "output" && dropAt.pos === i + 1}
+            dropAfter={dropAt?.group === "output" && dropAt.pos === i + 1 && dropAt.pos === outputTracks.length}
             dragging={drag?.id === t.trackId}
           />
         {:else}
@@ -1592,7 +1606,7 @@
   <div class="tabs">
     <button class:on={tab === "audio"} onclick={() => (tab = "audio")}>音訊 / Session</button>
     <button class:on={tab === "general"} onclick={openGeneral}>通用</button>
-    <button class:on={tab === "about"} onclick={() => (tab = "about")}>關於</button>
+    <button class:on={tab === "about"} onclick={() => (tab = "about")}>關於 / 更新</button>
   </div>
   {#if tab === "audio"}
     <div class="formrow">
@@ -1797,10 +1811,15 @@
       </div>
     {/if}
   {:else}
-    <h2>關於</h2>
-    <p>RoudaMix</p>
     <p class="dim mono">Engine 版本:{conn.engineVersion || "未知(尚未連線)"}</p>
   {/if}
+  <UpdatePanel
+    visible={tab === "about"}
+    autoCheck={appSettings ? (appSettings.checkUpdatesOnStartup ?? true) : undefined}
+    onShow={() => { tab = "about"; settingsOpen = true; }}
+    onPreference={updateCheckPreference}
+    onAvailable={(version) => addNotice("info", `有新版本 v${version} 可供下載，請至「設定 → 關於 / 更新」查看。`)}
+  />
 </dialog>
 
 <!-- 首次按主視窗關閉按鈕時選擇；偏好會寫入通用設定。Esc 僅取消本次關閉。 -->

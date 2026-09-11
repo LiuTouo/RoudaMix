@@ -32,6 +32,8 @@
   } from "./latencyControls";
   import { errorText, friendlyError } from "./errors";
   import AppPicker from "./AppPicker.svelte";
+  import PluginPicker from "./PluginPicker.svelte";
+  import DestinationSelect from "./DestinationSelect.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import type {
     AudioApp,
@@ -87,8 +89,7 @@
   } = $props();
 
   let err = $state("");
-  let scanDlg = $state<HTMLDialogElement | null>(null);
-  let destDlg = $state<HTMLDialogElement | null>(null);
+  let pluginPickerOpen = $state(false);
   // WASAPI render 裝置清單(focus 時拉,保持常新)
   let renderDevices = $state<RenderDevice[]>([]);
   // M6:capture(麥克風)裝置清單(focus 時拉;空 deviceId = 預設麥克風)
@@ -235,19 +236,23 @@
   /** P1-B:dests 本地疊加 —— 命令在飛時繼續勾選,以「本地最新 + 引擎回報」計算,
    *  使用者最後意圖不被 stale props 蓋掉;失敗 = err + engine 權威 status 對齊 */
   let destsLocal = $state<number[] | null>(null);
+  let destRequest = 0;
   $effect(() => {
     // engine 廣播追上本地值(或本地無疊加)= 清疊加
     if (destsLocal !== null && arraysEqual(track.dests, destsLocal)) destsLocal = null;
   });
   const shownDests = $derived(destsLocal ?? track.dests);
-  function toggleDest(destId: number, checked: boolean) {
+  async function toggleDest(destId: number, checked: boolean) {
     err = "";
+    const request = ++destRequest;
     const base = shownDests;
-    const dests = checked ? [...base, destId] : base.filter((d) => d !== destId);
+    const dests = checked ? [...new Set([...base, destId])] : base.filter((d) => d !== destId);
     destsLocal = dests;
-    mq.run(mutKey.track(track.trackId), "dests", () =>
+    const result = await mq.run(mutKey.track(track.trackId), "dests", () =>
       engineCommand("track_set_dests", { trackId: track.trackId, dests }),
     );
+    // 舊請求的失敗不能覆蓋後續勾選；最後一筆失敗才退回引擎回報值。
+    if (result.status === "failed" && request === destRequest) destsLocal = null;
   }
   function arraysEqual(a: number[], b: number[]): boolean {
     return a.length === b.length && a.every((v, i) => v === b[i]);
@@ -670,12 +675,8 @@
 
   async function addPlugin(path: string, classId: string) {
     err = "";
-    try {
-      await engineCommand("add_plugin", { trackId: track.trackId, path, classId });
-      scanDlg?.close(); // registry 共用,不清(別條軌直接用)
-    } catch (e) {
-      err = friendlyError(e).friendly;
-    }
+    // 選擇器保留搜尋狀態並呈現錯誤，成功才關閉；registry 仍由 App 共用。
+    await engineCommand("add_plugin", { trackId: track.trackId, path, classId });
   }
 
   // ---- P2-M:右鍵選單(移到最前/最後/上移/下移;拖曳之外的可發現路徑)----
@@ -975,13 +976,12 @@
     {/if}
   </div>
 
-  <button
-    class="destsbtn"
-    onclick={() => destDlg?.showModal()}
-    data-tooltip="設定此軌道的輸出路由；勾選目的地後立即套用。清單僅含 FX 與輸出軌。"
-  >
-    輸出到 ({shownDests.length}){destsLocal !== null ? " …" : ""}
-  </button>
+  <div class="row destination-row">
+    <span class="lbl">輸出到</span>
+    <DestinationSelect trackId={track.trackId} trackName={track.name}
+      options={destCandidates(tracks, track.trackId)} selected={shownDests}
+      pending={destsLocal !== null} onToggle={toggleDest} />
+  </div>
 
   <div class="lower">
   <div class="vstcol">
@@ -1114,13 +1114,16 @@
           {/if}
         </div>
       {:else}
-        <span class="dim">無插件</span>
+        <div class="empty-slot" class:drop-target={plugDropAt === 0}
+          role="listitem" aria-live="polite">
+          {plugDropAt === 0 ? "放開以複製插件" : "無插件"}
+        </div>
       {/each}
     </div>
     <div class="vstfoot">
       <button
         class="mini add"
-        onclick={() => scanDlg?.showModal()}
+        onclick={() => { pluginPickerOpen = true; }}
         data-tooltip="開啟共用的 VST plugin 清單；不會自動重新掃描。"
         >＋ 加入</button
       >
@@ -1140,88 +1143,19 @@
   ></button>
   </div>
 
-  <dialog bind:this={scanDlg} class="scanlistdlg">
-    <div class="cardhead dialog-head">
-      <span class="dialog-title">VST 插件列表 — 加入「{track.name}」</span>
-      <button
-        class="dialog-close"
-        type="button"
-        aria-label="關閉 plugin 選擇器"
-        onclick={() => scanDlg?.close()}
-        data-tooltip="關閉 plugin 選擇器，不加入任何項目。">×</button
-      >
-    </div>
-    {#if scanRunning}
-      <div class="scanlive">
-        <span class="dim"
-          >掃描中{scanProgress
-            ? ` ${scanProgress.done}/${scanProgress.total}`
-            : "…"}(背景執行,不擋操作)</span
-        >
-        <button class="mini" onclick={onCancelScan}>取消</button>
-      </div>
-    {:else if scanNotice}
-      <p class="err mono">{scanNotice}</p>
-    {/if}
-    {#if scanModules.length === 0 && !scanRunning}
-      <p class="dim">尚無 VST 清單 — 請按頂欄「掃描 VST」</p>
-    {:else}
-      <div class="scanlist">
-        {#each scanModules as m (m.path)}
-          <div class="mod">
-            <div class="modpath mono" data-tooltip={`Plugin 模組：\n${m.path}`}>{basename(m.path)}</div>
-            <div class="classes">
-              {#each m.classes as c (c.uid)}
-                <button
-                  class="mini"
-                  onclick={() => addPlugin(m.path, c.uid)}
-                  data-tooltip={`${c.vendor || "未知廠牌"} · ${c.version || "版本未提供"}`}
-                  >{c.name}</button
-                >
-              {/each}
-            </div>
-          </div>
-        {/each}
-      </div>
-      {#if scanFailed.length > 0}
-        <details class="quarantine">
-          <summary class="dim">無法載入({scanFailed.length})— 已隔離</summary>
-          {#each scanFailed as f (f.path)}
-            <div class="modpath mono" data-tooltip={`掃描失敗：${f.error}\n${f.path}`}>{basename(f.path)}:{f.error}</div>
-          {/each}
-        </details>
-      {/if}
-    {/if}
-  </dialog>
-
-  <dialog bind:this={destDlg} class="destlistdlg">
-    <div class="cardhead dialog-head">
-      <span class="dialog-title">輸出到 — 「{track.name}」</span>
-      <button
-        class="dialog-close"
-        type="button"
-        aria-label="關閉輸出路由設定"
-        onclick={() => destDlg?.close()}
-        data-tooltip="關閉輸出路由設定。">×</button
-      >
-    </div>
-    <div class="destlist">
-      <p class="dim desthint">清單僅列出可接收路由的軌道：FX 軌與輸出軌。</p>
-      {#each destCandidates(tracks, track.trackId) as t (t.trackId)}
-        <label class="dest">
-          <input
-            type="checkbox"
-            checked={shownDests.includes(t.trackId)}
-            onchange={(e) => toggleDest(t.trackId, e.currentTarget.checked)}
-          />
-          <span class="dot" style="background:{cssColor(t.color)}" aria-hidden="true"></span>
-          {t.name}
-        </label>
-      {:else}
-        <span class="dim">沒有可接收路由的軌道</span>
-      {/each}
-    </div>
-  </dialog>
+  {#if pluginPickerOpen}
+    <PluginPicker
+      trackName={track.name}
+      modules={scanModules}
+      failures={scanFailed}
+      {scanRunning}
+      {scanProgress}
+      {scanNotice}
+      onPick={addPlugin}
+      {onCancelScan}
+      onClose={() => { pluginPickerOpen = false; }}
+    />
+  {/if}
 
   <div class="fader">
     <div class="fctl">
@@ -1232,7 +1166,7 @@
         aria-label={track.mute ? `靜音中(點此取消)` : `靜音 ${track.name}`}
         onclick={() => setMute(!track.mute)}
         data-tooltip={track.mute ? "此軌目前已靜音；按下可取消靜音。" : "將此軌靜音。"}
-        >{track.mute ? "M✓" : "M"}</button
+        >M</button
       >
       <input
         type="range"
@@ -1315,12 +1249,12 @@
     border-style: dashed;
     border-color: var(--accent);
   }
-  /* 插入指示:inset 不被 overflow/鄰件裁切 */
+  /* 暫態落點優先於任何主題的面板陰影；inset 不被 overflow 裁切。 */
   .strip.dropbefore {
-    box-shadow: inset 3px 0 0 0 var(--accent);
+    box-shadow: inset 3px 0 0 0 var(--accent) !important;
   }
   .strip.dropafter {
-    box-shadow: inset -3px 0 0 0 var(--accent);
+    box-shadow: inset -3px 0 0 0 var(--accent) !important;
   }
   .head {
     display: flex;
@@ -1386,17 +1320,6 @@
   .lbl {
     color: var(--text-dim);
     font-size: 12px;
-    flex-shrink: 0;
-  }
-  .dest {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
     flex-shrink: 0;
   }
   /* VST 常駐 box:預設自適應內容(超出即內捲),拖底部把手可拉長 */
@@ -1529,31 +1452,34 @@
     padding: 0 5px;
     flex-shrink: 0;
   }
-  .scanlive {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .quarantine {
-    font-size: 11px;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-  .quarantine summary {
-    cursor: pointer;
-  }
   .plug.dragging {
     opacity: 0.35;
   }
   .vst.emptydrop {
-    box-shadow: inset 0 0 0 2px var(--accent);
+    /* 主題的面板陰影不可蓋過有效落點。 */
+    box-shadow: inset 0 0 0 2px var(--accent) !important;
+  }
+  .empty-slot {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 32px;
+    padding: 4px 6px;
+    border: 2px dashed transparent;
+    border-radius: 4px;
+    color: var(--text-dim);
+    pointer-events: none;
+  }
+  .empty-slot.drop-target {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    color: var(--text);
   }
   .plug.dropbefore {
-    box-shadow: inset 0 2px 0 0 var(--accent);
+    box-shadow: inset 0 3px 0 0 var(--accent) !important;
   }
   .plug.dropafter {
-    box-shadow: inset 0 -2px 0 0 var(--accent);
+    box-shadow: inset 0 -3px 0 0 var(--accent) !important;
   }
   .power {
     display: inline-flex;
@@ -1749,89 +1675,6 @@
     height: 4px;
     border-radius: 2px;
     margin: 0 -10px; /* 吃掉 padding,通欄 */
-  }
-  /* 掃描/輸出目的地列表 dialog(主視窗置中;手法同 settingsdlg:open 才套 display) */
-  .scanlistdlg,
-  .destlistdlg {
-    background: var(--bg-panel);
-    color: var(--text);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 14px 16px;
-    width: min(440px, 90vw);
-  }
-  .scanlistdlg[open],
-  .destlistdlg[open] {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    margin: 0;
-    /* P1-K:矮視窗不裁掉關閉鈕 —— 85vh 上限 + 內容捲動 */
-    max-height: 85vh;
-    overflow-y: auto;
-  }
-  .scanlistdlg::backdrop,
-  .destlistdlg::backdrop {
-    background: rgb(0 0 0 / 0.5);
-  }
-  .scanlistdlg .cardhead,
-  .destlistdlg .cardhead {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-weight: 600;
-    font-size: 13px;
-  }
-  .scanlistdlg p {
-    margin: 2px 0;
-  }
-  .destsbtn {
-    background: none;
-    border: none;
-    color: var(--text-dim);
-    padding: 0;
-    font-size: 12px;
-    text-align: left;
-    cursor: pointer;
-    align-self: flex-start;
-  }
-  .destsbtn:hover {
-    color: var(--text);
-  }
-  .destlist {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    max-height: 320px;
-    overflow-y: auto;
-  }
-  .desthint {
-    margin: 0;
-  }
-  .scanlist {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    max-height: 320px;
-    overflow-y: auto;
-  }
-  .mod {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-  .modpath {
-    color: var(--text-dim);
-    font-size: 10px;
-  }
-  .classes {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
   }
   .add {
     align-self: flex-start;

@@ -90,6 +90,25 @@ describe("VST 複製選單", () => {
   });
 });
 describe("跨音軌拖曳", () => {
+  it("空列表以可見文字標示落點，離開或放下後恢復空白狀態", async () => {
+    show();
+    const emptyList = racks()[2].querySelector<HTMLElement>(".vstlist")!;
+    expect(emptyList.textContent).toContain("無插件");
+    expect(emptyList.textContent).not.toContain("放開以複製插件");
+    drag(rows()[0], "dragstart");
+    drag(emptyList, "dragover", 100);
+    expect(emptyList.textContent).toContain("放開以複製插件");
+    expect(emptyList.querySelector(".empty-slot.drop-target")).not.toBeNull();
+    drag(racks()[2], "dragleave");
+    expect(emptyList.textContent).toContain("無插件");
+    expect(emptyList.querySelector(".drop-target")).toBeNull();
+    drag(emptyList, "dragover", 100);
+    drag(emptyList, "drop", 100);
+    await tick();
+    expect(command).toHaveBeenCalledExactlyOnceWith("duplicate_plugin", { instanceId: 1, trackId: 3, newIndex: 0 });
+    expect(emptyList.textContent).toContain("無插件");
+    expect(emptyList.querySelector(".drop-target")).toBeNull();
+  });
   it.each([[103, 0], [149, 1], [240, 2]])("依落點 %i 複製到位置 %i，保留剪貼簿及來源", async (y, newIndex) => {
     show(); await copyPlugin(1); command.mockClear();
     drag(rows()[0], "dragstart");
