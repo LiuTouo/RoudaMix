@@ -1,15 +1,5 @@
-import { test, expect, type Page } from '@playwright/test';
-
-// Explicit scrub mode keeps exact intermediate-frame tests deterministic.
-test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => localStorage.setItem('roudamix-demo-mode', 'scrub'));
-});
-
-async function seek(page: Page, stage: number, local: number) {
-  await page.evaluate(({ stage, local }) => window.scrollTo(0, (document.querySelector('#story')!.clientHeight - innerHeight) * (stage + local) / 7), { stage, local });
-  await expect(page.locator('.scene')).toHaveAttribute('data-stage', String(stage));
-  await page.waitForTimeout(60);
-}
+import { test, expect } from '@playwright/test';
+import { seek } from './seek';
 
 test('each operation demonstrates approach, selection and its signal result', async ({ page }, info) => {
   await page.goto('en/');

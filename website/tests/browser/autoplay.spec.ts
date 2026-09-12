@@ -1,21 +1,13 @@
 import { test, expect } from '@playwright/test';
 
-test('opening workspace visibly operates without any scrolling; pause and replay work', async ({ page }, info) => {
+test('opening workspace visibly operates without any scrolling', async ({ page }, info) => {
   await page.goto('en/');
   const demo = page.locator('.scene-presentation');
-  await expect(demo).toHaveAttribute('data-playback', 'auto');
   const original = await page.locator('.scene').getAttribute('style');
   await expect.poll(async () => Number(await demo.getAttribute('data-phase'))).toBeGreaterThan(.28);
   expect(await page.locator('.scene').getAttribute('style')).not.toBe(original);
   expect(await page.evaluate(() => scrollY)).toBe(0);
   await expect(page.locator('.waveform')).toHaveClass(/receiving/, { timeout: 6000 });
-  await page.getByRole('button', { name: 'Pause animation' }).click();
-  const paused = await demo.getAttribute('data-phase');
-  await page.waitForTimeout(250);
-  expect(await demo.getAttribute('data-phase')).toBe(paused);
-  expect(await page.locator('.waveform i').first().evaluate(node => getComputedStyle(node).animationPlayState)).toBe('paused');
-  await page.getByRole('button', { name: 'Replay', exact: true }).click();
-  expect(Number(await demo.getAttribute('data-phase'))).toBeLessThan(.15);
   await expect(page.locator('.output.stream')).toContainText('CABLE Input', { timeout: 8500 });
   await page.screenshot({ path: info.outputPath('autoplay-result.png'), scale: 'css' });
 });

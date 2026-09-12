@@ -4,7 +4,7 @@
   import { content, type Locale } from './content';
   import MotionPointer from './MotionPointer.svelte';
   import { heroMotion } from './heroMotion';
-  let { progress, locale, paused = false, covered = false, overviewPhase }: { progress: number; locale: Locale; paused?: boolean; covered?: boolean; overviewPhase?: number } = $props();
+  let { progress, locale, covered = false, overviewPhase }: { progress: number; locale: Locale; covered?: boolean; overviewPhase?: number } = $props();
   const m = $derived(overviewPhase === undefined ? workflowMotion(progress) : heroMotion(overviewPhase));
   const t = $derived(content[locale]);
   const zh = $derived(locale === 'zh');
@@ -21,7 +21,7 @@
   });
 </script>
 
-<div bind:this={root} class="scene animated-workflow" class:is-active={sceneVisible && !covered} class:demo-paused={paused} class:started={m.stage > 0} data-stage={m.stage}
+<div bind:this={root} class="scene animated-workflow" class:is-active={sceneVisible && !covered} class:started={m.stage > 0} data-stage={m.stage}
   style={`--signal-offset:${-progress * 1800}px; --launch-scale:${0.82 + m.launch * 0.18}; --launch-rotate:${(1 - m.launch) * -5}deg; --focus:${m.focus}; --monitor-route:${m.monitorRoute}; --stream-route:${m.streamRoute}; --bypass:${m.bypassMix}; --input-reveal:${m.inputReveal}`}>
   <div class="signal-orbit" aria-hidden="true"></div>
   <div class="source-cloud" aria-hidden="true">
