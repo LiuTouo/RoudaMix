@@ -10,6 +10,7 @@ test('opening workspace visibly operates without any scrolling', async ({ page }
   await expect(page.locator('.waveform')).toHaveClass(/receiving/, { timeout: 6000 });
   await expect(page.locator('.output.stream')).toContainText('CABLE Input', { timeout: 8500 });
   await page.screenshot({ path: info.outputPath('autoplay-result.png'), scale: 'css' });
+  await expect(page.locator('.scene')).toHaveAttribute('data-stage', '1', { timeout: 12000 });
 });
 
 test('chapter links scroll smoothly, animate the scene, and start that chapter demo', async ({ page }) => {

@@ -12,6 +12,8 @@
   let scrubbing = false;
   let scrubTarget = 0;
   let visible = false;
+  let userTookOver = false;
+  let hold = 0;
   let sceneAnimation: Animation | undefined;
   const raw = $derived(storyState(progress));
   $effect(() => { onphase?.(phase); });
@@ -56,6 +58,21 @@
           if (now > manualUntil && phase === scrubTarget) scrubbing = false;
         } else {
           phase = Math.min(0.98, phase + delta / 6800);
+          // Auto-tour: after a chapter finishes, hold on the result briefly,
+          // then advance to the next chapter (looping 07 back to 01) by
+          // scrolling — the chapter reset replays it from its start. Any
+          // manual scroll or navigation hands control back for good.
+          if (phase >= 0.98 && !userTookOver) {
+            hold += delta;
+            if (hold >= 1800) {
+              hold = 0;
+              const story = document.querySelector('#story');
+              if (story) {
+                const targetStage = raw.stage >= 6 ? 0 : raw.stage + 1;
+                window.scrollTo(0, (story.clientHeight - innerHeight) * (targetStage + 0.78) / 7);
+              }
+            }
+          } else hold = 0;
         }
       }
       frame = requestAnimationFrame(tick);
@@ -76,15 +93,17 @@
     size.observe(presentation!);
     size.observe(presentation!.querySelector('.mix-window')!);
     fit();
-    const scrub = () => { scrubbing = true; manualUntil = performance.now() + 450; };
+    const scrub = () => { userTookOver = true; scrubbing = true; manualUntil = performance.now() + 450; };
     const arrive = () => { phase = 0; scrubTarget = 0; scrubbing = false; manualUntil = 0; };
+    const stopTour = () => { userTookOver = true; };
     window.addEventListener('wheel', scrub, { passive: true });
     window.addEventListener('touchmove', scrub, { passive: true });
     window.addEventListener('roudamix:chapter-ready', arrive);
+    window.addEventListener('roudamix:navigate', stopTour);
     frame = requestAnimationFrame(tick);
     return () => {
       cancelAnimationFrame(frame); observer.disconnect(); size.disconnect(); sceneAnimation?.cancel();
-      window.removeEventListener('wheel', scrub); window.removeEventListener('touchmove', scrub); window.removeEventListener('roudamix:chapter-ready', arrive);
+      window.removeEventListener('wheel', scrub); window.removeEventListener('touchmove', scrub); window.removeEventListener('roudamix:chapter-ready', arrive); window.removeEventListener('roudamix:navigate', stopTour);
     };
   });
 </script>
