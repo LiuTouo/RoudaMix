@@ -4,7 +4,7 @@
   import { storyState } from './story';
   import type { Locale } from './content';
 
-  let { progress, locale, covered = false }: { progress: number; locale: Locale; covered?: boolean } = $props();
+  let { progress, locale, covered = false, onphase }: { progress: number; locale: Locale; covered?: boolean; onphase?: (phase: number) => void } = $props();
   let phase = $state(0);
   let presentation = $state<HTMLDivElement>();
   let previousStage = -1;
@@ -14,6 +14,7 @@
   let visible = false;
   let sceneAnimation: Animation | undefined;
   const raw = $derived(storyState(progress));
+  $effect(() => { onphase?.(phase); });
 
   $effect(() => {
     const next = storyState(progress);

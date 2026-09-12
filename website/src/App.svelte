@@ -37,6 +37,7 @@
   let latest = $state<LatestRelease | null>(null);
   const sceneState = $derived(storyState(progress));
   const chapterIndex = $derived(sceneState.stage);
+  let demoPhase = $state(0);
   const languageHash = $derived(currentSection === 'story' ? chapters[sceneState.stage] : currentSection);
 
   $effect(() => {
@@ -214,14 +215,14 @@
           {/if}
           <span class="sr-only" id="story-heading" tabindex="-1">{t.scenes[sceneState.stage][0]}</span>
         </div>
-        <Scene {progress} {locale} covered={storyCovered} />
+        <Scene {progress} {locale} covered={storyCovered} onphase={(p) => demoPhase = p} />
       </div>
       <div class="story-bottom"><span class="scroll-instruction"><span aria-hidden="true">↓</span>{t.scroll}</span><a href="#guide" onclick={(event) => { event.preventDefault(); navigateTo('guide'); }}>{t.skip} <span aria-hidden="true">↘</span></a></div>
     </div>
   </section>
 
   <nav class="chapter-nav" class:out-of-story={chapterCovered} aria-label={t.chapterLabel}>
-    {#each chapters as id, index}<a href={`#${id}`} aria-label={`${index + 1}. ${t.scenes[index][2]}`} aria-current={sceneState.stage === index ? 'step' : undefined} onclick={(event) => { event.preventDefault(); navigateTo(id); }}><span class="mono">0{index + 1}</span><span class="chapter-name">{t.scenes[index][2]}</span><i style={`--fill:${sceneState.stage > index ? 1 : sceneState.stage === index ? sceneState.local : 0}`}></i></a>{/each}
+    {#each chapters as id, index}<a href={`#${id}`} aria-label={`${index + 1}. ${t.scenes[index][2]}`} aria-current={sceneState.stage === index ? 'step' : undefined} onclick={(event) => { event.preventDefault(); navigateTo(id); }}><span class="mono">0{index + 1}</span><span class="chapter-name">{t.scenes[index][2]}</span><i style={`--fill:${sceneState.stage > index ? 1 : sceneState.stage === index ? demoPhase : 0}`}></i></a>{/each}
   </nav>
 
   <span id="guide-start" class="section-anchor" aria-hidden="true"></span>
