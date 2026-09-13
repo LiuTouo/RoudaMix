@@ -1046,8 +1046,26 @@
   function onLaneScroll(group: LaneGroup, e: Event): void {
     const el = e.currentTarget as HTMLElement;
     laneScroll[group] = el.scrollLeft;
-    laneWidth[group] = el.clientWidth;
   }
+
+  // 首繪/視窗縮放補寬度:laneWidth 原本只在 scroll 時更新,初值 0 → 首繪只渲染
+  // ~4 strips。ResizeObserver 補上(掛載同步一次,縮放反應);scroll 只管 scrollLeft。
+  $effect(() => {
+    const observers: ResizeObserver[] = [];
+    for (const group of ["input", "output"] as const) {
+      const el = bindLane(group);
+      if (!el) continue;
+      laneWidth[group] = el.clientWidth;
+      const ro = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          laneWidth[group] = entry.contentRect.width;
+        }
+      });
+      ro.observe(el);
+      observers.push(ro);
+    }
+    return () => observers.forEach((ro) => ro.disconnect());
+  });
 
   function lanePos(lane: HTMLElement, x: number, count: number): number {
     // 虛擬化安全:幾何計算,不查 DOM
