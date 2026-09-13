@@ -76,6 +76,9 @@
     if (open && generation !== loadedGeneration && !loading) void refresh(generation);
   });
   $effect(() => {
+    // 關閉(open === false)時不訂閱 meters 推流:EWMA/history/peak 全停
+    // (每 tick 攤開 + Math.max 150 筆 × plugin 數)。
+    if (!open) return;
     if (!meters?.pluginLoads) return;
     const next = { ...untrack(() => loadView) };
     for (const load of meters.pluginLoads) {
