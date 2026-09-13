@@ -350,16 +350,16 @@ console.log('__engine_status__ stub installed');
     Assert ($null -ne $src -and $src.type -eq 'asioIn') "audio source wired (got $($src | ConvertTo-Json -Compress))"
     Assert ($src.channel -eq 2) "asioIn channel = 2 (got $($src.channel))"
 
-    # --- 7. 目的地多選:置中 dialog 勾選(每次點擊後 Svelte 重渲會換節點)→ engine dests = 2 ---
-    [void](EvalJs "(() => { document.querySelector('.strip .destsbtn').click(); return true; })()" 5000)
+    # --- 7. 目的地多選:popover picker 勾選 → engine dests = 2 ---
+    [void](EvalJs "(() => { document.querySelector('.strip .destination-trigger').click(); return true; })()" 5000)
     Start-Sleep -Milliseconds 400
-    $dopen = EvalJs "(() => { const d = document.querySelector('.destlistdlg'); return !!(d && d.open && d.querySelector('input[type=checkbox]')); })()" 5000
-    Assert ($dopen) 'dests dialog open with checkboxes'
-    [void](EvalJs "(() => { document.querySelector('.destlistdlg input[type=checkbox]').click(); return true; })()" 5000)
+    $dopen = EvalJs "(() => { const d = document.querySelector('.destination-popup'); return !!(d && d.matches(':popover-open') && d.querySelector('input[type=checkbox]')); })()" 5000
+    Assert ($dopen) 'dests popover open with checkboxes'
+    [void](EvalJs "(() => { document.querySelector('.destination-popup input[type=checkbox]').click(); return true; })()" 5000)
     Start-Sleep -Milliseconds 600
     [void](EvalJs @"
 (() => {
-  const boxes = document.querySelectorAll('.destlistdlg input[type=checkbox]');
+  const boxes = document.querySelectorAll('.destination-popup input[type=checkbox]');
   const unchecked = [...boxes].find(b => !b.checked);
   if (unchecked) { unchecked.click(); return true; }
   return false;
@@ -368,9 +368,9 @@ console.log('__engine_status__ stub installed');
     Start-Sleep -Milliseconds 600
     $dests = EvalJs "window.__engine.tracks.find(t => t.kind === 'audio').dests" 5000
     Assert ($dests.length -eq 2) "dests multi-select wired (got $($dests.length))"
-    [void](EvalJs "document.querySelector('.destlistdlg').close()" 5000)
+    [void](EvalJs "(() => { const p = document.querySelector('.destination-popup'); if (p && p.matches(':popover-open')) p.hidePopover(); return true; })()" 5000)
     Start-Sleep -Milliseconds 300
-    Write-Host "routing: audio dests = $($dests.length) tracks (dialog picker)"
+    Write-Host "routing: audio dests = $($dests.length) tracks (popover picker)"
 
     # --- 8. VST:掃描 → 置中 dialog 列表 → 加第一個 → 電源 bypass ---
     [void](EvalJs "(() => { const b = document.querySelectorAll('.lanes')[0].querySelector('.strip .vst button.add'); b.click(); return true; })()" 5000)
