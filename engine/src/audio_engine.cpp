@@ -600,7 +600,11 @@ std::optional<Failure> AudioEngine::start(const std::string& device_key,
         if (!rollback.clock->start(err))
             return failure(Err::kDeviceOpenFailed,
                            std::string("wasapi start failed: ") + err);
-        Sleep(600);
+        // liveness 輪詢:callback 一前進即過(20ms 步進,600ms 預算)。
+        // Start 體感 600ms → ~1-2 個 buffer 週期;死流(600ms 內零 callback)
+        // 維持原判失敗與錯誤訊息。
+        for (int i = 0; i < 30 && rollback.clock->callbacks() == callbacks_before; ++i)
+            Sleep(20);
         if (rollback.clock->callbacks() == callbacks_before)
             return failure(Err::kDeviceOpenFailed,
                            "wasapi render stream did not deliver callbacks at " +
@@ -612,8 +616,10 @@ std::optional<Failure> AudioEngine::start(const std::string& device_key,
             return failure(Err::kDeviceOpenFailed,
                            std::string("ASIO start failed after rack ready: ") + err);
         // SSL 這類 driver:start() 回 OK 但硬體時脈沒換時 callback 從不來(死流)。
-        // 短等驗證沒 callback 就明確失敗,引導用硬體面板改率(600ms:Start 鍵可感知延遲)
-        Sleep(600);
+        // liveness 輪詢(20ms 步進,600ms 預算):callback 一前進即過,Start
+        // 體感 600ms → ~1-2 個 buffer 週期;死流維持原判失敗與引導訊息。
+        for (int i = 0; i < 30 && device_.callbacks() == callbacks_before; ++i)
+            Sleep(20);
         if (device_.callbacks() == callbacks_before)
             return failure(Err::kDeviceOpenFailed,
                            "driver did not deliver audio callbacks at " + std::to_string(rate) +
