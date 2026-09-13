@@ -19,6 +19,7 @@
 #include "app_capture.hpp"
 #include "mic_capture.hpp"
 #include "render_sink.hpp"
+#include "rt_thread.hpp"
 
 namespace rmx {
 
@@ -639,6 +640,7 @@ std::optional<Failure> AudioEngine::start(const std::string& device_key,
         exiting_.store(false, std::memory_order_release);
         publish_thread_ = std::thread([this] {
             using clock = std::chrono::steady_clock;
+            rt::denormals_off();  // 頻譜 FFT 跑小值,避免 denormal 慢路徑
             auto next = clock::now();
             while (!exiting_.load(std::memory_order_acquire)) {
                 next += std::chrono::milliseconds(33);  // ~30Hz

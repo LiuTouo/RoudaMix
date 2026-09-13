@@ -1,4 +1,5 @@
 #include "render_sink.hpp"
+#include "rt_thread.hpp"
 
 #include <windows.h>
 
@@ -129,6 +130,8 @@ void RenderSink::stop() noexcept {
 // pump thread:事件驅動,padding 補幀;DriftReader 做反向漂移(ASIO→裝置 clock)
 void RenderSink::pump() {
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    rt::boost(false);
+    rt::denormals_off();
     auto* client = static_cast<IAudioClient*>(audio_client_);
     auto* render = static_cast<IAudioRenderClient*>(render_client_);
     auto ev = static_cast<HANDLE>(event_);

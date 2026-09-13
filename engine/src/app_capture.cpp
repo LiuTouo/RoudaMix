@@ -1,6 +1,7 @@
 #include "app_capture.hpp"
 
 #include "pcm_convert.hpp"
+#include "rt_thread.hpp"
 
 #define PSAPI_VERSION 1  // K32* 進 kernel32,免鏈 psapi.lib
 #include <windows.h>
@@ -279,6 +280,8 @@ void AppCapture::stop() noexcept {
 // 退出時於本執行緒 Release(MTA;WASAPI 物件 free-threaded,跨 thread 持有安全)
 void AppCapture::pump() {
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    rt::boost(false);
+    rt::denormals_off();
     auto* client = static_cast<IAudioClient*>(audio_client_);
     auto* capture = static_cast<IAudioCaptureClient*>(capture_client_);
     auto ev = static_cast<HANDLE>(event_);
