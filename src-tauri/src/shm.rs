@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 use serde_json::json;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 const FILE_MAP_READ: u32 = 0x0004;
 const TELEMETRY_NAME: &str = "Local\\roudamix-telemetry";
@@ -127,6 +127,18 @@ pub fn start(app: AppHandle) {
             }
             stale_polls = 0;
             last_seq = block.sequence;
+            // 視窗最小化/隱藏(含縮到系統匣)時 UI 的 rAF 本來就停了,推送只是
+            // 白燒 JSON 編碼+事件序列化;跳過,還原後下一 tick(≤33ms)補上最新。
+            let hidden = app
+                .get_webview_window("main")
+                .map(|w| {
+                    w.is_minimized().unwrap_or(false)
+                        || !w.is_visible().unwrap_or(true)
+                })
+                .unwrap_or(false);
+            if hidden {
+                continue;
+            }
             let _ = app.emit("meters", to_json(&block));
         }
     });
