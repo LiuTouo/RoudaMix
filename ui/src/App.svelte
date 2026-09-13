@@ -8,6 +8,7 @@
   } from "@tauri-apps/plugin-autostart";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import TrackStrip from "./lib/TrackStrip.svelte";
+  import SpectrumCanvas from "./lib/SpectrumCanvas.svelte";
   import UpdatePanel from "./lib/UpdatePanel.svelte";
   import { resetPluginTransfer } from "./lib/pluginTransfer";
   import LatencyDrawer from "./lib/LatencyDrawer.svelte";
@@ -1458,6 +1459,15 @@
 </header>
 
 <main>
+  <!-- 頻譜:SHM 30Hz dB bins 畫 log-freq bars;<details> 原生收合(收合=unmount,零成本) -->
+  <details class="spectrum-band" open>
+    <summary>頻譜</summary>
+    <SpectrumCanvas
+      spectrum={meters?.spectrum ?? null}
+      sampleRate={status?.sampleRate ?? 0}
+      height={96}
+    />
+  </details>
   <!-- 單一水平帶:輸入群組(左)→ 輸出群組(右),都往右長;超出寬度橫向卷動(shift+滾輪原生) -->
   <section class="board">
     <!-- 輸入群組:audio / app / fx -->
@@ -2054,6 +2064,17 @@
     flex: 1;
     min-height: 0;
     min-width: 0;
+  }
+  /* 頻譜帶:<details> 原生收合;summary 細條,canvas 佔滿寬 */
+  .spectrum-band {
+    flex: 0 0 auto;
+  }
+  .spectrum-band summary {
+    cursor: pointer;
+    user-select: none;
+    font-size: 11px;
+    color: #8a93a3;
+    padding: 2px 0 6px;
   }
   /* 單一水平帶:輸入群組(左)+ 輸出群組(右);超出寬 = 橫向卷動(shift+滾輪原生) */
   .board {

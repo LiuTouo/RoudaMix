@@ -27,6 +27,8 @@
   let latest: number[] | null = $state(null);
   let latestRate = 0;
   let barVals = new Float32Array(BARS); // 平滑後 0..1
+  let verts = new Float32Array(BARS * 8); // 頂點/顏色預配置;每幀 bufferSubData 上傳
+  let colors = new Float32Array(BARS * 12);
 
   // 頻譜 bin(線性)→ 每 bar 的 [lo, hi) bin 範圍(log-freq)。bin 數/率變動才重算
   let mapBins: Array<[number, number]> = [];
@@ -63,11 +65,25 @@
 
     function draw() {
       if (!canvas) return;
+      sizeCanvas();
       if (gl) drawGl();
       else if (gl2d) draw2d(gl2d);
       raf = requestAnimationFrame(draw);
     }
   });
+
+  // 尺寸/DPR:每幀比對,變了才重設(重設 canvas.width 會清 drawing buffer,
+  // 但下一個 draw 全重畫,無所謂)。WebGL/2D 共用。
+  function sizeCanvas() {
+    if (!canvas) return;
+    const dpr = window.devicePixelRatio || 1;
+    const cw = Math.round(canvas.clientWidth * dpr);
+    const ch = Math.round(canvas.clientHeight * dpr);
+    if (cw > 0 && ch > 0 && (canvas.width !== cw || canvas.height !== ch)) {
+      canvas.width = cw;
+      canvas.height = ch;
+    }
+  }
 
   function sampleBars(): Float32Array {
     const out = barVals;
@@ -115,11 +131,13 @@
     g.useProgram(prog);
     vbo = g.createBuffer();
     g.bindBuffer(g.ARRAY_BUFFER, vbo);
+    g.bufferData(g.ARRAY_BUFFER, BARS * 8 * 4, g.DYNAMIC_DRAW); // 一次配置,之後 subData
     const pLoc = g.getAttribLocation(prog, "p");
     g.enableVertexAttribArray(pLoc);
     g.vertexAttribPointer(pLoc, 2, g.FLOAT, false, 0, 0);
     cbo = g.createBuffer();
     g.bindBuffer(g.ARRAY_BUFFER, cbo);
+    g.bufferData(g.ARRAY_BUFFER, BARS * 12 * 4, g.DYNAMIC_DRAW);
     const cLoc = g.getAttribLocation(prog, "c");
     g.enableVertexAttribArray(cLoc);
     g.vertexAttribPointer(cLoc, 3, g.FLOAT, false, 0, 0);
@@ -132,8 +150,6 @@
     g.clearColor(0.055, 0.06, 0.07, 1);
     g.clear(g.COLOR_BUFFER_BIT);
     const vals = sampleBars();
-    const verts = new Float32Array(BARS * 8);
-    const colors = new Float32Array(BARS * 12);
     const bw = 2 / BARS;
     for (let b = 0; b < BARS; b++) {
       const x = -1 + b * bw;
@@ -152,9 +168,9 @@
       }
     }
     g.bindBuffer(g.ARRAY_BUFFER, vbo);
-    g.bufferData(g.ARRAY_BUFFER, verts, g.DYNAMIC_DRAW);
+    g.bufferSubData(g.ARRAY_BUFFER, 0, verts);
     g.bindBuffer(g.ARRAY_BUFFER, cbo);
-    g.bufferData(g.ARRAY_BUFFER, colors, g.DYNAMIC_DRAW);
+    g.bufferSubData(g.ARRAY_BUFFER, 0, colors);
     // 每 bar 4 頂點(bl,br,tr,tl)的 strip;TRIANGLES 需 6 頂點會越界讀 buffer =
     // GL_INVALID_OPERATION、整批 draw 被丟棄(實測踩過)
     g.drawArrays(g.TRIANGLE_STRIP, 0, BARS * 4);
