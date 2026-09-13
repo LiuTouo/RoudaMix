@@ -71,6 +71,58 @@
 
   const TICKS = [0, -6, -12, -24, -36, -48, -60];
 
+  // 靜態層(軌底、格線、dB 刻度+數字):只在尺寸變時重繪一次,每幀一次 drawImage
+  // 貼回,消滅每幀 7 次 fillText;配合下方「未變幀跳過」,靜音/穩態 strip 停止重畫。
+  let staticLayer: HTMLCanvasElement | null = null;
+  let staticKey = "";
+  function staticLayerFor(w: number, h: number, dpr: number): HTMLCanvasElement {
+    const key = `${w}x${h}@${dpr}`;
+    if (staticLayer && staticKey === key) return staticLayer;
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round(w * dpr));
+    c.height = Math.max(1, Math.round(h * dpr));
+    const s = c.getContext("2d")!;
+    s.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const gutter = 24; // 右側 dB 刻度
+    const plotW = w - gutter;
+    const barW = Math.floor((plotW - 3) / 2);
+    const top = 5;
+    const plotH = h - 10;
+
+    // 軌底 + 淡格線(與舊版逐像素同布局)
+    for (const b of [{ x: 0 }, { x: barW + 3 }]) {
+      s.fillStyle = "#171a1f";
+      s.fillRect(b.x, top, barW, plotH);
+    }
+    s.fillStyle = "rgba(255, 255, 255, 0.06)";
+    for (const v of TICKS) s.fillRect(0, Math.round(y(v, top, plotH)), plotW, 1);
+
+    // dB 刻度:短 tick + 數字
+    s.font = "9px monospace";
+    s.textBaseline = "middle";
+    for (const v of TICKS) {
+      const ty = Math.round(y(v, top, plotH));
+      s.fillStyle = TICK_COLOR;
+      s.fillRect(plotW, ty, 4, 1);
+      s.fillText(String(v), plotW + 6, ty);
+    }
+    staticLayer = c;
+    staticKey = key;
+    return c;
+  }
+
+  // 上一幀繪製指紋:量化到 px 的可視幾何 + 尺寸;相同 → 本幀跳過不重畫。
+  let lastKey = "";
+  function frameKey(w: number, h: number, dpr: number, top: number, plotH: number): string {
+    const ry = (dbv: number) => Math.round(y(dbv, top, plotH));
+    return [
+      w, h, dpr,
+      ry(disp.rmsL), ry(disp.rmsR),
+      ry(disp.peakL), ry(disp.peakR),
+      clipHold.left ? 1 : 0, clipHold.right ? 1 : 0,
+    ].join(",");
+  }
+
   function clearClipHold(event: MouseEvent) {
     event.preventDefault();
     event.stopPropagation();
@@ -123,16 +175,14 @@
     const top = 5;
     const plotH = h - 10; // 上下留白:0/-60 的 tick 與數字不裁切
 
-    // 軌底 + 淡格線(每個 tick 一條,讀數好對位)
-    for (const b of [
-      { x: 0 },
-      { x: barW + gap },
-    ]) {
-      ctx.fillStyle = "#171a1f";
-      ctx.fillRect(b.x, top, barW, plotH);
-    }
-    ctx.fillStyle = "rgba(255, 255, 255, 0.06)";
-    for (const v of TICKS) ctx.fillRect(0, Math.round(y(v, top, plotH)), plotW, 1);
+    // 未變幀跳過:量化到 px 的可視幾何與上一幀相同 → 本幀零繪製。
+    const key = frameKey(w, h, dpr, top, plotH);
+    if (key === lastKey) return;
+    lastKey = key;
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    ctx.drawImage(staticLayerFor(w, h, dpr), 0, 0, w, h);
 
     const bars = [
       { x: 0, rms: disp.rmsL, peak: disp.peakL, clipped: clipHold.left },
@@ -154,16 +204,6 @@
         ctx.fillStyle = CLIP_COLOR;
         ctx.fillRect(b.x, top, barW, 3);
       }
-    }
-
-    // dB 刻度:短 tick + 數字(中線對位,線不橫穿數字)
-    ctx.font = "9px monospace";
-    ctx.textBaseline = "middle";
-    for (const v of TICKS) {
-      const ty = Math.round(y(v, top, plotH));
-      ctx.fillStyle = TICK_COLOR;
-      ctx.fillRect(plotW, ty, 4, 1);
-      ctx.fillText(String(v), plotW + 6, ty);
     }
   }
 </script>
