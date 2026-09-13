@@ -1,6 +1,12 @@
 import assert from "node:assert";
 import { test } from "node:test";
-import { destCandidates, stripEngineOut, stripOfPlugin, stripOfTrack } from "./tracks.ts";
+import {
+  destCandidates,
+  indexByTrackId,
+  stripEngineOut,
+  stripOfPlugin,
+  stripOfTrack,
+} from "./tracks.ts";
 import type { MeterStrip, TelemetryStripIdentity, Track } from "./types.ts";
 
 const meter = (peakL: number, instanceId: number, kind: number): MeterStrip => ({
@@ -82,4 +88,30 @@ test("#11 路由目的地清單排除來源軌(audio/app)與自身,保留 fx/out
 test("#11 全為來源軌時清單為空(驅動空狀態說明)", () => {
   const tracks: Track[] = [mkTrack(1, "audio"), mkTrack(2, "app")];
   assert.deepEqual(destCandidates(tracks, 1), []);
+});
+
+test("indexByTrackId 與線性 stripOfTrack 查找等價(first-wins + 校驗語義)", () => {
+  const strips = [
+    meter(0.1, 404, 40),
+    meter(0.2, 11, 30),
+    meter(0.3, 0xffffffff, 10),
+    meter(0.4, 7, 20),
+    meter(0.5, 7, 20), // 重複 trackId:find 語義 = first-wins
+  ];
+  const table: TelemetryStripIdentity[] = [
+    { id: 2, kind: 10, trackId: null, instanceId: null },
+    { id: 3, kind: 20, trackId: 7, instanceId: null },
+    { id: 1, kind: 30, trackId: 7, instanceId: 11 },
+    { id: 4, kind: 20, trackId: 7, instanceId: null }, // 第二筆 track 7:不入索引
+  ];
+  const view = { table, strips };
+  const indexed = { ...view, byTrackId: indexByTrackId(view) };
+
+  assert.equal(indexed.byTrackId?.get(7), strips[3]);
+  assert.equal(stripOfTrack(7, indexed), strips[3]);
+  // 無索引(MeterStripView 舊形)時退回線性查找,行為不變。
+  assert.equal(stripOfTrack(7, view), strips[3]);
+  // 校驗語義同 stripFor:kind/instanceId 不符不入索引。
+  const badKind = { table: [{ id: 0, kind: 99, trackId: 7, instanceId: null }], strips };
+  assert.equal(stripOfTrack(7, { ...badKind, byTrackId: indexByTrackId(badKind) }), undefined);
 });

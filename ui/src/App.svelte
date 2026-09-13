@@ -22,6 +22,7 @@
     type RevisionDirtyState,
   } from "./lib/revisionDirty";
   import { applyStatus, type AuthoritativeStatusPayload } from "./lib/applyStatus";
+  import { indexByTrackId } from "./lib/tracks";
   import {
     initialDeviceStream,
     isDeviceStreamBusy,
@@ -273,7 +274,11 @@
 
   const tracks = $derived<Track[]>(status?.tracks ?? []);
   const telemetryStrips = $derived(status?.telemetryStrips ?? []);
-  const meterView = $derived({ table: telemetryStrips, strips: meters?.strips });
+  const meterView = $derived.by(() => {
+    const view = { table: telemetryStrips, strips: meters?.strips };
+    // 每 tick 建一次 O(1) 索引;strip 級元件 O(1) 查,不再每 strip 掃表。
+    return { ...view, byTrackId: indexByTrackId(view) };
+  });
   const inputTracks = $derived(tracks.filter((t) => t.kind !== "output"));
   const outputTracks = $derived(tracks.filter((t) => t.kind === "output"));
 
