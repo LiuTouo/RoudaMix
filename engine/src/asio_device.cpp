@@ -1,6 +1,7 @@
 // NOMINMAX 先定義,Windows.h 的 min/max 巨集不得污染 std::min/std::max
 #define NOMINMAX
 #include "asio_device.hpp"
+#include "rt_thread.hpp"
 
 #include <Objbase.h>
 #include <Windows.h>
@@ -99,6 +100,9 @@ struct AsioDevice::Impl {
             owner->xruns_.fetch_add(1, std::memory_order_relaxed);
             return;
         }
+        // driver thread 進場:一次性 MMCSS boost + 每塊 denormal 遮罩
+        rt::boost(true);
+        rt::denormals_off();
         const std::size_t half = static_cast<std::size_t>(index);
         const std::size_t frames = owner->block_size_;
         for (std::size_t i = 0; i < in_count_; ++i) {

@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "pcm_convert.hpp"
+#include "rt_thread.hpp"
 
 namespace rmx {
 
@@ -127,6 +128,8 @@ void MicCapture::stop() noexcept {
 // 退出時於本執行緒 Release(MTA;WASAPI 物件 free-threaded,跨 thread 持有安全)
 void MicCapture::pump() {
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    rt::boost(false);
+    rt::denormals_off();
     auto* client = static_cast<IAudioClient*>(audio_client_);
     auto* capture = static_cast<IAudioCaptureClient*>(capture_client_);
     auto ev = static_cast<HANDLE>(event_);
