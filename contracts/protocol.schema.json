@@ -213,6 +213,7 @@
         "color",
         "source",
         "dests",
+        "sidechain",
         "output",
         "gain",
         "mute",
@@ -253,6 +254,12 @@
           "$ref": "#/$defs/trackSource"
         },
         "dests": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/u32"
+          }
+        },
+        "sidechain": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/u32"
@@ -1112,6 +1119,41 @@
                   "$ref": "#/$defs/u32"
                 },
                 "dests": {
+                  "$ref": "#/$defs/u32Array"
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "protocolVersion",
+            "id",
+            "kind",
+            "payload"
+          ],
+          "properties": {
+            "protocolVersion": {
+              "const": 2
+            },
+            "id": {
+              "$ref": "#/$defs/u64"
+            },
+            "kind": {
+              "const": "track_set_sidechain"
+            },
+            "payload": {
+              "type": "object",
+              "required": [
+                "trackId",
+                "sources"
+              ],
+              "properties": {
+                "trackId": {
+                  "$ref": "#/$defs/u32"
+                },
+                "sources": {
                   "$ref": "#/$defs/u32Array"
                 }
               }

@@ -95,6 +95,7 @@ void check_command_result_schemas() {
         {"track_set", {{"tracks", nlohmann::json::array()}}},
         {"track_set_source", {{"tracks", nlohmann::json::array()}}},
         {"track_set_dests", {{"tracks", nlohmann::json::array()}}},
+        {"track_set_sidechain", {{"tracks", nlohmann::json::array()}}},
         {"track_set_output", {{"tracks", nlohmann::json::array()}}},
         {"track_set_output_latency_policy", {{"tracks", nlohmann::json::array()}}},
         {"track_move", {{"tracks", nlohmann::json::array()}}},

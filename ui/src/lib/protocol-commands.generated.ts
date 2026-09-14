@@ -2,7 +2,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { AudioApp, CaptureDevice, DeviceInfo, EngineStatus, ParamInfo, RenderDevice, Snapshot, Track } from "./types";
 
-export type CommandKind = "ping" | "get_snapshot" | "get_latency_report" | "list_devices" | "list_audio_apps" | "list_render_devices" | "list_capture_devices" | "start" | "stop" | "open_device_panel" | "track_add" | "track_remove" | "track_set" | "track_set_source" | "track_set_dests" | "track_set_output" | "track_set_output_latency_policy" | "track_move" | "start_scan" | "cancel_scan" | "add_plugin" | "copy_plugin" | "paste_plugin" | "duplicate_plugin" | "remove_plugin" | "move_plugin" | "set_bypass" | "set_monitor_bypass" | "retry_plugin" | "set_param" | "get_params" | "open_editor" | "close_editor" | "save_preset" | "load_preset" | "save_session" | "load_session" | "ensure_system_outputs" | "set_editor_owner" | "shutdown_engine";
+export type CommandKind = "ping" | "get_snapshot" | "get_latency_report" | "list_devices" | "list_audio_apps" | "list_render_devices" | "list_capture_devices" | "start" | "stop" | "open_device_panel" | "track_add" | "track_remove" | "track_set" | "track_set_source" | "track_set_dests" | "track_set_sidechain" | "track_set_output" | "track_set_output_latency_policy" | "track_move" | "start_scan" | "cancel_scan" | "add_plugin" | "copy_plugin" | "paste_plugin" | "duplicate_plugin" | "remove_plugin" | "move_plugin" | "set_bypass" | "set_monitor_bypass" | "retry_plugin" | "set_param" | "get_params" | "open_editor" | "close_editor" | "save_preset" | "load_preset" | "save_session" | "load_session" | "ensure_system_outputs" | "set_editor_owner" | "shutdown_engine";
 export type ErrorCode = "unsupported_version" | "bad_frame" | "bad_command" | "not_running" | "already_running" | "device_open_failed" | "device_lost" | "track_not_found" | "cycle_detected" | "device_busy" | "app_not_found" | "unsupported_windows" | "plugin_not_found" | "plugin_load_failed" | "plugin_no_editor" | "param_not_found" | "session_io" | "preset_io" | "plugin_state_failed" | "internal";
 type EmptyCommandKind = "ping" | "get_snapshot" | "get_latency_report" | "list_devices" | "list_audio_apps" | "list_render_devices" | "list_capture_devices" | "stop" | "open_device_panel" | "cancel_scan" | "ensure_system_outputs" | "shutdown_engine";
 
@@ -36,6 +36,7 @@ export interface CommandPayloads {
   "track_set": { "trackId": number; "name"?: string; "color"?: number; "gain"?: number; "mute"?: boolean };
   "track_set_source": { "trackId": number; "source": null | { "type": "sine"; "freq": number } | { "type": "asioIn"; "channel": number; "mono"?: boolean } | { "type": "app"; "pid": number; "name"?: string } | { "type": "wasapiIn"; "deviceId"?: string } };
   "track_set_dests": { "trackId": number; "dests": Array<number> };
+  "track_set_sidechain": { "trackId": number; "sources": Array<number> };
   "track_set_output": { "trackId": number; "output": null | { "type": "asioOut"; "channel": number } | { "type": "wasapi"; "deviceId": string } };
   "track_set_output_latency_policy": { "trackId": number; "policy": "fullPdc" | "lowLatency" };
   "track_move": { "trackId": number; "newIndex": number };
@@ -79,6 +80,7 @@ export interface CommandResults {
   "track_set": { "tracks": Array<Track> };
   "track_set_source": { "tracks": Array<Track> };
   "track_set_dests": { "tracks": Array<Track> };
+  "track_set_sidechain": { "tracks": Array<Track> };
   "track_set_output": { "tracks": Array<Track> };
   "track_set_output_latency_policy": { "tracks": Array<Track> };
   "track_move": { "tracks": Array<Track> };
@@ -122,6 +124,7 @@ export interface CommandErrors {
   "track_set": "bad_command";
   "track_set_source": "bad_command" | "track_not_found" | "app_not_found" | "unsupported_windows" | "device_busy";
   "track_set_dests": "bad_command" | "track_not_found" | "cycle_detected" | "plugin_state_failed";
+  "track_set_sidechain": "bad_command" | "track_not_found" | "cycle_detected" | "plugin_state_failed";
   "track_set_output": "bad_command" | "track_not_found" | "device_busy";
   "track_set_output_latency_policy": "bad_command";
   "track_move": "bad_command";

@@ -73,6 +73,7 @@ private:
     using TrackSetRequest = router_request::TrackSet;
     using TrackSourceRequest = router_request::TrackSourceSet;
     using TrackDestsRequest = router_request::TrackDestsSet;
+    using TrackSidechainRequest = router_request::TrackSidechainSet;
     using TrackOutputRequest = router_request::TrackOutputSet;
     using TrackOutputLatencyPolicyRequest = router_request::TrackOutputLatencyPolicySet;
     using TrackMoveRequest = router_request::TrackMove;
@@ -135,6 +136,7 @@ private:
     Outcome handle_track_set(const TrackSetRequest& request);
     Outcome handle_track_set_source(const TrackSourceRequest& request);
     Outcome handle_track_set_dests(const TrackDestsRequest& request);
+    Outcome handle_track_set_sidechain(const TrackSidechainRequest& request);
     Outcome handle_track_set_output(const TrackOutputRequest& request);
     Outcome handle_track_set_output_latency_policy(const TrackOutputLatencyPolicyRequest& request);
     Outcome handle_track_move(const TrackMoveRequest& request);

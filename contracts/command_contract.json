@@ -370,6 +370,23 @@
       "errors": ["bad_command", "track_not_found", "cycle_detected", "plugin_state_failed"]
     },
     {
+      "kind": "track_set_sidechain",
+      "payload": {
+        "type": "object",
+        "required": ["trackId", "sources"],
+        "properties": {
+          "trackId": { "$ref": "#/definitions/u32" },
+          "sources": { "$ref": "#/definitions/u32Array" }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": ["tracks"],
+        "properties": { "tracks": { "$ref": "#/definitions/trackArray" } }
+      },
+      "errors": ["bad_command", "track_not_found", "cycle_detected", "plugin_state_failed"]
+    },
+    {
       "kind": "track_set_output",
       "payload": {
         "type": "object",

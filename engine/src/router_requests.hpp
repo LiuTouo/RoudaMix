@@ -94,6 +94,17 @@ struct TrackDestsSet {
     }
 };
 
+struct TrackSidechainSet {
+    std::uint32_t track_id;
+    std::vector<std::uint32_t> sources;
+
+    explicit TrackSidechainSet(const nlohmann::json& payload)
+        : track_id(payload.at("trackId").get<std::uint32_t>()) {
+        for (const auto& source : payload.at("sources"))
+            sources.push_back(source.get<std::uint32_t>());
+    }
+};
+
 struct TrackOutputSet {
     std::uint32_t track_id;
     TrackOutput output;

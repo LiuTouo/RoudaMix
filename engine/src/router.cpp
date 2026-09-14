@@ -210,6 +210,7 @@ const std::unordered_map<std::string, Router::Route>& Router::routes() {
         {"track_set", &Router::route<TrackSetRequest, &Router::handle_track_set>},
         {"track_set_source", &Router::route<TrackSourceRequest, &Router::handle_track_set_source>},
         {"track_set_dests", &Router::route<TrackDestsRequest, &Router::handle_track_set_dests>},
+        {"track_set_sidechain", &Router::route<TrackSidechainRequest, &Router::handle_track_set_sidechain>},
         {"track_set_output", &Router::route<TrackOutputRequest, &Router::handle_track_set_output>},
         {"track_set_output_latency_policy", &Router::route<TrackOutputLatencyPolicyRequest, &Router::handle_track_set_output_latency_policy>},
         {"track_move", &Router::route<TrackMoveRequest, &Router::handle_track_move>},
@@ -564,6 +565,12 @@ Router::Outcome Router::handle_track_set_source(const TrackSourceRequest& reques
 
 Router::Outcome Router::handle_track_set_dests(const TrackDestsRequest& request) {
     if (auto fail = engine_.track_set_dests(request.track_id, request.dests))
+        return failure(std::move(*fail), true);
+    return success({{"tracks", session::tracks_json(engine_)}}, Effect::kDirty);
+}
+
+Router::Outcome Router::handle_track_set_sidechain(const TrackSidechainRequest& request) {
+    if (auto fail = engine_.track_set_sidechain(request.track_id, request.sources))
         return failure(std::move(*fail), true);
     return success({{"tracks", session::tracks_json(engine_)}}, Effect::kDirty);
 }

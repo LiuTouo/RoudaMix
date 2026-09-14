@@ -98,6 +98,16 @@
         "dests"
       ]
     },
+    "track_set_sidechain": {
+      "missing": [
+        "trackId",
+        "sources"
+      ],
+      "wrongType": [
+        "trackId",
+        "sources"
+      ]
+    },
     "track_set_output": {
       "missing": [
         "trackId",
