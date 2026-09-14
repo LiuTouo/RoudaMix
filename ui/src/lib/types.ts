@@ -60,6 +60,8 @@ export interface Track {
   color: number; // 0xRRGGBB
   source: TrackSource | null;
   dests: number[];
+  /** 側鏈來源軌 id 清單(僅 fx 軌使用;訊號進 plugin aux input,不進混音) */
+  sidechain?: number[];
   output: TrackOutput | null;
   gain: number; // 線性 [0,4]
   mute: boolean;

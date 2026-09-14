@@ -7,7 +7,7 @@
   import { mountDragGhost, removeDragGhost } from "./ghost";
   import { open as openFile } from "@tauri-apps/plugin-dialog";
   import { engineCommand } from "./protocol-commands.generated";
-  import { cssColor, destCandidates, parseColor, stripOfTrack, type MeterStripView } from "./tracks";
+  import { cssColor, destCandidates, parseColor, sidechainCandidates, stripOfTrack, type MeterStripView } from "./tracks";
   import { MutationQueue, mutKey } from "./mutations";
   import { reorderLane } from "./laneOrder";
   import { pluginMenuItems } from "./pluginMenu";
@@ -256,6 +256,29 @@
   }
   function arraysEqual(a: number[], b: number[]): boolean {
     return a.length === b.length && a.every((v, i) => v === b[i]);
+  }
+
+  /** 側鏈來源(fx 軌):與 dests 同款的本地疊加 + latest-wins;
+   *  engine 回報的是 fx 軌的來源清單(status tracks[].sidechain) */
+  let sidechainLocal = $state<number[] | null>(null);
+  let sidechainRequest = 0;
+  $effect(() => {
+    const reported = track.sidechain ?? [];
+    if (sidechainLocal !== null && arraysEqual(reported, sidechainLocal)) sidechainLocal = null;
+  });
+  const shownSidechain = $derived(sidechainLocal ?? (track.sidechain ?? []));
+  async function toggleSidechain(sourceId: number, checked: boolean) {
+    err = "";
+    const request = ++sidechainRequest;
+    const base = shownSidechain;
+    const sources = checked
+      ? [...new Set([...base, sourceId])]
+      : base.filter((s) => s !== sourceId);
+    sidechainLocal = sources;
+    const result = await mq.run(mutKey.track(track.trackId), "sidechain", () =>
+      engineCommand("track_set_sidechain", { trackId: track.trackId, sources }),
+    );
+    if (result.status === "failed" && request === sidechainRequest) sidechainLocal = null;
   }
 
   async function setColor(css: string) {
@@ -982,6 +1005,15 @@
       options={destCandidates(tracks, track.trackId)} selected={shownDests}
       pending={destsLocal !== null} onToggle={toggleDest} />
   </div>
+
+  {#if track.kind === "fx"}
+    <div class="row destination-row" data-tooltip="側鏈:來源軌訊號只進此軌插件的 aux input,不進混音">
+      <span class="lbl">側鏈來源</span>
+      <DestinationSelect trackId={track.trackId} trackName={track.name}
+        options={sidechainCandidates(tracks)} selected={shownSidechain}
+        pending={sidechainLocal !== null} onToggle={toggleSidechain} />
+    </div>
+  {/if}
 
   <div class="lower">
   <div class="vstcol">

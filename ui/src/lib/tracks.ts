@@ -89,3 +89,8 @@ export function destCandidates(tracks: Track[], selfId: number): Track[] {
     (t) => t.trackId !== selfId && t.kind !== "audio" && t.kind !== "app",
   );
 }
+
+// 側鏈來源候選:限 input 軌(audio/app;引擎規則鏡像);fx 軌只收 aux input
+export function sidechainCandidates(tracks: Track[]): Track[] {
+  return tracks.filter((t) => t.kind === "audio" || t.kind === "app");
+}
