@@ -8,7 +8,6 @@
   } from "@tauri-apps/plugin-autostart";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import TrackStrip from "./lib/TrackStrip.svelte";
-  import SpectrumCanvas from "./lib/SpectrumCanvas.svelte";
   import UpdatePanel from "./lib/UpdatePanel.svelte";
   import { resetPluginTransfer } from "./lib/pluginTransfer";
   import LatencyDrawer from "./lib/LatencyDrawer.svelte";
@@ -23,7 +22,6 @@
     type RevisionDirtyState,
   } from "./lib/revisionDirty";
   import { applyStatus, type AuthoritativeStatusPayload } from "./lib/applyStatus";
-  import { indexByTrackId } from "./lib/tracks";
   import {
     initialDeviceStream,
     isDeviceStreamBusy,
@@ -275,11 +273,7 @@
 
   const tracks = $derived<Track[]>(status?.tracks ?? []);
   const telemetryStrips = $derived(status?.telemetryStrips ?? []);
-  const meterView = $derived.by(() => {
-    const view = { table: telemetryStrips, strips: meters?.strips };
-    // 每 tick 建一次 O(1) 索引;strip 級元件 O(1) 查,不再每 strip 掃表。
-    return { ...view, byTrackId: indexByTrackId(view) };
-  });
+  const meterView = $derived({ table: telemetryStrips, strips: meters?.strips });
   const inputTracks = $derived(tracks.filter((t) => t.kind !== "output"));
   const outputTracks = $derived(tracks.filter((t) => t.kind === "output"));
 
@@ -1047,26 +1041,8 @@
   function onLaneScroll(group: LaneGroup, e: Event): void {
     const el = e.currentTarget as HTMLElement;
     laneScroll[group] = el.scrollLeft;
+    laneWidth[group] = el.clientWidth;
   }
-
-  // 首繪/視窗縮放補寬度:laneWidth 原本只在 scroll 時更新,初值 0 → 首繪只渲染
-  // ~4 strips。ResizeObserver 補上(掛載同步一次,縮放反應);scroll 只管 scrollLeft。
-  $effect(() => {
-    const observers: ResizeObserver[] = [];
-    for (const group of ["input", "output"] as const) {
-      const el = bindLane(group);
-      if (!el) continue;
-      laneWidth[group] = el.clientWidth;
-      const ro = new ResizeObserver((entries) => {
-        for (const entry of entries) {
-          laneWidth[group] = entry.contentRect.width;
-        }
-      });
-      ro.observe(el);
-      observers.push(ro);
-    }
-    return () => observers.forEach((ro) => ro.disconnect());
-  });
 
   function lanePos(lane: HTMLElement, x: number, count: number): number {
     // 虛擬化安全:幾何計算,不查 DOM
@@ -1477,15 +1453,6 @@
 </header>
 
 <main>
-  <!-- 頻譜:SHM 30Hz dB bins 畫 log-freq bars;<details> 原生收合(收合=unmount,零成本) -->
-  <details class="spectrum-band" open>
-    <summary>頻譜</summary>
-    <SpectrumCanvas
-      spectrum={meters?.spectrum ?? null}
-      sampleRate={status?.sampleRate ?? 0}
-      height={96}
-    />
-  </details>
   <!-- 單一水平帶:輸入群組(左)→ 輸出群組(右),都往右長;超出寬度橫向卷動(shift+滾輪原生) -->
   <section class="board">
     <!-- 輸入群組:audio / app / fx -->
@@ -2082,17 +2049,6 @@
     flex: 1;
     min-height: 0;
     min-width: 0;
-  }
-  /* 頻譜帶:<details> 原生收合;summary 細條,canvas 佔滿寬 */
-  .spectrum-band {
-    flex: 0 0 auto;
-  }
-  .spectrum-band summary {
-    cursor: pointer;
-    user-select: none;
-    font-size: 11px;
-    color: #8a93a3;
-    padding: 2px 0 6px;
   }
   /* 單一水平帶:輸入群組(左)+ 輸出群組(右);超出寬 = 橫向卷動(shift+滾輪原生) */
   .board {

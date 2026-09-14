@@ -1,13 +1,12 @@
 //! Telemetry SHM 讀取端 — 契約:contracts/telemetry_abi.md(v4)。
-//! `Local\roudamix-telemetry`,seqlock 讀(odd=寫入中),~30Hz 輪詢 → emit "meters"。
+//! `Local\roudamix-telemetry`,seqlock 讀(odd=寫入中),45Hz 輪詢 → emit "meters"。
 //! 結構必須與 engine/src/telemetry.hpp TelemetryBlockShm(#pragma pack(8), 7232B)同構。
 
 use std::ptr;
 use std::time::Duration;
 
-use serde::Serialize;
-use serde_json::json;
-use tauri::{AppHandle, Emitter, Manager};
+use serde_json::{json, Value};
+use tauri::{AppHandle, Emitter};
 
 const FILE_MAP_READ: u32 = 0x0004;
 const TELEMETRY_NAME: &str = "Local\\roudamix-telemetry";
@@ -84,7 +83,7 @@ pub fn start(app: AppHandle) {
         let mut stale_polls: u32 = 0;
         let mut reported_incompatible: Option<u32> = None;
         loop {
-            std::thread::sleep(Duration::from_millis(33)); // 與 engine 30Hz publish 對齊
+            std::thread::sleep(Duration::from_millis(22)); // ~45Hz
             if view.is_null() {
                 match unsafe { open_view() } {
                     OpenView::Ready(ready) => {
@@ -127,18 +126,6 @@ pub fn start(app: AppHandle) {
             }
             stale_polls = 0;
             last_seq = block.sequence;
-            // 視窗最小化/隱藏(含縮到系統匣)時 UI 的 rAF 本來就停了,推送只是
-            // 白燒 JSON 編碼+事件序列化;跳過,還原後下一 tick(≤33ms)補上最新。
-            let hidden = app
-                .get_webview_window("main")
-                .map(|w| {
-                    w.is_minimized().unwrap_or(false)
-                        || !w.is_visible().unwrap_or(true)
-                })
-                .unwrap_or(false);
-            if hidden {
-                continue;
-            }
             let _ = app.emit("meters", to_json(&block));
         }
     });
@@ -215,75 +202,45 @@ unsafe fn read_snapshot(view: *mut BlockShm) -> Option<BlockShm> {
     }
 }
 
-// 直串 payload:不再造 serde_json::Value 樹(每 tick 數十次配置 → 一次 Vec)。
-// 欄位名稱/形狀與舊 json! 版本逐鍵相同,UI 契約不變。
-#[derive(Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct StripOut {
-    instance_id: u32,
-    kind: u32,
-    peak_l: f32,
-    peak_r: f32,
-    rms_l: f32,
-    rms_r: f32,
-}
-
-#[derive(Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct PluginLoadOut {
-    instance_id: u32,
-    variant: u32,
-    process_load: f32,
-}
-
-#[derive(Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct MetersFrame<'a> {
-    sequence: u32,
-    xruns: u64,
-    callback_load: f32,
-    sample_rate: f32,
-    buffer_size: u32,
-    input_latency: u32,
-    output_latency: u32,
-    strips: Vec<StripOut>,
-    plugin_loads: Vec<PluginLoadOut>,
-    spectrum: &'a [f32],
-}
-
-fn to_json(b: &BlockShm) -> MetersFrame<'_> {
+fn to_json(b: &BlockShm) -> Value {
     let n = (b.strip_count as usize).min(STRIPS);
+    let strips: Vec<Value> = b.strips[..n]
+        .iter()
+        .map(|s| {
+            json!({
+                "instanceId": s.instance_id,
+                "kind": s.kind,
+                "peakL": s.peak_l,
+                "peakR": s.peak_r,
+                "rmsL": s.rms_l,
+                "rmsR": s.rms_r,
+            })
+        })
+        .collect();
     let spectrum_count = (b.spectrum_count as usize).min(SPECTRUM_BINS);
     let plugin_load_count = (b.plugin_load_count as usize).min(PLUGIN_LOADS);
-    MetersFrame {
-        sequence: b.sequence,
-        xruns: b.xruns,
-        callback_load: b.callback_load,
-        sample_rate: b.sample_rate,
-        buffer_size: b.buffer_size,
-        input_latency: b.input_latency,
-        output_latency: b.output_latency,
-        strips: b.strips[..n]
-            .iter()
-            .map(|s| StripOut {
-                instance_id: s.instance_id,
-                kind: s.kind,
-                peak_l: s.peak_l,
-                peak_r: s.peak_r,
-                rms_l: s.rms_l,
-                rms_r: s.rms_r,
+    let plugin_loads: Vec<Value> = b.plugin_loads[..plugin_load_count]
+        .iter()
+        .map(|load| {
+            json!({
+                "instanceId": load.instance_id,
+                "variant": load.variant,
+                "processLoad": load.process_load,
             })
-            .collect(),
-        plugin_loads: b.plugin_loads[..plugin_load_count]
-            .iter()
-            .map(|load| PluginLoadOut {
-                instance_id: load.instance_id,
-                variant: load.variant,
-                process_load: load.process_load,
-            })
-            .collect(),
-        spectrum: &b.spectrum_db[..spectrum_count],
-    }
+        })
+        .collect();
+    json!({
+        "sequence": b.sequence,
+        "xruns": b.xruns,
+        "callbackLoad": b.callback_load,
+        "sampleRate": b.sample_rate,
+        "bufferSize": b.buffer_size,
+        "inputLatency": b.input_latency,
+        "outputLatency": b.output_latency,
+        "strips": strips,
+        "pluginLoads": plugin_loads,
+        "spectrum": b.spectrum_db[..spectrum_count],
+    })
 }
 
 // 佈局與 C++ 契約同構(static_assert 對應)

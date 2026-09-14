@@ -1,8 +1,6 @@
 <script lang="ts">
-  // 主輸出頻譜 bar(對數頻率軸)。資料 = SHM 30Hz dB bins(線性 0..Nyquist),
-  // 這裡做 log-freq 映射 + rAF 繪圖。64 bar × 60fps 用 2D canvas 就夠 — GL 版本
-  // 已移除(兩套渲染路徑的維護成本 > 收益)。刻度:100Hz/1k/10k 直線 +
-  // -20/-40/-60 dB 橫線,頂 = 0 dBFS 滿幅。
+  // WebGL 頻譜 bar(對數頻率軸)。資料 = SHM 30Hz dB bins(線性 0..Nyquist),
+  // 這裡做 log-freq 映射 + rAF 繪圖;WebGL 拿不到時退 2D canvas(WebView2 常在)
   import { onMount } from "svelte";
 
   let {
@@ -18,11 +16,12 @@
   const BARS = 64;
   const MIN_FREQ = 20;
   const DB_FLOOR = -60; // 顯示下限(SHM floor -120,視覺壓到 -60)
-  const FREQ_MARKS = [100, 1000, 10000];
-  const DB_MARKS = [-20, -40, -60];
-  const LABEL_COLOR = "#8a93a3";
 
   let canvas: HTMLCanvasElement | null = null;
+  let gl: WebGLRenderingContext | null = null;
+  let gl2d: CanvasRenderingContext2D | null = null;
+  let vbo: WebGLBuffer | null = null;
+  let cbo: WebGLBuffer | null = null;
 
   // rAF 讀的最新資料(prop 更新只寫這裡,繪圖統一在 rAF,避免每 event 一次 draw)
   let latest: number[] | null = $state(null);
@@ -34,46 +33,12 @@
   let mappedBins = -1;
   let mappedRate = 0;
 
-  // 靜態層(底色、格線、刻度+數字):尺寸/取樣率變才重繪,每幀 drawImage 貼回
-  let staticLayer: HTMLCanvasElement | null = null;
-  let staticKey = "";
-  // 上一幀繪製指紋:量化 bar 高 + 尺寸;相同 → 跳過本幀(靜音時停畫)
-  let lastKey = "";
-
   $effect(() => {
     latest = spectrum;
     latestRate = sampleRate;
     // 不在這裡清 barVals:空資料的緩降交給 sampleBars 的 decay 路徑,
     // 這裡 fill(0) 會殺掉 ballistics(bar 瞬間歸零而非緩降)
   });
-
-  onMount(() => {
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    let raf = requestAnimationFrame(draw);
-    return () => cancelAnimationFrame(raf);
-
-    function draw() {
-      if (!canvas) return;
-      sizeCanvas();
-      render(ctx!);
-      raf = requestAnimationFrame(draw);
-    }
-  });
-
-  // 尺寸/DPR:每幀比對,變了才重設 canvas.width(重設會清 drawing buffer,
-  // 下一個 draw 全重畫,無所謂)
-  function sizeCanvas() {
-    if (!canvas) return;
-    const dpr = window.devicePixelRatio || 1;
-    const cw = Math.round(canvas.clientWidth * dpr);
-    const ch = Math.round(canvas.clientHeight * dpr);
-    if (cw > 0 && ch > 0 && (canvas.width !== cw || canvas.height !== ch)) {
-      canvas.width = cw;
-      canvas.height = ch;
-    }
-  }
 
   function rebuildMap(bins: number, rate: number) {
     const nyquist = rate / 2;
@@ -87,6 +52,22 @@
     }
     mappedBins = bins;
   }
+
+  onMount(() => {
+    if (!canvas) return;
+    gl = canvas.getContext("webgl", { antialias: false });
+    if (gl) initGl(gl);
+    else gl2d = canvas.getContext("2d");
+    let raf = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(raf);
+
+    function draw() {
+      if (!canvas) return;
+      if (gl) drawGl();
+      else if (gl2d) draw2d(gl2d);
+      raf = requestAnimationFrame(draw);
+    }
+  });
 
   function sampleBars(): Float32Array {
     const out = barVals;
@@ -120,79 +101,84 @@
     return [0.66 + 0.34 * t, 0.9 - 0.5 * t, 0.25 - 0.13 * t];
   }
 
-  function render(ctx: CanvasRenderingContext2D) {
-    const dpr = window.devicePixelRatio || 1;
-    const w = canvas!.clientWidth;
-    const h = canvas!.clientHeight;
-    const plotH = h - 12; // 底部留給頻率標籤
-
-    // 未變幀跳過:量化 bar 高(px)+ 尺寸,與上一幀相同 → 零繪製
-    let key = `${w}x${h}@${dpr}`;
-    for (let b = 0; b < BARS; b++) key += "," + Math.round(barVals[b] * plotH);
-    if (key === lastKey) return;
-    lastKey = key;
-
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, w, h);
-    ctx.drawImage(staticLayerFor(w, h, dpr), 0, 0, w, h);
-
-    // bars:對數軸均勻切 64 段,bar b 的左緣恰 = b/BARS × w
-    const bw = w / BARS;
-    for (let b = 0; b < BARS; b++) {
-      const bh = barVals[b] * plotH;
-      if (bh < 1) continue;
-      const [r, g, bl] = barColor(barVals[b]);
-      ctx.fillStyle = `rgb(${(r * 255) | 0},${(g * 255) | 0},${(bl * 255) | 0})`;
-      ctx.fillRect(b * bw + bw * 0.15, plotH - bh, bw * 0.7, bh);
-    }
+  function initGl(g: WebGLRenderingContext) {
+    const vs = g.createShader(g.VERTEX_SHADER)!;
+    g.shaderSource(vs, "attribute vec2 p; attribute vec3 c; varying vec3 vc; void main(){ gl_Position = vec4(p,0.0,1.0); vc = c; }");
+    g.compileShader(vs);
+    const fs = g.createShader(g.FRAGMENT_SHADER)!;
+    g.shaderSource(fs, "precision mediump float; varying vec3 vc; void main(){ gl_FragColor = vec4(vc,1.0); }");
+    g.compileShader(fs);
+    const prog = g.createProgram()!;
+    g.attachShader(prog, vs);
+    g.attachShader(prog, fs);
+    g.linkProgram(prog);
+    g.useProgram(prog);
+    vbo = g.createBuffer();
+    g.bindBuffer(g.ARRAY_BUFFER, vbo);
+    const pLoc = g.getAttribLocation(prog, "p");
+    g.enableVertexAttribArray(pLoc);
+    g.vertexAttribPointer(pLoc, 2, g.FLOAT, false, 0, 0);
+    cbo = g.createBuffer();
+    g.bindBuffer(g.ARRAY_BUFFER, cbo);
+    const cLoc = g.getAttribLocation(prog, "c");
+    g.enableVertexAttribArray(cLoc);
+    g.vertexAttribPointer(cLoc, 3, g.FLOAT, false, 0, 0);
   }
 
-  function staticLayerFor(w: number, h: number, dpr: number): HTMLCanvasElement {
-    const key = `${w}x${h}@${dpr}#${latestRate}`;
-    if (staticLayer && staticKey === key) return staticLayer;
-    const c = document.createElement("canvas");
-    c.width = Math.max(1, Math.round(w * dpr));
-    c.height = Math.max(1, Math.round(h * dpr));
-    const s = c.getContext("2d")!;
-    s.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const plotH = h - 12;
-
-    s.fillStyle = "#0e0f12";
-    s.fillRect(0, 0, w, h);
-
-    // dB 橫線 + 右側標籤(頂 = 0 dBFS 滿幅,不畫 0 線以免跟頂緣混淆)
-    s.font = "9px monospace";
-    s.textBaseline = "middle";
-    for (const db of DB_MARKS) {
-      const y = Math.round((db / DB_FLOOR) * plotH); // db/-60 → 0..1 比例
-      s.fillStyle = "rgba(255, 255, 255, 0.06)";
-      s.fillRect(0, y, w, 1);
-      s.fillStyle = LABEL_COLOR;
-      s.fillText(String(db), w - 26, y);
-    }
-
-    // 頻率直線 + 底部標籤(與 bar 同一對數映射:x = log(f/20)/log(nyq/20) × w)
-    const nyquist = latestRate > 0 ? latestRate / 2 : 0;
-    s.fillStyle = LABEL_COLOR;
-    s.fillText("20", 3, h - 6);
-    if (nyquist > MIN_FREQ) {
-      for (const f of FREQ_MARKS) {
-        if (f >= nyquist) continue;
-        const x = Math.round((Math.log(f / MIN_FREQ) / Math.log(nyquist / MIN_FREQ)) * w);
-        s.fillStyle = "rgba(255, 255, 255, 0.06)";
-        s.fillRect(x, 0, 1, plotH);
-        s.fillStyle = LABEL_COLOR;
-        s.fillText(f >= 1000 ? `${f / 1000}k` : String(f), x + 3, h - 6);
+  function drawGl() {
+    const g = gl!;
+    const w = canvas!.width, h = canvas!.height;
+    g.viewport(0, 0, w, h);
+    g.clearColor(0.055, 0.06, 0.07, 1);
+    g.clear(g.COLOR_BUFFER_BIT);
+    const vals = sampleBars();
+    const verts = new Float32Array(BARS * 8);
+    const colors = new Float32Array(BARS * 12);
+    const bw = 2 / BARS;
+    for (let b = 0; b < BARS; b++) {
+      const x = -1 + b * bw;
+      const y = vals[b] * 2 - 1;
+      const o = b * 8;
+      verts[o] = x + 0.15 * bw; verts[o + 1] = -1;
+      verts[o + 2] = x + 0.85 * bw; verts[o + 3] = -1;
+      verts[o + 4] = x + 0.85 * bw; verts[o + 5] = y;
+      verts[o + 6] = x + 0.15 * bw; verts[o + 7] = y;
+      const [r, gg, bl] = barColor(vals[b]);
+      const co = b * 12;
+      for (let k = 0; k < 4; k++) {
+        colors[co + k * 3] = r;
+        colors[co + k * 3 + 1] = gg;
+        colors[co + k * 3 + 2] = bl;
       }
     }
-    staticLayer = c;
-    staticKey = key;
-    return c;
+    g.bindBuffer(g.ARRAY_BUFFER, vbo);
+    g.bufferData(g.ARRAY_BUFFER, verts, g.DYNAMIC_DRAW);
+    g.bindBuffer(g.ARRAY_BUFFER, cbo);
+    g.bufferData(g.ARRAY_BUFFER, colors, g.DYNAMIC_DRAW);
+    // 每 bar 4 頂點(bl,br,tr,tl)的 strip;TRIANGLES 需 6 頂點會越界讀 buffer =
+    // GL_INVALID_OPERATION、整批 draw 被丟棄(實測踩過)
+    g.drawArrays(g.TRIANGLE_STRIP, 0, BARS * 4);
+  }
+
+  function draw2d(c2d: CanvasRenderingContext2D) {
+    const w = canvas!.width, h = canvas!.height;
+    c2d.fillStyle = "#0e0f12";
+    c2d.fillRect(0, 0, w, h);
+    const vals = sampleBars();
+    const bw = w / BARS;
+    for (let b = 0; b < BARS; b++) {
+      const bh = vals[b] * h;
+      const [r, g, bl] = barColor(vals[b]);
+      c2d.fillStyle = `rgb(${(r * 255) | 0},${(g * 255) | 0},${(bl * 255) | 0})`;
+      c2d.fillRect(b * bw + bw * 0.15, h - bh, bw * 0.7, bh);
+    }
   }
 </script>
 
 <canvas
   bind:this={canvas}
-  style="width:100%;height:{height}px;display:block;border-radius:6px"
-  data-tooltip="主輸出頻譜:橫軸頻率(對數,20Hz 起,左低音右高音),縱軸音量 dB(頂=滿幅)。bar 越高代表該頻段越響。"
+  width={BARS * 8}
+  {height}
+  style="width:100%;height:{height}px"
+  data-tooltip="主輸出頻譜；頻率軸採對數刻度（20 Hz 起），引擎 FFT 資料自 30 Hz 起。"
 ></canvas>

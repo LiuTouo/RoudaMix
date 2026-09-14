@@ -1,5 +1,4 @@
 #include "wasapi_clock.hpp"
-#include "rt_thread.hpp"
 
 #include <windows.h>
 
@@ -148,8 +147,6 @@ void WasapiClock::stop() noexcept {
 // (MTA;WASAPI 物件 free-threaded,跨 thread 持有安全 — RenderSink 慣例)。
 void WasapiClock::pump() {
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-    rt::boost(true);  // 本 thread 驅動 engine process,等同 RT callback
-    rt::denormals_off();
     auto* client = static_cast<IAudioClient*>(audio_client_);
     auto* render = static_cast<IAudioRenderClient*>(render_client_);
     auto ev = static_cast<HANDLE>(event_);
