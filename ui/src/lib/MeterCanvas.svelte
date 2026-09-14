@@ -164,9 +164,6 @@
       canvas!.width = w * dpr;
       canvas!.height = h * dpr;
     }
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, w, h);
-
     const gutter = 24; // 右側 dB 刻度
     const plotW = w - gutter;
     if (plotW < 4) return;
