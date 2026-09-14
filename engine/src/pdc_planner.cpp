@@ -50,6 +50,16 @@ PdcPlanResult plan_plugin_delay(const std::vector<PdcNodeSpec>& nodes,
         if (reaches_full_pdc[node_index] && g.incoming[node_index].size() > 1) {
             for (const auto from : g.incoming[node_index]) {
                 const auto delay = primary_input - primary_path_latency[from];
+                // 標記邊型:同一對軌可同時有 dest 與側鏈邊(各發一條 entry,
+                // dest 先、側鏈後,與 build_topo 的 incoming 順序一致)
+                const auto node_id = nodes[node_index].track_id;
+                const bool in_dests = std::find(nodes[from].dests.begin(),
+                                                nodes[from].dests.end(),
+                                                node_id) != nodes[from].dests.end();
+                const bool in_sidechain =
+                    std::find(nodes[from].sidechain_dests.begin(),
+                              nodes[from].sidechain_dests.end(),
+                              node_id) != nodes[from].sidechain_dests.end();
                 const auto max_size = (std::numeric_limits<std::size_t>::max)();
                 if (limits.channels != 0 && limits.bytes_per_sample > max_size / limits.channels) {
                     result.error = PdcPlanError::kArithmeticOverflow;
@@ -74,13 +84,17 @@ PdcPlanResult plan_plugin_delay(const std::vector<PdcNodeSpec>& nodes,
                     result.error = PdcPlanError::kArithmeticOverflow;
                     return result;
                 }
-                result.edge_delays.push_back(
-                    {nodes[from].track_id, nodes[node_index].track_id, delay});
-                result.buffer_bytes += edge_bytes;
-                if (result.buffer_bytes > limits.max_buffer_bytes) {
-                    result.error = PdcPlanError::kMemoryLimitExceeded;
-                    return result;
-                }
+                const auto emit = [&](bool aux) {
+                    result.edge_delays.push_back(
+                        {nodes[from].track_id, nodes[node_index].track_id, delay, aux});
+                    result.buffer_bytes += edge_bytes;
+                    if (result.buffer_bytes > limits.max_buffer_bytes) {
+                        result.error = PdcPlanError::kMemoryLimitExceeded;
+                    }
+                };
+                if (in_dests) emit(false);
+                if (in_sidechain && result.ok()) emit(true);
+                if (!result.ok()) return result;
             }
         }
         std::uint64_t max_compensation = 0;

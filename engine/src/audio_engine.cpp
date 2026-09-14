@@ -873,7 +873,10 @@ bool AudioEngine::commit_graph_candidate() {
     if (!dry_resources_ready) {
         return false;
     }
-    for (auto& t : fresh->nodes) t.dest_pdc.assign(t.dests.size(), nullptr);
+    for (auto& t : fresh->nodes) {
+        t.dest_pdc.assign(t.dests.size(), nullptr);
+        t.sidechain_pdc.assign(t.sidechain_dests.size(), nullptr);
+    }
     struct PendingPdcLine {
         std::uint64_t key{};
         std::uint64_t target{};
@@ -887,11 +890,16 @@ bool AudioEngine::commit_graph_candidate() {
         const auto from_index = fresh->id_index[edge.from_track_id];
         if (from_index == kNoStrip || from_index >= fresh->nodes.size()) continue;
         auto& from = fresh->nodes[from_index];
-        const auto dest = std::find(from.dests.begin(), from.dests.end(), edge.to_track_id);
-        if (dest == from.dests.end()) continue;
-        const auto route = static_cast<std::size_t>(dest - from.dests.begin());
-        const std::uint64_t key = (static_cast<std::uint64_t>(edge.from_track_id) << 32u) |
-                                  edge.to_track_id;
+        // 邊型分派:dest 邊走 dests/dest_pdc;側鏈邊走 sidechain_dests/sidechain_pdc
+        // (同一對軌兩種邊 = 兩條獨立延遲線,key 以 bit 63 區分)
+        auto& targets = edge.aux ? from.sidechain_dests : from.dests;
+        auto& lines = edge.aux ? from.sidechain_pdc : from.dest_pdc;
+        const auto dest = std::find(targets.begin(), targets.end(), edge.to_track_id);
+        if (dest == targets.end()) continue;
+        const auto route = static_cast<std::size_t>(dest - targets.begin());
+        const std::uint64_t key =
+            (static_cast<std::uint64_t>(edge.aux ? 1u : 0u) << 63u) |
+            (static_cast<std::uint64_t>(edge.from_track_id) << 32u) | edge.to_track_id;
         auto found = pdc_delay_states_.find(key);
         std::shared_ptr<PdcDelayLine> delay;
         bool reused = false;
@@ -907,7 +915,7 @@ bool AudioEngine::commit_graph_candidate() {
                 break;
             }
         }
-        from.dest_pdc[route] = delay;
+        lines[route] = delay;
         pending_lines.push_back({key, edge.delay_samples, std::move(delay), reused});
     }
     if (!resources_ready) {
@@ -2268,11 +2276,13 @@ void AudioEngine::process(const AudioBlock& block) noexcept {
     const TrackGraph* g = guard.graph;
     if (g == nullptr || frames == 0) return;  // 輸出已由 asio_device 清零 = 靜音
 
-    // 1) 清所有軌的 summing bus(16 軌 @512f = 8K floats,可忽略)
+    // 1) 清所有軌的 summing bus 與 sidechain bus(16 軌 @512f = 8K floats,可忽略)
     for (const auto& t : g->nodes) {
         if (t.buf != nullptr) {
             std::memset(t.buf->in[0], 0, frames * sizeof(float));
             std::memset(t.buf->in[1], 0, frames * sizeof(float));
+            std::memset(t.buf->sc[0], 0, frames * sizeof(float));
+            std::memset(t.buf->sc[1], 0, frames * sizeof(float));
             std::memset(t.buf->monitor_in[0], 0, frames * sizeof(float));
             std::memset(t.buf->monitor_in[1], 0, frames * sizeof(float));
         }
@@ -2390,12 +2400,16 @@ void AudioEngine::process(const AudioBlock& block) noexcept {
                     return;
                 }
                 if (plugin == nullptr || ring == nullptr) return;
+                // 側鏈 aux:一律傳 sc bus(無側鏈邊時已清零 = 靜音);shadow 同吃
+                // primary 的 sc(決策 6)
+                const float* sc_l = n.buf->sc[0];
+                const float* sc_r = n.buf->sc[1];
                 const std::size_t count = ring->pop_all(edits, kMaxParamEditsPerBlock);
                 if (path.action == RouteSlotAction::kDrainParameters) {
                     if (count > 0)
                         (void)plugin->process(in_l, in_r, out_l, out_r,
                                               static_cast<std::int32_t>(frames), edits,
-                                              count);
+                                              count, sc_l, sc_r);
                     return;
                 }
 
@@ -2413,7 +2427,7 @@ void AudioEngine::process(const AudioBlock& block) noexcept {
                     const auto plugin_t0 = plugin_tsc_begin();
                     processed = plugin->process(in_l, in_r, out_l, out_r,
                                                 static_cast<std::int32_t>(frames), edits,
-                                                count);
+                                                count, sc_l, sc_r);
                     const auto elapsed = plugin_tsc_end() - plugin_t0;
                     meters_.add_plugin_cycles(
                         cpu_index, elapsed > plugin_timing_overhead_
@@ -2422,7 +2436,7 @@ void AudioEngine::process(const AudioBlock& block) noexcept {
                 } else {
                     processed = plugin->process(in_l, in_r, out_l, out_r,
                                                 static_cast<std::int32_t>(frames), edits,
-                                                count);
+                                                count, sc_l, sc_r);
                 }
                 if (processed) {
                     std::swap(in_l, out_l);
@@ -2510,6 +2524,25 @@ void AudioEngine::process(const AudioBlock& block) noexcept {
             }
             bus_add(dst.buf->monitor_in[0], sent_monitor_l, frames);
             bus_add(dst.buf->monitor_in[1], sent_monitor_r, frames);
+        }
+
+        // 側鏈 send:post-fader tap 直入 dest 的 sc bus(只 primary;monitor
+        // 變體吃靜音 — ponytail: 要跟監聽側鏈再加第二組 sc pair + monitor_bus)
+        for (std::size_t route = 0; route < route_plan.sidechain_sends.size(); ++route) {
+            const auto& send = route_plan.sidechain_sends[route];
+            const auto d = send.to_track_id;
+            if (d >= g->id_index.size()) continue;
+            const auto di = g->id_index[d];
+            if (di == kNoStrip || di >= g->nodes.size()) continue;
+            const auto& dst = g->nodes[di];
+            if (dst.buf == nullptr) continue;
+            if (route < n.sidechain_pdc.size() && n.sidechain_pdc[route] != nullptr)
+                n.sidechain_pdc[route]->process_add(cur_l, cur_r, dst.buf->sc[0],
+                                                    dst.buf->sc[1], frames);
+            else {
+                bus_add(dst.buf->sc[0], cur_l, frames);
+                bus_add(dst.buf->sc[1], cur_r, frames);
+            }
         }
 
         const float* sink_l =

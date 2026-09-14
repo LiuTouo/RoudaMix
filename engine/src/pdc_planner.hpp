@@ -40,6 +40,7 @@ struct PdcEdgeDelay {
     std::uint32_t from_track_id{};
     std::uint32_t to_track_id{};
     std::uint64_t delay_samples{};
+    bool aux{};  // true = 側鏈邊(延遲線進 sidechain_pdc,key 加 bit 63)
 };
 
 struct PdcOutputLatency {
