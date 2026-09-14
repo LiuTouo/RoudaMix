@@ -160,9 +160,13 @@
     const dpr = window.devicePixelRatio || 1;
     const w = canvas!.clientWidth;
     const h = canvas!.clientHeight;
-    if (canvas!.width !== w * dpr || canvas!.height !== h * dpr) {
-      canvas!.width = w * dpr;
-      canvas!.height = h * dpr;
+    // backing size 先取整:非整數 dpr(Windows 125%/150%)下 w*dpr 帶小數,
+    // 直接比對會每幀「成立→重設→清空」,再被跳幀 early-return 放大成閃爍。
+    const bw = Math.max(1, Math.round(w * dpr));
+    const bh = Math.max(1, Math.round(h * dpr));
+    if (canvas!.width !== bw || canvas!.height !== bh) {
+      canvas!.width = bw;
+      canvas!.height = bh;
     }
     const gutter = 24; // 右側 dB 刻度
     const plotW = w - gutter;
