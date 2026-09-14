@@ -303,9 +303,12 @@ struct Vst3Plugin::Impl {
     std::vector<Vst3ParamInfo> params;
     int32_t main_in_bus{-1};
     int32_t main_out_bus{-1};
+    int32_t aux_in_bus{-1};   // 第一個 kAux input;談不攏/拒 activation = -1(靜音側鏈)
+    int32_t aux_channels{};   // clamp 2
     bool mono_main{};
     std::vector<float> mono_in;
     std::vector<float> mono_out;
+    std::vector<float> aux_silence;  // aux_l == null 時的靜音來源(max_frames)
     bool initialized{false};
     bool loaded{false};
     std::string name_;
@@ -478,7 +481,18 @@ struct Vst3Plugin::Impl {
 
     bool negotiate_stereo_main() {
         if (!find_main_buses()) return false;
+        // 側鏈:第一個 kAux input(無 = -1,process 餵靜音)
+        aux_in_bus = -1;
+        aux_channels = 0;
         const int32 in_count = component->getBusCount(kAudio, kInput);
+        for (int32 i = 0; i < in_count; ++i) {
+            BusInfo info{};
+            if (component->getBusInfo(kAudio, kInput, i, info) == kResultOk &&
+                info.busType == kAux) {
+                aux_in_bus = i;
+                break;
+            }
+        }
         const int32 out_count = component->getBusCount(kAudio, kOutput);
         std::vector<SpeakerArrangement> ins(std::max<int32>(in_count, 1), SpeakerArr::kEmpty);
         std::vector<SpeakerArrangement> outs(std::max<int32>(out_count, 1), SpeakerArr::kEmpty);
@@ -492,8 +506,22 @@ struct Vst3Plugin::Impl {
         const auto preferred_out = outs[main_out_bus];
         ins[main_in_bus] = SpeakerArr::kStereo;
         outs[main_out_bus] = SpeakerArr::kStereo;
-        if (processor->setBusArrangements(ins.data(), in_count, outs.data(), out_count) !=
-            kResultOk) {
+        if (aux_in_bus >= 0) ins[aux_in_bus] = SpeakerArr::kStereo;
+        auto try_set = [&]() {
+            return processor->setBusArrangements(ins.data(), in_count, outs.data(), out_count) ==
+                   kResultOk;
+        };
+        bool ok = try_set();
+        if (!ok && aux_in_bus >= 0) {
+            // 嚴格 plugin 對非預期 active aux 整組提案拒收:退回 aux=kEmpty 重談,
+            // 側鏈降級為靜音輸入(路由邊與 session 照樣存在)
+            ins[aux_in_bus] = SpeakerArr::kEmpty;
+            ok = try_set();
+            if (ok) aux_in_bus = -1;
+        }
+        if (ok) {
+            mono_main = false;
+        } else {
             // VST3 negotiation:host 提案被拒後，回送 plugin 的 preferred layout。
             // RoudaMix 內部仍是 stereo；mono effect 由 process() 下混/複製適配。
             ins[main_in_bus] = preferred_in;
@@ -506,8 +534,13 @@ struct Vst3Plugin::Impl {
                 return false;
             }
             mono_main = true;
-        } else {
-            mono_main = false;
+            aux_in_bus = -1;
+        }
+        if (aux_in_bus >= 0) {
+            BusInfo aux_info{};
+            if (component->getBusInfo(kAudio, kInput, aux_in_bus, aux_info) == kResultOk)
+                aux_channels = std::min<int32>(aux_info.channelCount, 2);
+            if (aux_channels <= 0) aux_in_bus = -1;
         }
         BusInfo in_info{}, out_info{};
         if (component->getBusInfo(kAudio, kInput, main_in_bus, in_info) != kResultOk ||
@@ -530,12 +563,17 @@ struct Vst3Plugin::Impl {
             return false;
         }
         if (!negotiate_stereo_main()) return false;
-        // 只有 main bus active;aux 一律關(ponytail:無 aux 資料來源)
+        // main bus active;aux input 有偵測到才 activate(側鏈),其餘一律關
         for (int32 dir : {kInput, kOutput}) {
             const int32 count = component->getBusCount(kAudio, dir);
             for (int32 i = 0; i < count; ++i)
                 component->activateBus(kAudio, dir, i,
                                        dir == kInput ? i == main_in_bus : i == main_out_bus);
+        }
+        if (aux_in_bus >= 0 &&
+            component->activateBus(kAudio, kInput, aux_in_bus, true) != kResultOk) {
+            // 拒 activation 不整檔 fail:側鏈退回靜音輸入
+            aux_in_bus = -1;
         }
         component->setIoMode(kAdvanced);
         if (!process_data.prepare(*component, /*bufferSamples=*/0, kSample32)) {
@@ -567,6 +605,14 @@ struct Vst3Plugin::Impl {
         } else {
             mono_in.clear();
             mono_out.clear();
+        }
+        try {
+            aux_silence.assign(aux_in_bus >= 0 ? static_cast<std::size_t>(max_frames) : 0, 0.0F);
+        } catch (...) {
+            error = "aux silence buffer could not be allocated";
+            component->setActive(false);
+            process_data.unprepare();
+            return false;
         }
         slew_frames_ = static_cast<int32_t>(sample_rate * 0.015);  // 15ms 防 zipper
         // 部分 plugin 回 kNotImplemented 仍正常進 processing 狀態(ProMixArea 同款放行)
@@ -828,7 +874,8 @@ struct Vst3Plugin::Impl {
     }
 
     bool process(const float* in_l, const float* in_r, float* out_l, float* out_r,
-                 int32_t frames, const Vst3ParamEdit* edits, size_t edit_count) noexcept {
+                 int32_t frames, const Vst3ParamEdit* edits, size_t edit_count,
+                 const float* aux_l = nullptr, const float* aux_r = nullptr) noexcept {
         if (!initialized) return false;
         const uint32_t gen = slew_gen_.load(std::memory_order_acquire);
         if (gen != slew_gen_seen_) {
@@ -882,6 +929,20 @@ struct Vst3Plugin::Impl {
         context.state = 0;
         auto& in_bus = process_data.inputs[main_in_bus];
         auto& out_bus = process_data.outputs[main_out_bus];
+        if (aux_in_bus >= 0) {
+            // 側鏈 aux input:指標直配;null = 靜音(engine 平常傳清空的 sc buffer,
+            // null 路徑給測試/舊呼叫點)
+            auto& aux_bus = process_data.inputs[aux_in_bus];
+            if (aux_l == nullptr) {
+                std::fill(aux_silence.begin(), aux_silence.begin() + frames, 0.0F);
+                aux_bus.channelBuffers32[0] = aux_silence.data();
+                if (aux_channels > 1) aux_bus.channelBuffers32[1] = aux_silence.data();
+            } else {
+                aux_bus.channelBuffers32[0] = const_cast<float*>(aux_l);
+                if (aux_channels > 1)
+                    aux_bus.channelBuffers32[1] = const_cast<float*>(aux_r ? aux_r : aux_l);
+            }
+        }
         if (mono_main) {
             if (frames < 0 || static_cast<std::size_t>(frames) > mono_in.size()) return false;
             for (int32_t i = 0; i < frames; ++i)
@@ -923,6 +984,10 @@ uint32_t Vst3Plugin::latency_samples() const noexcept {
                                      : 0;
 }
 
+bool Vst3Plugin::sidechain_capable() const noexcept {
+    return impl_ != nullptr && impl_->aux_in_bus >= 0;
+}
+
 bool Vst3Plugin::initialize(double sample_rate, int32_t max_frames) noexcept {
     return impl_->initialize(sample_rate, max_frames);
 }
@@ -930,9 +995,9 @@ bool Vst3Plugin::initialize(double sample_rate, int32_t max_frames) noexcept {
 void Vst3Plugin::terminate() noexcept { impl_->terminate(); }
 
 bool Vst3Plugin::process(const float* in_l, const float* in_r, float* out_l, float* out_r,
-                         int32_t frames, const Vst3ParamEdit* edits,
-                         size_t edit_count) noexcept {
-    return impl_->process(in_l, in_r, out_l, out_r, frames, edits, edit_count);
+                         int32_t frames, const Vst3ParamEdit* edits, size_t edit_count,
+                         const float* aux_l, const float* aux_r) noexcept {
+    return impl_->process(in_l, in_r, out_l, out_r, frames, edits, edit_count, aux_l, aux_r);
 }
 
 double Vst3Plugin::param_value(uint32_t id) const noexcept {

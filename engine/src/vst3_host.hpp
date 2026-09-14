@@ -1,5 +1,6 @@
 // VST3 host 縮編(自 ProMixArea vst3_adapter):module 載入、stereo main bus、
-// float process、參數枚舉/設定。無 editor、無 aux bus、無 state(M3+ 再說)。
+// float process、參數枚舉/設定。無 editor、無 state。aux input bus:偵測第一個
+// kAux input 供側鏈(談不攏就優雅降級為靜音輸入),僅此一個,不做通用 multi-bus。
 #pragma once
 
 #include <cstdint>
@@ -73,13 +74,17 @@ public:
     const std::string& last_error() const noexcept;
     const std::vector<Vst3ParamInfo>& params() const noexcept;
     uint32_t latency_samples() const noexcept;
+    // 已 negotiate 並 activate 的側鏈 aux input bus(無 = 側鏈餵靜音)
+    bool sidechain_capable() const noexcept;
 
     bool initialize(double sample_rate, int32_t max_frames) noexcept;
     void terminate() noexcept;
 
     // Host seam 一律立體聲；mono-only plugin 由內部下混輸入並將輸出複製回 L/R。
+    // aux_l/aux_r:側鏈輸入(aux input bus),null = 靜音;plugin 無 aux bus 時忽略。
     bool process(const float* in_l, const float* in_r, float* out_l, float* out_r,
-                 int32_t frames, const Vst3ParamEdit* edits, size_t edit_count) noexcept;
+                 int32_t frames, const Vst3ParamEdit* edits, size_t edit_count,
+                 const float* aux_l = nullptr, const float* aux_r = nullptr) noexcept;
 
     // 控制面讀 normalized 值;無此參數或無 controller 回 NaN
     double param_value(uint32_t id) const noexcept;

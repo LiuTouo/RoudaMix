@@ -45,6 +45,8 @@ public:
     tresult PLUGIN_API initialize(FUnknown* context) override {
         if (AudioEffect::initialize(context) != kResultOk) return kResultFalse;
         addAudioInput(STR16("Stereo In"), SpeakerArr::kStereo);
+        // 側鏈 aux input:host activate 才有資料;process 時直接加進輸出(不過延遲環)
+        addAudioInput(STR16("Sidechain In"), SpeakerArr::kStereo, BusTypes::kAux);
         addAudioOutput(STR16("Stereo Out"), SpeakerArr::kStereo);
         return kResultOk;
     }
@@ -111,6 +113,16 @@ public:
             output.channelBuffers32[0][i] = ring_l_[read];
             output.channelBuffers32[1][i] = ring_r_[read];
             write_ = (write_ + 1u) % ring_l_.size();
+        }
+        // 側鏈 aux:未 activate / 指標 null 一律當靜音
+        if (data.numInputs >= 2) {
+            auto& aux = data.inputs[1];
+            if (aux.numChannels >= 1 && aux.channelBuffers32[0] != nullptr)
+                for (int32 i = 0; i < data.numSamples; ++i)
+                    output.channelBuffers32[0][i] += aux.channelBuffers32[0][i];
+            if (aux.numChannels >= 2 && aux.channelBuffers32[1] != nullptr)
+                for (int32 i = 0; i < data.numSamples; ++i)
+                    output.channelBuffers32[1][i] += aux.channelBuffers32[1][i];
         }
         return kResultOk;
     }

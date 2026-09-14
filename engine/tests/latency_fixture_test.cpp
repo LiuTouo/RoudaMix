@@ -59,6 +59,23 @@ int main(int argc, char** argv) {
 
     const rmx::Vst3ParamEdit fail_edit{fail_id, 1.0};
     CHECK(!plugin.process(in_l, in_r, out_l, out_r, 64, &fail_edit, 1));
+    // 同 block 關掉 fail(process 先吃參數再判 fail旗標)
+    const rmx::Vst3ParamEdit unfail_edit{fail_id, 0.0};
+    CHECK(plugin.process(in_l, in_r, out_l, out_r, 64, &unfail_edit, 1));
+
+    // 側鏈 aux input bus:fixture 宣告 kAux input,host 談成 stereo + activate。
+    // aux 不過延遲環直接加進輸出 → main 靜音 + aux 脈衝 = 輸出即脈衝。
+    CHECK(plugin.sidechain_capable());
+    std::fill_n(in_l, 64, 0.0F);
+    std::fill_n(in_r, 64, 0.0F);
+    float aux_l[64]{}, aux_r[64]{};
+    aux_l[0] = aux_r[0] = 1.0F;
+    CHECK(plugin.process(in_l, in_r, out_l, out_r, 64, nullptr, 0, aux_l, aux_r));
+    CHECK(out_l[0] == 1.0F && out_r[0] == 1.0F);
+    // aux null = 靜音路徑(aux_silence):輸出歸零
+    CHECK(plugin.process(in_l, in_r, out_l, out_r, 64, nullptr, 0));
+    CHECK(out_l[0] == 0.0F && out_r[0] == 0.0F);
+
     std::printf("latency_fixture_test PASSED\n");
     return 0;
 }
