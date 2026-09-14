@@ -1,4 +1,4 @@
-// session 單測(無 plugin 環境:v3 roundtrip / v2 migration / 壞 slot / v1 拒載)。
+// session 單測(無 plugin 環境:v4 roundtrip / v2-v3 migration / 壞 slot / v1 拒載)。
 // 真 plugin 的 save→load roundtrip 走 scripts/m5a-engine-tracks.ps1(pipe 層)。
 // CHECK 而非 assert:Release/NDEBUG 下 assert 是 no-op,測試會空轉(M3 實測踩過)。
 #include <cstdio>
@@ -16,7 +16,7 @@
     do {                                                                      \
         if (!(x)) {                                                           \
             std::fprintf(stderr, "CHECK FAIL %s:%d: %s\n", __FILE__, __LINE__, #x); \
-            std::abort();                                                     \
+            std::exit(EXIT_FAILURE);                                          \
         }                                                                     \
     } while (0)
 
@@ -37,6 +37,13 @@ static void write_text(const std::filesystem::path& p, const char* s) {
     std::fclose(f);
 }
 
+static const rmx::TrackNode& track_by_id(const rmx::AudioEngine& engine, std::uint32_t id) {
+    for (const auto& track : engine.tracks())
+        if (track.track_id == id) return track;
+    CHECK(false);
+    return engine.tracks().front();
+}
+
 int main() {
     std::filesystem::path tmp = std::filesystem::temp_directory_path() / "rmx-session-test";
     std::filesystem::create_directories(tmp);
@@ -47,7 +54,7 @@ int main() {
     // 1. 空 engine serialize:結構 + version
     {
         const nlohmann::json j = rmx::session::serialize(e);
-        CHECK(j["roudamixSession"] == 3);
+        CHECK(j["roudamixSession"] == 4);
         CHECK(j["tracks"].is_array() && j["tracks"].empty());
         CHECK(j["deviceKey"].is_null() && j["sampleRate"].is_null());
 
@@ -129,7 +136,7 @@ int main() {
     {
         const auto j = nlohmann::json::parse(read_text(file), nullptr, false);
         CHECK(!j.is_discarded());
-        CHECK(j["roudamixSession"] == 3);
+        CHECK(j["roudamixSession"] == 4);
         CHECK(j["tracks"].is_array() && j["tracks"].size() == 3);
     }
 
@@ -747,45 +754,109 @@ int main() {
         }
     }
 
-    // 14. track_set_sidechain:目標限 kFx、來源限 input 軌、self/未知拒;
-    //     側鏈邊參與雙向環偵測;track_remove 修剪懸空側鏈引用。
+    // 14. API 接收 FX 的來源清單；圖上儲存來源 -> FX 的 outgoing 邊。
     {
+        rmx::AudioEngine sidechains;
+        std::uint32_t vox = 0, music = 0, fx = 0, other_fx = 0, output = 0;
+        CHECK(!sidechains.track_add(rmx::TrackKind::kAudio, "Vox", 0, vox));
+        CHECK(!sidechains.track_add(rmx::TrackKind::kApp, "Music", 0, music));
+        CHECK(!sidechains.track_add(rmx::TrackKind::kFx, "Ducker", 0, fx));
+        CHECK(!sidechains.track_add(rmx::TrackKind::kFx, "Other", 0, other_fx));
+        CHECK(!sidechains.track_add(rmx::TrackKind::kOutput, "Output", 0, output));
+        CHECK(!sidechains.track_set_sidechain(fx, {music, vox, vox}));
+        CHECK(track_by_id(sidechains, fx).sidechain_dests.empty());
+        CHECK((track_by_id(sidechains, vox).sidechain_dests == std::vector<std::uint32_t>{fx}));
+        CHECK((track_by_id(sidechains, music).sidechain_dests == std::vector<std::uint32_t>{fx}));
+
+        // main 和 aux 同向進同一 FX 並非循環；兩種設定順序都應接受。
+        CHECK(!sidechains.track_set_dests(vox, {fx}));
+        CHECK(!sidechains.track_set_sidechain(fx, {}));
+        CHECK(!sidechains.track_set_sidechain(fx, {vox, music}));
+        CHECK(!sidechains.track_set_dests(vox, {}));
+        CHECK(!sidechains.track_set_sidechain(other_fx, {vox}));
+
+        const auto before_invalid = rmx::session::serialize(sidechains);
+        CHECK(sidechains.track_set_sidechain(999999, {vox})->code == rmx::Err::kTrackNotFound);
+        CHECK(sidechains.track_set_sidechain(vox, {music})->code == rmx::Err::kBadCommand);
+        CHECK(sidechains.track_set_sidechain(fx, {fx})->code == rmx::Err::kBadCommand);
+        CHECK(sidechains.track_set_sidechain(fx, {vox, 999999})->code == rmx::Err::kTrackNotFound);
+        CHECK(sidechains.track_set_sidechain(fx, {output})->code == rmx::Err::kBadCommand);
+        CHECK(sidechains.track_set_sidechain(fx, {other_fx})->code == rmx::Err::kBadCommand);
+        CHECK(rmx::session::serialize(sidechains) == before_invalid);
+
+        // 替換/清空僅影響指定 FX；其他 FX 的側鏈與 main 路由必須保留。
+        CHECK(!sidechains.track_set_dests(vox, {other_fx}));
+        CHECK(!sidechains.track_set_sidechain(fx, {music}));
+        CHECK((track_by_id(sidechains, vox).sidechain_dests == std::vector<std::uint32_t>{other_fx}));
+        CHECK(!sidechains.track_set_sidechain(fx, {}));
+        CHECK(track_by_id(sidechains, music).sidechain_dests.empty());
+        CHECK((track_by_id(sidechains, vox).dests == std::vector<std::uint32_t>{other_fx}));
+        CHECK(!sidechains.track_set_sidechain(fx, {music, vox}));
+        CHECK(!sidechains.track_remove(music));
+        CHECK((track_by_id(sidechains, vox).sidechain_dests == std::vector<std::uint32_t>{fx, other_fx}));
+        CHECK(!sidechains.track_remove(fx));
+        CHECK((track_by_id(sidechains, vox).sidechain_dests == std::vector<std::uint32_t>{other_fx}));
+        CHECK(!sidechains.track_set_sidechain(other_fx, {}));
+        CHECK(track_by_id(sidechains, vox).sidechain_dests.empty());
+    }
+
+    // 15. session v4 roundtrip:sidechain 以 fx 軌視角(來源清單)存取;
+    //     v3 檔(無 sidechain 欄)載入 = 側鏈為空,不 fail。
+    {
+        rmx::AudioEngine sidechains;
         std::uint32_t vox = 0, music = 0, fx = 0;
-        CHECK(!e.track_add(rmx::TrackKind::kAudio, "Vox", 0, vox));
-        CHECK(!e.track_add(rmx::TrackKind::kAudio, "Music", 0, music));
-        CHECK(!e.track_add(rmx::TrackKind::kFx, "Ducker", 0, fx));
-        // 驗證:目標非 fx / self / 未知來源
-        CHECK(e.track_set_sidechain(vox, {music}));
-        CHECK(e.track_set_sidechain(fx, {fx}));
-        CHECK(e.track_set_sidechain(fx, {999999}));
-        // 來源須 input 軌:monitor 系統輸出軌當來源要拒
-        std::uint32_t monitor_id = 0;
-        for (const auto& t : e.tracks())
-            if (t.system_role == rmx::SystemRole::kMonitor) monitor_id = t.track_id;
-        CHECK(monitor_id != 0);
-        CHECK(e.track_set_sidechain(fx, {monitor_id}));
-        // 成功:vox + music + 重複 dedup → 2 條
-        CHECK(!e.track_set_sidechain(fx, {vox, music, vox}));
-        const rmx::TrackNode* fx_node = nullptr;
-        for (const auto& t : e.tracks())
-            if (t.track_id == fx) fx_node = &t;
-        CHECK(fx_node != nullptr);
-        CHECK(fx_node->sidechain_dests.size() == 2);
-        // 雙向環偵測:vox —dest→ fx 與 fx —sidechain→ vox 成環,兩個方向都拒
-        CHECK(e.track_set_dests(vox, {fx}));
-        CHECK(!e.track_set_sidechain(fx, {}));
-        CHECK(!e.track_set_dests(vox, {fx}));
-        CHECK(e.track_set_sidechain(fx, {vox}));  // 反向:dest 已存在,側鏈成環
-        CHECK(!e.track_set_dests(vox, {}));
-        // track_remove 修剪:刪 music 後 fx 的側鏈只剩 vox
-        CHECK(!e.track_set_sidechain(fx, {vox, music}));
-        CHECK(!e.track_remove(music));
-        fx_node = nullptr;
-        for (const auto& t : e.tracks())
-            if (t.track_id == fx) fx_node = &t;
-        CHECK(fx_node != nullptr);
-        CHECK((fx_node->sidechain_dests == std::vector<std::uint32_t>{vox}));
-        CHECK(!e.track_set_sidechain(fx, {}));
+        CHECK(!sidechains.track_add(rmx::TrackKind::kAudio, "Vox", 0, vox));
+        CHECK(!sidechains.track_add(rmx::TrackKind::kAudio, "Music", 0, music));
+        CHECK(!sidechains.track_add(rmx::TrackKind::kFx, "Ducker", 0, fx));
+        CHECK(!sidechains.track_set_dests(vox, {fx}));
+        CHECK(!sidechains.track_set_sidechain(fx, {vox, music}));
+        const auto saved = rmx::session::serialize(sidechains);
+        CHECK(saved["roudamixSession"] == 4);
+        for (const auto& track : saved["tracks"]) {
+            if (track["trackId"] == fx)
+                CHECK(track["sidechain"] == nlohmann::json::array({vox, music}));
+            else
+                CHECK(track["sidechain"].empty());
+        }
+        const auto sc_file = tmp / "sidechain.rmsession";
+        CHECK(!rmx::session::save(sidechains, sc_file));
+        CHECK(!sidechains.track_set_sidechain(fx, {}));
+        nlohmann::json applied;
+        CHECK(!rmx::session::load(sidechains, sc_file, applied));
+        const rmx::TrackNode* fx2 = nullptr;
+        std::uint32_t vox2 = 0;
+        // 載入後 id 全新:以 name 對應
+        std::uint32_t music2 = 0;
+        for (const auto& t : sidechains.tracks()) {
+            if (t.name == "Ducker") fx2 = &t;
+            if (t.name == "Vox") vox2 = t.track_id;
+            if (t.name == "Music") music2 = t.track_id;
+        }
+        CHECK(fx2 != nullptr && vox2 != 0 && music2 != 0);
+        CHECK(fx2->sidechain_dests.empty());
+        CHECK((track_by_id(sidechains, vox2).sidechain_dests == std::vector<std::uint32_t>{fx2->track_id}));
+        CHECK((track_by_id(sidechains, music2).sidechain_dests == std::vector<std::uint32_t>{fx2->track_id}));
+        CHECK((track_by_id(sidechains, vox2).dests == std::vector<std::uint32_t>{fx2->track_id}));
+
+        // v4 懸空/錯型來源被略過，但有效來源仍保留。
+        auto dangling = saved;
+        dangling["tracks"][2]["sidechain"] = nlohmann::json::array({vox, 999999, fx, "bad"});
+        write_text(sc_file, dangling.dump().c_str());
+        rmx::AudioEngine restored;
+        CHECK(!rmx::session::load(restored, sc_file, applied));
+        CHECK(restored.tracks()[2].sidechain_dests.empty());
+        CHECK((restored.tracks()[0].sidechain_dests == std::vector<std::uint32_t>{restored.tracks()[2].track_id}));
+        CHECK(restored.tracks()[1].sidechain_dests.empty());
+
+        // 舊檔缺少 sidechain 欄位，載入後所有側鏈為空。
+        for (const auto version : {2, 3}) {
+            auto legacy = saved;
+            legacy["roudamixSession"] = version;
+            for (auto& track : legacy["tracks"]) track.erase("sidechain");
+            write_text(sc_file, legacy.dump().c_str());
+            CHECK(!rmx::session::load(restored, sc_file, applied));
+            for (const auto& track : restored.tracks()) CHECK(track.sidechain_dests.empty());
+        }
     }
 
     std::filesystem::remove_all(tmp);

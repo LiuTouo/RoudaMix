@@ -84,6 +84,16 @@ static nlohmann::json tracks_json_with_strips(const AudioEngine& engine,
         const char* role = system_role_str(track.system_role);
         const bool metered = track_index < strips.tracks.size() &&
                              strips.tracks[track_index].track_strip != kNoStrip;
+        // status 與 session 都以 FX 視角呈現側鏈來源，而非 outgoing 目的地。
+        std::vector<std::uint32_t> sidechain_sources;
+        if (track.kind == TrackKind::kFx) {
+            for (const auto& source : engine.tracks()) {
+                if (std::find(source.sidechain_dests.begin(), source.sidechain_dests.end(),
+                              track.track_id) != source.sidechain_dests.end())
+                    sidechain_sources.push_back(source.track_id);
+            }
+            std::sort(sidechain_sources.begin(), sidechain_sources.end());
+        }
         tracks.push_back({
             {"trackId", track.track_id},
             {"kind", track_kind_str(track.kind)},
@@ -93,7 +103,7 @@ static nlohmann::json tracks_json_with_strips(const AudioEngine& engine,
             {"color", track.color},
             {"source", source_to_status_json(track.source)},
             {"dests", track.dests},
-            {"sidechain", track.sidechain_dests},
+            {"sidechain", sidechain_sources},
             {"output", output_to_status_json(track.output)},
             {"gain", track.gain},
             {"mute", track.mute},

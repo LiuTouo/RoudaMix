@@ -1627,20 +1627,37 @@ std::optional<Failure> AudioEngine::track_set_sidechain(std::uint32_t track_id,
     }
     std::sort(sources.begin(), sources.end());
     sources.erase(std::unique(sources.begin(), sources.end()), sources.end());
-    const auto old = t->sidechain_dests;
-    t->sidechain_dests = std::move(sources);
+    // API 是 FX 的來源清單，圖則儲存 source -> FX 的 outgoing 邊。
+    // 先完成全部配置再交換，任一驗證/發布失敗時完整還原多軌邊集合。
+    std::vector<std::vector<std::uint32_t>> previous;
+    previous.reserve(tracks_.size());
+    for (const auto& track : tracks_) {
+        auto dests = track.sidechain_dests;
+        dests.erase(std::remove(dests.begin(), dests.end(), track_id), dests.end());
+        if (std::binary_search(sources.begin(), sources.end(), track.track_id)) {
+            dests.push_back(track_id);
+            std::sort(dests.begin(), dests.end());
+        }
+        previous.push_back(std::move(dests));
+    }
+    for (std::size_t i = 0; i < tracks_.size(); ++i)
+        tracks_[i].sidechain_dests.swap(previous[i]);
+    auto rollback = [&] {
+        for (std::size_t i = 0; i < tracks_.size(); ++i)
+            tracks_[i].sidechain_dests.swap(previous[i]);
+    };
     if (graph_has_cycle(tracks_)) {
-        t->sidechain_dests = std::move(old);
+        rollback();
         return failure(Err::kCycleDetected, "sidechain routing would create a cycle");
     }
     if (auto fail = prepare_monitor_variants()) {
-        t->sidechain_dests = old;
+        rollback();
         (void)ensure_monitor_shadows();
         (void)swap_graph();
         return failure(Err::kPluginStateFailed, std::move(fail->message));
     }
     if (!swap_graph()) {
-        t->sidechain_dests = old;
+        rollback();
         (void)ensure_monitor_shadows();
         return failure(Err::kBadCommand, "PDC plan exceeds latency or memory safety limits");
     }

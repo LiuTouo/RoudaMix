@@ -15,7 +15,7 @@
 namespace rmx::session {
 
 namespace {
-constexpr int kSessionVersion = 3;
+constexpr int kSessionVersion = 4;
 
 // #14 資源預算(CWE-400/770):外部 session 檔在動 live 狀態「前」的整檔/結構
 // 總量上限。超限 = 拒載(結構超限則略過超量項),live 狀態不動。
@@ -145,6 +145,17 @@ nlohmann::json serialize(const AudioEngine& engine) {
             });
         }
         const char* role = system_role_str(t.system_role);
+        // 側鏈以 fx 軌視角序列化(來源清單):內部邊存在來源軌的
+        // sidechain_dests(outgoing),此處反查 incoming,與 status/UI 同形
+        std::vector<std::uint32_t> sidechain_sources;
+        if (t.kind == TrackKind::kFx) {
+            for (const auto& other : engine.tracks()) {
+                if (std::find(other.sidechain_dests.begin(), other.sidechain_dests.end(),
+                              t.track_id) != other.sidechain_dests.end())
+                    sidechain_sources.push_back(other.track_id);
+            }
+            std::sort(sidechain_sources.begin(), sidechain_sources.end());
+        }
         tracks.push_back({
             {"trackId", t.track_id},
             {"kind", track_kind_str(t.kind)},
@@ -154,6 +165,7 @@ nlohmann::json serialize(const AudioEngine& engine) {
             {"color", t.color},
             {"source", source_to_json(t.source)},
             {"dests", t.dests},
+            {"sidechain", sidechain_sources},
             {"output", output_to_json(t.output)},
             {"gain", t.gain},
             {"mute", t.mute},
@@ -279,9 +291,9 @@ std::optional<Failure> load(AudioEngine& engine, const std::filesystem::path& fi
         !j["roudamixSession"].is_number_integer())
         return failure(Err::kSessionIo, "not a RoudaMix session file");
     const int file_version = j["roudamixSession"].get<int>();
-    if (file_version != 2 && file_version != kSessionVersion)
+    if (file_version < 2 || file_version > kSessionVersion)
         return failure(Err::kSessionIo,
-                       "unsupported RoudaMix session version (expected v2 or v3)");
+                       "unsupported RoudaMix session version (expected v2-v4)");
 
     // #14:軌數超上限 = 整檔拒載、狀態不動(極小 track 物件可放大成每軌 384KiB
     // RT buffer;合法檔遠低於此 — telemetry 也只有 64 strip)。clear 之前擋。
@@ -536,6 +548,29 @@ std::optional<Failure> load(AudioEngine& engine, const std::filesystem::path& fi
                 dests.push_back(it->second);
             }
             (void)engine.track_set_dests(mine->second, std::move(dests));
+        }
+
+        // sidechain 重接:fx 軌視角的來源清單(v2/v3 檔無此欄 = 空,同 latencyPolicy
+        // 的版本閘模式);舊 id → 新 id,map 不到/非 input 軌 = 丟棄不炸
+        for (const auto& st : j["tracks"]) {
+            if (!st.is_object() || !st.contains("trackId") ||
+                !st["trackId"].is_number_unsigned() || !st.contains("sidechain") ||
+                !st["sidechain"].is_array())
+                continue;
+            const auto old_id = st["trackId"].get<std::uint32_t>();
+            const auto mine = id_map.find(old_id);
+            if (mine == id_map.end()) continue;
+            std::vector<std::uint32_t> sources;
+            for (const auto& s : st["sidechain"]) {
+                if (!s.is_number_unsigned()) continue;
+                const auto it = id_map.find(s.get<std::uint32_t>());
+                if (it == id_map.end()) continue;
+                const auto kt = kind_map.find(s.get<std::uint32_t>());
+                if (kt != kind_map.end() && !source_kind(kt->second))
+                    continue;  // 側鏈來源限 input 軌
+                sources.push_back(it->second);
+            }
+            (void)engine.track_set_sidechain(mine->second, std::move(sources));
         }
 
         // 系統輸出(monitor/stream)唯一性 + 存在性:檔案缺 role(舊 v2)= 確定性

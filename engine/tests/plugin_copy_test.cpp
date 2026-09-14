@@ -11,8 +11,9 @@
 #include "command_contract.hpp"
 #include "router.hpp"
 #include "session.hpp"
+#include "session_projection.hpp"
 
-#define CHECK(x) do { if (!(x)) { std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #x); std::abort(); } } while (0)
+#define CHECK(x) do { if (!(x)) { std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #x); std::exit(EXIT_FAILURE); } } while (0)
 
 static void engine_copy(const std::string& module) {
     rmx::AudioEngine engine;
@@ -184,10 +185,100 @@ static void router_copy(const std::string& module) {
     std::filesystem::remove_all(folder);
 }
 
+// 使用既有 fixture 與真正的 AudioEngine callback，避免只驗 planner 的資料形狀。
+static void sidechain_audio(const std::string& module) {
+    rmx::AudioEngine engine;
+    std::uint32_t source{}, fx{}, sink{}, instance{};
+    CHECK(!engine.track_add(rmx::TrackKind::kAudio, "Source", 0, source));
+    CHECK(!engine.track_add(rmx::TrackKind::kFx, "Sidechain FX", 0, fx));
+    CHECK(!engine.track_add(rmx::TrackKind::kOutput, "Sink", 0, sink));
+    rmx::TrackSource tone;
+    tone.type = rmx::TrackSource::kSine;
+    CHECK(!engine.track_set_source(source, tone));
+    CHECK(!engine.track_set_dests(fx, {sink}));
+    CHECK(!engine.add_plugin(fx, module, "", instance));
+    CHECK(engine.find_slot(instance)->plugin->initialize(48000.0, 64));
+    CHECK(engine.find_slot(instance)->plugin->sidechain_capable());
+    CHECK(!engine.track_set_sidechain(fx, {source}));
+
+    // 不啟動硬體：rate=0 時相位不前進，四分之一週期固定產生 0.25。
+    const auto input = engine.tracks()[0].buf;
+    const auto effect = engine.tracks()[1].buf;
+    const auto output = engine.tracks()[2].buf;
+    input->sine_phase = 1ULL << 30;
+    auto process = [&] {
+        static_cast<rmx::IAudioCallback&>(engine).process({64, {}, {}});
+        CHECK(engine.status().plugin_fails == 0);
+    };
+    process();
+    for (std::size_t ch = 0; ch < 2; ++ch) {
+        for (std::size_t i = 0; i < 64; ++i) {
+            CHECK(input->sc[ch][i] == 0.0F);
+            CHECK(effect->in[ch][i] == 0.0F);  // aux 不直接加入可聽 main bus
+            CHECK(std::abs(effect->sc[ch][i] - 0.25F) < 1e-6F);
+            CHECK(std::abs(output->in[ch][i] - 0.25F) < 1e-6F); // fixture 將 aux 加進輸出
+        }
+    }
+    const auto tracks = rmx::session::tracks_json(engine);
+    CHECK(tracks[0]["sidechain"].empty());
+    CHECK(tracks[1]["sidechain"] == nlohmann::json::array({source}));
+
+    // main 與 aux 同向並存，fixture 各收一次；清空 aux 後不可殘留上一塊。
+    CHECK(!engine.track_set_dests(source, {fx}));
+    process();
+    CHECK(std::abs(output->in[0][0] - 0.5F) < 1e-6F);
+    CHECK(!engine.track_set_sidechain(fx, {}));
+    process();
+    CHECK(effect->sc[0][0] == 0.0F);
+    CHECK(std::abs(output->in[0][0] - 0.25F) < 1e-6F);
+    CHECK(!engine.track_set_dests(source, {}));
+    process();
+    CHECK(output->in[0][0] == 0.0F);
+}
+
+static void sidechain_rollback(const std::string& module) {
+    rmx::AudioEngine engine;
+    std::uint32_t source{}, spare{}, fx{}, other_fx{}, output{}, instance{};
+    CHECK(!engine.track_add(rmx::TrackKind::kAudio, "Slow source", 0, source));
+    CHECK(!engine.track_add(rmx::TrackKind::kAudio, "Spare source", 0, spare));
+    CHECK(!engine.track_add(rmx::TrackKind::kFx, "Slow FX", 0, fx));
+    CHECK(!engine.track_add(rmx::TrackKind::kFx, "Other FX", 0, other_fx));
+    CHECK(!engine.track_add(rmx::TrackKind::kOutput, "Output", 0, output));
+    CHECK(!engine.track_set_dests(fx, {output}));
+
+    rmx::Vst3Plugin fixture(module, "");
+    CHECK(fixture.loaded());
+    rmx::PluginSnapshot slow;
+    slow.module_path = module;
+    slow.params = {{100, 60000.0 / 192000.0}};
+    std::string error;
+    CHECK(fixture.capture_runtime_state(slow.state, error));
+    CHECK(!engine.insert_plugin_snapshot(slow, source, 0, instance));
+    CHECK(!engine.insert_plugin_snapshot(slow, fx, 0, instance));
+    CHECK(!engine.track_set_sidechain(other_fx, {source}));
+    CHECK(!engine.track_set_sidechain(fx, {spare}));
+    const auto before = rmx::session::serialize(engine);
+    const auto before_status = rmx::session::tracks_json(engine);
+
+    // 兩段 60000 samples 接起來超過 48000 Hz 的兩秒上限。
+    // 這是在候選邊已寫入後失敗，需還原所有來源，不能只還原 FX 本身。
+    const auto fail = engine.track_set_sidechain(fx, {source});
+    CHECK(fail && fail->code == rmx::Err::kPluginStateFailed);
+    CHECK(rmx::session::serialize(engine) == before);
+    CHECK(rmx::session::tracks_json(engine) == before_status);
+    const auto* graph = engine.acquire_graph();
+    CHECK(graph && graph->route_plan.ok());
+    CHECK((graph->nodes[0].sidechain_dests == std::vector<std::uint32_t>{other_fx}));
+    CHECK((graph->nodes[1].sidechain_dests == std::vector<std::uint32_t>{fx}));
+    engine.release_graph();
+}
+
 int main(int argc, char** argv) {
     CHECK(argc == 2);
     SetEnvironmentVariableW(L"ROUDAMIX_VST_REGISTRY", nullptr);
     const auto module = std::filesystem::absolute(argv[1]).string();
+    sidechain_audio(module);
+    sidechain_rollback(module);
     engine_copy(module);
     router_copy(module);
     std::puts("plugin_copy_test PASSED");
