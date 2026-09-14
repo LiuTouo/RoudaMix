@@ -3,7 +3,8 @@
 // shared_ptr 共用 → 不拷音訊記憶體)、atomic swap 進 RT;舊 graph 走 500ms grace
 // 且 reader 歸零後才回收(GraphRetireQueue,#15 — reader 卡超過 grace 也只是
 // 晚刪,不會被使用中釋放)。
-// 契約:control 面保證 dests 無環(track_set_dests 先驗);RT 端不防環。
+// 契約:control 面保證 dests + sidechain_dests 合併無環(track_set_dests /
+// track_set_sidechain 各自先驗);RT 端不防環。
 #pragma once
 
 #include <cstdint>
@@ -100,7 +101,9 @@ TrackOutput output_from_json(const nlohmann::json& j);
 // gain_state = RT 端平滑增益現值(block 間線性斜坡,防推桿爆音)、sine_phase =
 // 該軌 sine 產生器相位(1<<32 = 2π)—— 兩者跨 snapshot 存續(RT 專寫)。
 struct TrackRt {
-    float in[2][kMaxBlockFrames]{};
+    float in[2][kMaxBlockFrames]{};   // summing bus(每塊清空;上游 dest 邊 sum 進來)
+    float sc[2][kMaxBlockFrames]{};   // sidechain bus(每塊清空;上游側鏈邊 sum 進來,
+                                      // 餵 FX 軌 plugin aux input — 不進混音、不進 monitor)
     float alt[2][kMaxBlockFrames]{};
     float monitor_in[2][kMaxBlockFrames]{};
     float monitor_alt[2][kMaxBlockFrames]{};
@@ -115,9 +118,10 @@ struct TrackRt {
 constexpr std::uint32_t kNoStrip = 0xFFFFFFFFu;  // 超出 telemetry 預算 = 沒有錶
 
 // 資源預算(#14,CWE-400/770):外部輸入(session 檔/router 指令)可合成的
-// 結構總量上限。每軌 TrackRt ≈384KiB RT buffer、每條 route 一條 2s PDC delay,
-// 無上限 = 極小檔案放大成 GB 級配置。合法場景遠低於此(telemetry strip 也只有
-// 64);超限 = track_add 回 kBadCommand、session 載入多餘軌/plugin/params 略過。
+// 結構總量上限。每軌 TrackRt ≈448KiB RT buffer(含 sidechain bus)、每條 route
+// 一條 2s PDC delay,無上限 = 極小檔案放大成 GB 級配置。合法場景遠低於此
+// (telemetry strip 也只有 64);超限 = track_add 回 kBadCommand、session 載入
+// 多餘軌/plugin/params 略過。
 constexpr std::size_t kMaxTracks = 128;    // 軌數(含系統輸出)
 constexpr std::size_t kMaxChain = 256;     // 每軌 plugin 數(= kPluginLoadEntries)
 constexpr std::size_t kMaxParams = 4096;   // 每 plugin host 參數表筆數
@@ -131,7 +135,8 @@ struct TrackNode {
     std::string name;
     std::uint32_t color{};  // 0xRRGGBB
     std::vector<RackSlot> chain;  // plugin/ring shared_ptr 與 master 共用
-    std::vector<std::uint32_t> dests;  // 下游 trackId(多選 = summing)
+    std::vector<std::uint32_t> dests;  // 下游 trackId(多選 = summing,可聽混音)
+    std::vector<std::uint32_t> sidechain_dests;  // 側鏈下游 kFx trackId(只進 aux,不可聽)
     TrackSource source;
     TrackOutput output;
     float gain{1.0F};  // 線性乘數 [0,4];post-fader(chain 後、dest sum 前)
@@ -143,6 +148,7 @@ struct TrackNode {
     std::uint32_t track_strip{kNoStrip};       // telemetry strip(軌)
     std::vector<std::uint32_t> chain_strips;   // 平行於 chain(plugin 錶)
     std::vector<std::shared_ptr<PdcDelayLine>> dest_pdc;  // 平行於 dests；primary only
+    std::vector<std::shared_ptr<PdcDelayLine>> sidechain_pdc;  // 平行於 sidechain_dests；primary only
     std::shared_ptr<TrackRt> buf;
     std::shared_ptr<AppCapture> capture;  // M5b:app 軌的 loopback pump(master 與 snapshot 共用)
     std::shared_ptr<RenderSink> render;   // M5c:串流軌的 wasapi render pump
@@ -168,11 +174,13 @@ struct TrackGraph {
     RoutePlan route_plan;                 // control thread 規劃；RT 只讀
 };
 
-// 拓撲排序(Kahn,對 dests 數邊)。有環時回傳 fallback = master 序(防禦:
-// control 面本來就擋環,這裡不讓 RT 掛)。回傳值為 node index 序。
+// 拓撲排序(Kahn,對 dests + sidechain_dests 數邊;側鏈邊同樣參與排序,讓 FX 軌
+// 在其側鏈來源之後處理)。有環時回傳 fallback = master 序(防禦:control 面本來
+// 就擋環,這裡不讓 RT 掛)。回傳值為 node index 序。
 std::vector<std::uint32_t> graph_topo_order(const std::vector<TrackNode>& nodes);
 
-// 環偵測(control 面 track_set_dests 先驗再套;hypothetical 直接改一份驗)
+// 環偵測(control 面 track_set_dests / track_set_sidechain 先驗再套;hypothetical
+// 直接改一份驗;兩種邊合併看)
 bool graph_has_cycle(const std::vector<TrackNode>& nodes);
 
 // 從所有軌的 source/output 收集 ASIO channel 聯集(start 與

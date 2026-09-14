@@ -120,12 +120,16 @@ std::vector<std::uint32_t> id_to_index(const std::vector<TrackNode>& nodes) {
 std::vector<std::uint32_t> graph_topo_order(const std::vector<TrackNode>& nodes) {
     const auto index = id_to_index(nodes);
     const std::size_t n = nodes.size();
+    // 兩種邊共用列舉(dest summing + sidechain)防 drift:漏側鏈邊 = 側鏈晚一塊
+    auto for_each_edge = [](const TrackNode& nd, auto&& fn) {
+        for (const auto d : nd.dests) fn(d);
+        for (const auto d : nd.sidechain_dests) fn(d);
+    };
     std::vector<std::uint32_t> indegree(n, 0);
-    for (const auto& nd : nodes) {
-        for (const auto d : nd.dests) {
+    for (const auto& nd : nodes)
+        for_each_edge(nd, [&](std::uint32_t d) {
             if (d < index.size() && index[d] != kNoStrip) ++indegree[index[d]];
-        }
-    }
+        });
     std::vector<std::uint32_t> queue;  // Kahn(indegree 0 先進)
     for (std::size_t i = 0; i < n; ++i)
         if (indegree[i] == 0) queue.push_back(static_cast<std::uint32_t>(i));
@@ -134,11 +138,11 @@ std::vector<std::uint32_t> graph_topo_order(const std::vector<TrackNode>& nodes)
     for (std::size_t qi = 0; qi < queue.size(); ++qi) {
         const auto i = queue[qi];
         order.push_back(i);
-        for (const auto d : nodes[i].dests) {
+        for_each_edge(nodes[i], [&](std::uint32_t d) {
             if (d < index.size() && index[d] != kNoStrip) {
                 if (--indegree[index[d]] == 0) queue.push_back(index[d]);
             }
-        }
+        });
     }
     if (order.size() != n) return {};  // 環:呼叫端 fallback master 序
     return order;

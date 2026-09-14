@@ -286,6 +286,49 @@ int main() {
                   .type == rmx::TrackOutput::kNone);
     }
 
+    // 7. 拓撲排序/環偵測:dests + sidechain_dests 合併看(側鏈邊同樣參與排序,
+    //    讓 FX 軌在其側鏈來源之後處理;混合邊成環也要被偵測)
+    {
+        auto by_id = [](const std::vector<std::uint32_t>& order,
+                        const std::vector<rmx::TrackNode>& nodes, std::uint32_t id) {
+            for (std::size_t i = 0; i < order.size(); ++i)
+                if (nodes[order[i]].track_id == id) return static_cast<int>(i);
+            return -1;
+        };
+
+        // 7a. 純側鏈邊:audio(id1)—sidechain→ fx(id2),fx 必排在 source 之後
+        {
+            std::vector<rmx::TrackNode> tracks;
+            auto a = make_track(rmx::TrackKind::kAudio);
+            a.track_id = 1;
+            a.sidechain_dests = {2};
+            auto f = make_track(rmx::TrackKind::kFx);
+            f.track_id = 2;
+            tracks.push_back(std::move(a));
+            tracks.push_back(std::move(f));
+            const auto order = rmx::graph_topo_order(tracks);
+            CHECK(order.size() == 2);
+            CHECK(!order.empty() &&
+                  by_id(order, tracks, 1) < by_id(order, tracks, 2));
+            CHECK(!rmx::graph_has_cycle(tracks));
+        }
+
+        // 7b. 混合邊成環:audio —dest→ fx —sidechain→ audio = 環,排序回空
+        {
+            std::vector<rmx::TrackNode> tracks;
+            auto a = make_track(rmx::TrackKind::kAudio);
+            a.track_id = 1;
+            a.dests = {2};
+            auto f = make_track(rmx::TrackKind::kFx);
+            f.track_id = 2;
+            f.sidechain_dests = {1};
+            tracks.push_back(std::move(a));
+            tracks.push_back(std::move(f));
+            CHECK(rmx::graph_topo_order(tracks).empty());
+            CHECK(rmx::graph_has_cycle(tracks));
+        }
+    }
+
     std::printf("track_graph_test PASSED\n");
     return 0;
 }
