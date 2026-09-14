@@ -747,6 +747,47 @@ int main() {
         }
     }
 
+    // 14. track_set_sidechain:目標限 kFx、來源限 input 軌、self/未知拒;
+    //     側鏈邊參與雙向環偵測;track_remove 修剪懸空側鏈引用。
+    {
+        std::uint32_t vox = 0, music = 0, fx = 0;
+        CHECK(!e.track_add(rmx::TrackKind::kAudio, "Vox", 0, vox));
+        CHECK(!e.track_add(rmx::TrackKind::kAudio, "Music", 0, music));
+        CHECK(!e.track_add(rmx::TrackKind::kFx, "Ducker", 0, fx));
+        // 驗證:目標非 fx / self / 未知來源
+        CHECK(e.track_set_sidechain(vox, {music}));
+        CHECK(e.track_set_sidechain(fx, {fx}));
+        CHECK(e.track_set_sidechain(fx, {999999}));
+        // 來源須 input 軌:monitor 系統輸出軌當來源要拒
+        std::uint32_t monitor_id = 0;
+        for (const auto& t : e.tracks())
+            if (t.system_role == rmx::SystemRole::kMonitor) monitor_id = t.track_id;
+        CHECK(monitor_id != 0);
+        CHECK(e.track_set_sidechain(fx, {monitor_id}));
+        // 成功:vox + music + 重複 dedup → 2 條
+        CHECK(!e.track_set_sidechain(fx, {vox, music, vox}));
+        const rmx::TrackNode* fx_node = nullptr;
+        for (const auto& t : e.tracks())
+            if (t.track_id == fx) fx_node = &t;
+        CHECK(fx_node != nullptr);
+        CHECK(fx_node->sidechain_dests.size() == 2);
+        // 雙向環偵測:vox —dest→ fx 與 fx —sidechain→ vox 成環,兩個方向都拒
+        CHECK(e.track_set_dests(vox, {fx}));
+        CHECK(!e.track_set_sidechain(fx, {}));
+        CHECK(!e.track_set_dests(vox, {fx}));
+        CHECK(e.track_set_sidechain(fx, {vox}));  // 反向:dest 已存在,側鏈成環
+        CHECK(!e.track_set_dests(vox, {}));
+        // track_remove 修剪:刪 music 後 fx 的側鏈只剩 vox
+        CHECK(!e.track_set_sidechain(fx, {vox, music}));
+        CHECK(!e.track_remove(music));
+        fx_node = nullptr;
+        for (const auto& t : e.tracks())
+            if (t.track_id == fx) fx_node = &t;
+        CHECK(fx_node != nullptr);
+        CHECK((fx_node->sidechain_dests == std::vector<std::uint32_t>{vox}));
+        CHECK(!e.track_set_sidechain(fx, {}));
+    }
+
     std::filesystem::remove_all(tmp);
     std::printf("session_test PASSED\n");
     return 0;

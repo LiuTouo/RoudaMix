@@ -126,6 +126,10 @@ public:
     std::optional<Failure> track_set_source(std::uint32_t track_id, const TrackSource& source);
     std::optional<Failure> track_set_dests(std::uint32_t track_id,
                                            std::vector<std::uint32_t> dests);
+    // 側鏈路由:trackId(kFx)接收 sources(kAudio/kApp)的 post-fader tap,
+    // 只進該軌 plugin 的 aux input,不進可聽混音。驗證/回滾與 track_set_dests 同款。
+    std::optional<Failure> track_set_sidechain(std::uint32_t track_id,
+                                               std::vector<std::uint32_t> sources);
     std::optional<Failure> track_set_output(std::uint32_t track_id, const TrackOutput& output);
     std::optional<Failure> track_move(std::uint32_t track_id, std::size_t new_index);
 

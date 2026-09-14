@@ -1337,6 +1337,9 @@ std::optional<Failure> AudioEngine::track_remove(std::uint32_t track_id) {
     // 其他軌 dests 的懸空引用一併清
     for (auto& t : tracks_) {
         t.dests.erase(std::remove(t.dests.begin(), t.dests.end(), track_id), t.dests.end());
+        t.sidechain_dests.erase(std::remove(t.sidechain_dests.begin(),
+                                            t.sidechain_dests.end(), track_id),
+                                t.sidechain_dests.end());
     }
     swap_graph();
     return std::nullopt;
@@ -1599,6 +1602,45 @@ std::optional<Failure> AudioEngine::track_set_dests(std::uint32_t track_id,
     }
     if (!swap_graph()) {
         t->dests = old;
+        (void)ensure_monitor_shadows();
+        return failure(Err::kBadCommand, "PDC plan exceeds latency or memory safety limits");
+    }
+    return std::nullopt;
+}
+
+std::optional<Failure> AudioEngine::track_set_sidechain(std::uint32_t track_id,
+                                                        std::vector<std::uint32_t> sources) {
+    TrackNode* t = find_track_mut(track_id);
+    if (t == nullptr)
+        return failure(Err::kTrackNotFound, "unknown trackId " + std::to_string(track_id));
+    // 側鏈目標限 kFx(aux 只接 plugin);來源限來源軌(#11 的鏡像規則)
+    if (t->kind != TrackKind::kFx)
+        return failure(Err::kBadCommand, "sidechain target must be an fx track");
+    for (const auto s : sources) {
+        if (s == track_id)
+            return failure(Err::kBadCommand, "track cannot sidechain to itself");
+        const TrackNode* st = find_track_mut(s);
+        if (st == nullptr)
+            return failure(Err::kTrackNotFound, "unknown source trackId " + std::to_string(s));
+        if (!source_kind(st->kind))
+            return failure(Err::kBadCommand, "sidechain source must be an input track");
+    }
+    std::sort(sources.begin(), sources.end());
+    sources.erase(std::unique(sources.begin(), sources.end()), sources.end());
+    const auto old = t->sidechain_dests;
+    t->sidechain_dests = std::move(sources);
+    if (graph_has_cycle(tracks_)) {
+        t->sidechain_dests = std::move(old);
+        return failure(Err::kCycleDetected, "sidechain routing would create a cycle");
+    }
+    if (auto fail = prepare_monitor_variants()) {
+        t->sidechain_dests = old;
+        (void)ensure_monitor_shadows();
+        (void)swap_graph();
+        return failure(Err::kPluginStateFailed, std::move(fail->message));
+    }
+    if (!swap_graph()) {
+        t->sidechain_dests = old;
         (void)ensure_monitor_shadows();
         return failure(Err::kBadCommand, "PDC plan exceeds latency or memory safety limits");
     }
