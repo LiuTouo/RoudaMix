@@ -69,7 +69,7 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let mut tray = TrayIconBuilder::with_id("main-tray")
         .menu(&menu)
         .show_menu_on_left_click(false)
-        .tooltip("RoudaMix")
+        .tooltip(format!("RoudaMix v{}", app.package_info().version))
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show-dashboard" => show_dashboard(app),
             "check-updates" | "show-about" => {
