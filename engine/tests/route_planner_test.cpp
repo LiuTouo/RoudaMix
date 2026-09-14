@@ -425,6 +425,51 @@ int main() {
         }
     }
 
+    // 側鏈 send:進 sidechain_sends(只 primary、delay 對齊同 dest 邊);
+    // 側鏈來源被反向可達標 monitor_required,但不該被標 monitor_diverged。
+    {
+        const auto plan = rmx::plan_routes(
+            {
+                {1, false, false, rmx::OutputLatencyPolicy::kFullPdc,
+                 {active_slot(10, 128)}, {}, {3}},
+                {2, false, true, rmx::OutputLatencyPolicy::kLowLatency, {}, {}},
+                {3, false, false, rmx::OutputLatencyPolicy::kFullPdc, {}, {2}, {}},
+            },
+            limits());
+        CHECK(plan.ok());
+        const auto& audio = find_track(plan, 1);
+        CHECK(audio.sidechain_sends.size() == 1);
+        CHECK(audio.sidechain_sends[0].to_track_id == 3);
+        CHECK(audio.sidechain_sends[0].primary_delay_samples == 0u);
+        CHECK(audio.monitor_required);
+        CHECK(!audio.monitor_diverged);
+        const auto& fx = find_track(plan, 3);
+        CHECK(fx.sends.size() == 1 && fx.sends[0].to_track_id == 2);
+        CHECK(fx.sidechain_sends.empty());
+    }
+
+    // 側鏈 + dest 匯流同一 FX:PDC 對齊涵蓋側鏈邊(delay 與 dest 邊同一套)。
+    {
+        const auto plan = rmx::plan_routes(
+            {
+                {1, false, false, rmx::OutputLatencyPolicy::kFullPdc,
+                 {active_slot(10, 128)}, {3}},
+                {2, false, true, rmx::OutputLatencyPolicy::kFullPdc, {}, {}},
+                {3, false, false, rmx::OutputLatencyPolicy::kFullPdc, {}, {2}, {}},
+                {4, false, false, rmx::OutputLatencyPolicy::kFullPdc, {}, {}, {3}},
+            },
+            limits());
+        CHECK(plan.ok());
+        // track1(128)是慢分支,delay 0;側鏈來源 track4(0)等 128 對齊
+        CHECK(find_track(plan, 1).sends[0].primary_delay_samples == 0u);
+        const auto& sidechain = find_track(plan, 4).sidechain_sends;
+        CHECK(sidechain.size() == 1);
+        CHECK(sidechain[0].to_track_id == 3);
+        CHECK(sidechain[0].primary_delay_samples == 128u);
+        // 側鏈來源(0 samples)把 FX 的有效路徑抬到 max(128,0)+0 → output 128
+        CHECK(output_latency(plan, 2).total_plugin_delay_samples == 128u);
+    }
+
     std::printf("route_planner_test PASSED\n");
     return 0;
 }

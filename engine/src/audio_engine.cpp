@@ -74,6 +74,7 @@ RoutePlan route_plan_for_tracks(const std::vector<TrackNode>& tracks,
         spec.is_output = track.kind == TrackKind::kOutput;
         spec.latency_policy = track.latency_policy;
         spec.dests = track.dests;
+        spec.sidechain_dests = track.sidechain_dests;
         spec.uses_input_bus = track.source.type == TrackSource::kNone;
         spec.slots.reserve(track.chain.size());
         for (const auto& slot : track.chain) {

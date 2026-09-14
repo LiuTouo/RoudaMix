@@ -20,6 +20,7 @@ struct PdcNodeSpec {
     std::uint64_t primary_latency_samples{};
     std::uint64_t monitor_latency_samples{};
     std::vector<std::uint32_t> dests;
+    std::vector<std::uint32_t> sidechain_dests;  // 側鏈邊:同樣參與對齊與路徑延遲
 };
 
 struct PdcOutputSpec {

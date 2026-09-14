@@ -62,6 +62,30 @@ int main() {
         CHECK(plan.buffer_bytes == 0);
     }
 
+    // 2b. 側鏈邊 fan-in:側鏈來源與 dest 邊同樣在匯流點對齊、同樣計入路徑延遲。
+    {
+        const std::vector<rmx::PdcNodeSpec> nodes{
+            {1, 0, 0, {}, {3}},   // audio —sidechain→ fx
+            {2, 128, 128, {3}},   // 慢分支 —dest→ fx
+            {3, 32, 32, {}},      // fx
+        };
+        const std::vector<rmx::PdcOutputSpec> outputs{
+            {3, rmx::OutputLatencyPolicy::kFullPdc},
+        };
+        const auto plan = rmx::plan_plugin_delay(nodes, outputs, limits);
+        CHECK(plan.ok());
+        CHECK(plan.outputs.size() == 1);
+        CHECK(plan.outputs[0].total_plugin_delay_samples == 160);
+        CHECK(plan.outputs[0].compensation_delay_samples == 128);
+        CHECK(plan.edge_delays.size() == 2);
+        CHECK(plan.edge_delays[0].from_track_id == 1);
+        CHECK(plan.edge_delays[0].to_track_id == 3);
+        CHECK(plan.edge_delays[0].delay_samples == 128);
+        CHECK(plan.edge_delays[1].from_track_id == 2);
+        CHECK(plan.edge_delays[1].delay_samples == 0);
+        CHECK(plan.buffer_bytes == 2u * (96000u + 1u) * 2u * sizeof(float));
+    }
+
     // 3. 混合政策:full-PDC 只規劃其祖先；不碰 low-latency-only 匯流。
     {
         const std::vector<rmx::PdcNodeSpec> nodes{

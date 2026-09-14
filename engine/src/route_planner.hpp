@@ -53,6 +53,7 @@ struct RouteTrackSpec {
     OutputLatencyPolicy latency_policy{OutputLatencyPolicy::kFullPdc};
     std::vector<RouteSlotSpec> slots;
     std::vector<std::uint32_t> dests;
+    std::vector<std::uint32_t> sidechain_dests;  // 側鏈邊(只進 dest 的 aux,不可聽)
     bool uses_input_bus{true};
 };
 
@@ -89,6 +90,8 @@ struct RouteTrackPlan {
     bool muted{};
     std::vector<RouteSlotPlan> slots;
     std::vector<RouteSendPlan> sends;
+    // 側鏈 send:只餵 dest 的 primary path aux(monitor 變體吃靜音);monitor_bus 不用
+    std::vector<RouteSendPlan> sidechain_sends;
     RouteBus output_bus{RouteBus::kPrimary};
 
     bool operator==(const RouteTrackPlan&) const = default;

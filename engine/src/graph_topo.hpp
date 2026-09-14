@@ -23,7 +23,9 @@ struct TopoBuild {
     bool unknown_dest{};   // dests 指向未知 track_id,已中止建構
 };
 
-// 節點型別只需 track_id 與 dests 兩個成員(PdcNodeSpec / RouteTrackSpec 皆符合)。
+// 節點型別只需 track_id、dests、sidechain_dests 三個成員(PdcNodeSpec /
+// RouteTrackSpec 皆符合);側鏈邊同樣進 indegree/incoming/order — 側鏈來源必須
+// 先於 FX 軌處理,且匯流點的 PDC 對齊延遲要涵蓋側鏈邊。
 template <typename Node>
 TopoBuild build_topo(const std::vector<Node>& nodes) {
     TopoBuild build;
@@ -37,7 +39,7 @@ TopoBuild build_topo(const std::vector<Node>& nodes) {
         }
     g.incoming.resize(count);
     std::vector<std::size_t> indegree(count, 0);
-    for (std::size_t from = 0; from < count; ++from)
+    for (std::size_t from = 0; from < count; ++from) {
         for (const auto dest_id : nodes[from].dests) {
             const auto found = g.index.find(dest_id);
             if (found == g.index.end()) {
@@ -47,15 +49,35 @@ TopoBuild build_topo(const std::vector<Node>& nodes) {
             g.incoming[found->second].push_back(from);
             ++indegree[found->second];
         }
+        // 側鏈邊:未知 id 同樣 fail closed(未知 dest = 拒絕規劃)
+        for (const auto dest_id : nodes[from].sidechain_dests) {
+            const auto found = g.index.find(dest_id);
+            if (found == g.index.end()) {
+                build.unknown_dest = true;
+                return build;
+            }
+            g.incoming[found->second].push_back(from);
+            ++indegree[found->second];
+        }
+    }
     g.order.reserve(count);
     for (std::size_t i = 0; i < count; ++i)
         if (indegree[i] == 0) g.order.push_back(i);
-    for (std::size_t cursor = 0; cursor < g.order.size(); ++cursor)
-        for (const auto dest_id : nodes[g.order[cursor]].dests) {
+    // 單一 Kahn walk 涵蓋兩種邊:分開走會讓「第二段才解鎖的節點」的 dest 後繼
+    // 永遠減不到 indegree,誤報成環
+    for (std::size_t cursor = 0; cursor < g.order.size(); ++cursor) {
+        const auto from = g.order[cursor];
+        for (const auto dest_id : nodes[from].dests) {
             const auto found = g.index.find(dest_id);
             if (found != g.index.end() && --indegree[found->second] == 0)
                 g.order.push_back(found->second);
         }
+        for (const auto dest_id : nodes[from].sidechain_dests) {
+            const auto found = g.index.find(dest_id);
+            if (found != g.index.end() && --indegree[found->second] == 0)
+                g.order.push_back(found->second);
+        }
+    }
     return build;
 }
 

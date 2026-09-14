@@ -45,7 +45,8 @@ RoutePlan plan_routes(const std::vector<RouteTrackSpec>& tracks,
         }
         // 第一階段只規劃 full-PDC edges；low-latency 的有效 latency 必須等
         // slot route/shadow 決策完成後，於第二階段填入並正式驗證。
-        latency_nodes.push_back({track.track_id, latency, 0u, track.dests});
+        latency_nodes.push_back(
+            {track.track_id, latency, 0u, track.dests, track.sidechain_dests});
         if (track.is_output)
             latency_outputs.push_back({track.track_id, track.latency_policy});
     }
@@ -166,6 +167,13 @@ RoutePlan plan_routes(const std::vector<RouteTrackSpec>& tracks,
             if (reaches_low_latency[dest] && tracks[dest].uses_input_bus &&
                 (monitor_diverged || delay > 0))
                 incoming_monitor_diverged[dest] = true;
+        }
+        // 側鏈 send:只進 dest 的 primary aux,不觸發 monitor 對齊/分歧傳播
+        planned.sidechain_sends.reserve(track.sidechain_dests.size());
+        for (const auto dest_id : track.sidechain_dests) {
+            planned.sidechain_sends.push_back({dest_id, RouteBus::kPrimary,
+                                               RouteBus::kPrimary,
+                                               pdc_delay(track.track_id, dest_id)});
         }
         result.tracks[i] = std::move(planned);
     }
