@@ -71,7 +71,8 @@ if (-not (Test-Path -LiteralPath $sigBundle)) { throw 'Updater signature (.sig) 
 $sigArtifact = Join-Path $artifactRoot "RoudaMix-$Version-windows-x64-setup.exe.sig"
 Copy-Item -LiteralPath $sigBundle -Destination $sigArtifact
 $pubkey = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).plugins.updater.pubkey
-Invoke-ReleaseCommand npx @('tauri', 'signer', 'verify', '-p', $pubkey, $setupArtifact, $sigArtifact)
+# tauri CLI 沒有 signer verify 子命令;用 node 內建 crypto 複刻 minisign-verify 驗章。
+Invoke-ReleaseCommand node @('scripts/verify-updater-sig.mjs', $setupArtifact, $sigArtifact, $pubkey)
 Invoke-ReleaseCommand $Python @('scripts/release.py', 'latest-json', '--sig', $sigArtifact)
 
 Invoke-ReleaseCommand $Python @('scripts/release.py', 'source')
