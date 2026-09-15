@@ -61,6 +61,19 @@ if ($installers.Count -ne 1) { throw 'Expected exactly one NSIS installer.' }
 Invoke-ReleaseCommand 7z @('x', $installers[0].FullName, '-otarget/release-installer-check', '-y')
 Invoke-ReleaseCommand $Python @('scripts/verify-installer.py', '--directory', 'target/release-installer-check')
 Copy-Item -LiteralPath $installers[0].FullName -Destination (Join-Path $artifactRoot "RoudaMix-$Version-windows-x64-setup.exe")
+
+# In-app updater: signed manifest + signature published alongside the installer.
+# Tripwire: verify the artifact against the pubkey committed in tauri.conf.json
+# BEFORE publish, so key/pubkey mismatch fails the build, not every user's app.
+$setupArtifact = Join-Path $artifactRoot "RoudaMix-$Version-windows-x64-setup.exe"
+$sigBundle = "$($installers[0].FullName).sig"
+if (-not (Test-Path -LiteralPath $sigBundle)) { throw 'Updater signature (.sig) was not produced; is TAURI_SIGNING_PRIVATE_KEY set?' }
+$sigArtifact = Join-Path $artifactRoot "RoudaMix-$Version-windows-x64-setup.exe.sig"
+Copy-Item -LiteralPath $sigBundle -Destination $sigArtifact
+$pubkey = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).plugins.updater.pubkey
+Invoke-ReleaseCommand npx @('tauri', 'signer', 'verify', '-p', $pubkey, $setupArtifact, $sigArtifact)
+Invoke-ReleaseCommand $Python @('scripts/release.py', 'latest-json', '--sig', $sigArtifact)
+
 Invoke-ReleaseCommand $Python @('scripts/release.py', 'source')
 Invoke-ReleaseCommand $Python @('scripts/release.py', 'notes')
 Copy-Item -LiteralPath target/release-legal/THIRD-PARTY-NOTICES.txt -Destination $artifactRoot
