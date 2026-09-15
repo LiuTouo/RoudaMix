@@ -3,6 +3,7 @@
 import argparse
 import base64
 import concurrent.futures
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -52,6 +53,7 @@ def prepare(version):
         "version": version,
         "app": {"windows": []},
         "bundle": {
+            "createUpdaterArtifacts": True,
             "license": "GPL-3.0-only",
             "licenseFile": "../LICENSE",
             "resources": {"../target/release-legal/": "licenses/"},
@@ -59,6 +61,35 @@ def prepare(version):
                         "nsis": {"installMode": "currentUser"}}
         }
     })
+
+
+# 程式內自動更新清單(tauri-plugin-updater 靜態格式)。signature = minisign
+# .sig 檔「全文」(含 untrusted comment 行,plugin 預期如此);URL 指向同一
+# release 的安裝包資產(名稱須與 build-release.ps1 的改名一致)。
+def latest_manifest(version, tag, setup_name, signature, now=None):
+    signature = signature.strip()
+    if not signature:
+        raise ValueError("updater signature is empty")
+    pub_date = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return {
+        "version": version,
+        "notes": f"{REPOSITORY}/releases/tag/{tag}",
+        "pub_date": pub_date,
+        "platforms": {
+            "windows-x86_64": {
+                "url": f"{REPOSITORY}/releases/download/{tag}/{setup_name}",
+                "signature": signature,
+            }
+        },
+    }
+
+
+def latest_json(sig_path):
+    meta = read_json(ROOT / "target/release-meta/build.json")
+    signature = Path(sig_path).read_text(encoding="utf-8")
+    setup_name = f"RoudaMix-{meta['version']}-windows-x64-setup.exe"
+    manifest = latest_manifest(meta["version"], meta["tag"], setup_name, signature)
+    write_json(ROOT / "output/release/latest.json", manifest)
 
 
 def license_texts(directory):
@@ -234,6 +265,7 @@ def notes():
     lines = [f"# RoudaMix {meta['version']}", "", "Windows 10/11 x64。", "",
              "- `*-portable.zip`：解壓後執行 RoudaMix.exe；需要系統 WebView2 Runtime。",
              "- `*-setup.exe`：安裝版；缺少 WebView2 時會透過網路下載安裝。",
+             "- `latest.json` / `*-setup.exe.sig`：程式內自動更新清單與簽章（安裝版）。",
              "- `*-source.tar.gz`：GPLv3 對應原始碼、相依套件與建置說明。",
              "- `SHA256SUMS.txt`：下載檔案的 SHA-256。",
              "", "目前未使用 Authenticode 簽章，Windows 可能顯示未知發行者提示。",
@@ -250,10 +282,16 @@ def notes():
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=["prepare", "notices", "source", "restore-npm", "notes"])
+    parser.add_argument("command",
+                        choices=["prepare", "notices", "source", "restore-npm", "notes", "latest-json"])
     parser.add_argument("--version")
+    parser.add_argument("--sig")
     args = parser.parse_args()
     if args.command == "prepare":
         prepare(args.version or "")
+    elif args.command == "latest-json":
+        if not args.sig:
+            parser.error("latest-json requires --sig")
+        latest_json(args.sig)
     else:
         {"notices": notices, "source": source, "restore-npm": restore_npm, "notes": notes}[args.command]()

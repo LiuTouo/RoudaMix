@@ -1,5 +1,7 @@
 import unittest
-from release import source_allowed, validate_version
+from datetime import datetime, timezone
+
+from release import latest_manifest, source_allowed, validate_version
 
 
 class ReleaseContractTests(unittest.TestCase):
@@ -25,3 +27,22 @@ class ReleaseContractTests(unittest.TestCase):
                      "engine/build/Release/app.exe", "ui/node_modules/svelte/package.json",
                      "src-tauri/WebView2Runtime/browser.exe", ".scratch/notes.txt"):
             self.assertFalse(source_allowed(path), path)
+
+    def test_updater_manifest_shape(self):
+        from pathlib import Path
+
+        sig_text = Path("scripts/../LICENSE").read_text(encoding="utf-8")  # 任意非空文字代表 .sig 全文
+        manifest = latest_manifest("0.1.7", "v0.1.7", "RoudaMix-0.1.7-windows-x64-setup.exe",
+                                   sig_text, now=datetime(2026, 9, 16, 12, 0, 0, tzinfo=timezone.utc))
+        self.assertEqual(manifest["version"], "0.1.7")
+        self.assertEqual(manifest["pub_date"], "2026-09-16T12:00:00Z")
+        self.assertEqual(manifest["notes"], "https://github.com/LiuTouo/RoudaMix/releases/tag/v0.1.7")
+        platform = manifest["platforms"]["windows-x86_64"]
+        self.assertEqual(platform["url"],
+                         "https://github.com/LiuTouo/RoudaMix/releases/download/v0.1.7/"
+                         "RoudaMix-0.1.7-windows-x64-setup.exe")
+        self.assertEqual(platform["signature"], sig_text.strip())
+
+    def test_updater_manifest_rejects_empty_signature(self):
+        with self.assertRaises(ValueError):
+            latest_manifest("0.1.7", "v0.1.7", "x.exe", "   \n")
