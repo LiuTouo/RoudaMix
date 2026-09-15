@@ -1011,7 +1011,9 @@
       <span class="lbl">側鏈來源</span>
       <DestinationSelect trackId={track.trackId} trackName={track.name}
         options={sidechainCandidates(tracks)} selected={shownSidechain}
-        pending={sidechainLocal !== null} onToggle={toggleSidechain} />
+        pending={sidechainLocal !== null} onToggle={toggleSidechain}
+        label="側鏈來源" panelSuffix="sidechain"
+        emptyText="沒有可作為側鏈來源的輸入軌。" />
     </div>
   {/if}
 

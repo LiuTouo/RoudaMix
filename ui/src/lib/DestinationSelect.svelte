@@ -3,16 +3,31 @@
   import { cssColor } from "./tracks";
   import type { Track } from "./types";
 
-  let { trackId, trackName, options, selected, pending = false, onToggle }: {
+  let {
+    trackId,
+    trackName,
+    options,
+    selected,
+    pending = false,
+    onToggle,
+    label = "輸出到",
+    panelSuffix = "destinations",
+    emptyText = "沒有可接收路由的 FX 或輸出軌。",
+  }: {
     trackId: number;
     trackName: string;
     options: Pick<Track, "trackId" | "name" | "color">[];
     selected: number[];
     pending?: boolean;
     onToggle: (id: number, checked: boolean) => void;
+    /** 顯示與無障礙用語(側鏈來源列傳「側鏈來源」) */
+    label?: string;
+    /** 同一軌多個實例時 popover id 去重(寫死會讓 popovertarget 解析到第一個) */
+    panelSuffix?: string;
+    emptyText?: string;
   } = $props();
 
-  const panelId = $derived(`track-destinations-${trackId}`);
+  const panelId = $derived(`track-${panelSuffix}-${trackId}`);
   const names = $derived(selected.map((id) => options.find((option) => option.trackId === id)?.name ?? `#${id}`));
   const summary = $derived(names.length ? names.join("、") : "(無)");
   let trigger: HTMLButtonElement;
@@ -91,9 +106,9 @@
     aria-haspopup="dialog"
     aria-expanded={expanded}
     aria-controls={panelId}
-    aria-label={`${trackName} 的輸出到：${summary}`}
+    aria-label={`${trackName} 的${label}：${summary}`}
     disabled={options.length === 0}
-    data-tooltip={options.length === 0 ? "沒有可接收路由的 FX 或輸出軌。" : `輸出到：${names.length ? names.join("、") : "未選擇"}。可勾選多個目的地，立即套用。`}
+    data-tooltip={options.length === 0 ? emptyText : `${label}：${names.length ? names.join("、") : "未選擇"}。可勾選多個，立即套用。`}
   >
     <span class="destination-summary">{options.length === 0 ? "(無可用目的地)" : summary}</span>
     {#if selected.length > 1}<span class="destination-count" aria-hidden="true">{selected.length}</span>{/if}
@@ -108,7 +123,7 @@
     popover="auto"
     role="dialog"
     tabindex="-1"
-    aria-label={`${trackName} 的輸出目的地（可多選）`}
+    aria-label={`${trackName} 的${label}（可多選）`}
     onbeforetoggle={beforeToggle}
     ontoggle={(event) => {
       if (event.newState === "open") {
@@ -118,7 +133,7 @@
     onkeydown={onPanelKeydown}
   >
     <fieldset>
-      <legend>輸出目的地 · 可多選</legend>
+      <legend>{label} · 可多選</legend>
       {#each options as option (option.trackId)}
         <label class="destination-option">
           <input type="checkbox" checked={selected.includes(option.trackId)}

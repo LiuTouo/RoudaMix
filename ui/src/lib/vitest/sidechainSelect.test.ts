@@ -83,6 +83,14 @@ describe("側鏈來源", () => {
     expect(triggers()).toHaveLength(2);
     const rows = [...document.querySelectorAll(".destination-row")];
     expect(rows.map((r) => r.textContent?.includes("側鏈來源"))).toEqual([false, true]);
+    // popover id 去重:popovertarget 各指各的 panel(寫死同 id 會永遠開第一個)
+    const [destTarget, sidechainTarget] = triggers().map((t) =>
+      t.getAttribute("popovertarget"),
+    );
+    expect(destTarget).not.toBe(sidechainTarget);
+    const panels = popups().map((p) => p.id);
+    expect(panels).toContain(destTarget!);
+    expect(panels).toContain(sidechainTarget!);
 
     const sidechainPopup = popups()[1];
     sidechainPopup.showPopover();
