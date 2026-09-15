@@ -3,6 +3,7 @@
   import { getVersion } from "@tauri-apps/api/app";
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
+  import { check as checkPluginUpdate, type Update } from "@tauri-apps/plugin-updater";
   import { checkRelease, type ReleaseUpdate } from "./updates";
 
   let { visible, autoCheck, onShow, onPreference, onAvailable }: {
@@ -19,6 +20,12 @@
   let message = $state("尚未檢查更新");
   let error = $state("");
   let update = $state<ReleaseUpdate | null>(null);
+  let portable = $state(true);  // 預設保守:未知時顯示瀏覽器下載(不會誤觸 NSIS 更新)
+  // 立即更新狀態機:idle → checking → downloading(進度) → installing → error
+  let installPhase = $state<"idle" | "checking" | "downloading" | "installing" | "error">("idle");
+  let downloadProgress = $state("");
+  let downloadedBytes = 0;   // 累計 chunk(非 $state:不觸發 re-render,進度字串才觸發)
+  let totalBytes = 0;
   let startupHandled = false;
   let disposed = false;
   let versionPromise: Promise<string> | null = null;
@@ -29,6 +36,48 @@
       throw reason;
     });
     return versionPromise;
+  }
+
+  /** 下載進度:有總長顯示 %,無總長顯示已下載 MB */
+  function progressText(downloaded: number, total: number): string {
+    if (total > 0) return `${Math.min(100, Math.round((downloaded / total) * 100))}%`;
+    return `${(downloaded / 1048576).toFixed(1)} MB`;
+  }
+
+  async function installUpdate() {
+    if (installPhase !== "idle") return;
+    installPhase = "checking";
+    error = "";
+    downloadProgress = "";
+    try {
+      const latest = await checkPluginUpdate();
+      if (!latest) {
+        message = "目前已是最新版本";
+        installPhase = "idle";
+        return;
+      }
+      installPhase = "downloading";
+      downloadedBytes = 0;
+      totalBytes = 0;
+      await latest.downloadAndInstall((event) => {
+        if (event.event === "Started") {
+          totalBytes = event.data.contentLength ?? 0;
+          downloadProgress = progressText(0, totalBytes);
+        } else if (event.event === "Progress") {
+          downloadedBytes += event.data.chunkLength;
+          downloadProgress = progressText(downloadedBytes, totalBytes);
+        } else if (event.event === "Finished") {
+          installPhase = "installing";
+        }
+      });
+      // Windows 上 NSIS /R 會殺掉本程序並重啟新版;走到這裡 = fallback
+      message = "更新完成，請重新啟動程式";
+      installPhase = "idle";
+    } catch (reason) {
+      if (disposed) return;
+      installPhase = "error";
+      error = reason instanceof Error ? reason.message : String(reason);
+    }
   }
 
   async function check(automatic = false) {
@@ -94,6 +143,9 @@
       else unlisten = cleanup;
     }).catch(() => { error = "系統匣更新事件無法連線，仍可手動檢查更新"; });
     void loadVersion().catch(() => { error = "無法讀取程式版本，請按檢查更新重試"; });
+    invoke<{ portable: boolean }>("updater_state").then(
+      (state) => { portable = state.portable; },
+    ).catch(() => { /* 維持保守預設:走瀏覽器下載 */ });
     return () => { disposed = true; unlisten?.(); };
   });
 </script>
@@ -107,7 +159,15 @@
   </div>
   <div class="actions">
     <button disabled={checking} onclick={() => check()}>{checking ? "檢查中…" : "檢查更新"}</button>
-    {#if update?.available}
+    {#if update?.available && !portable}
+      <button class="primary" disabled={installPhase !== "idle"} onclick={installUpdate}>
+        {installPhase === "checking" ? "確認中…"
+          : installPhase === "downloading" ? `下載中 ${downloadProgress}`
+          : installPhase === "installing" ? "安裝中，即將重新啟動…"
+          : installPhase === "error" ? "重試更新"
+          : "立即更新"}
+      </button>
+    {:else if update?.available}
       <button class="primary" disabled={opening} onclick={openDownload}>{opening ? "開啟中…" : "前往下載新版"}</button>
     {/if}
   </div>
@@ -116,7 +176,9 @@
       onchange={changePreference} />
     啟動時自動檢查更新
   </label>
-  <p class="hint">有新版本時提示下載，由你決定何時安裝。</p>
+  <p class="hint">
+    {#if portable}便攜版不支援程式內更新，開瀏覽器下載最新 zip。{:else}下載後自動安裝並重新啟動。{/if}
+  </p>
 </section>
 
 <style>
