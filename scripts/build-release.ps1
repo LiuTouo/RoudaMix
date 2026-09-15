@@ -41,7 +41,7 @@ if (-not $SkipTests) {
 Invoke-ReleaseCommand $Python @('scripts/release.py', 'notices')
 
 # Both packages use the system Evergreen WebView2; NSIS installs it when absent.
-Invoke-ReleaseCommand npm @('run', 'tauri', '--', 'build', '--ci', '--no-sign', '--bundles', 'nsis',
+Invoke-ReleaseCommand npm @('run', 'tauri', '--', 'build', '--ci', '--bundles', 'nsis',
     '--config', 'target/release-meta/tauri.conf.json', '--', '--locked')
 
 $portableName = "RoudaMix-$Version-windows-x64-portable"
