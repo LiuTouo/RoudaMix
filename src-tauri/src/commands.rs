@@ -26,3 +26,16 @@ pub async fn engine_command(
 pub fn respawn_engine(app: tauri::AppHandle, b: State<Bridge>) {
     b.respawn(app);
 }
+
+/// 更新面板狀態:portable(zip)沒有 NSIS 安裝器,UI 擋自動更新、留瀏覽器下載。
+#[derive(serde::Serialize)]
+pub struct UpdaterState {
+    pub portable: bool,
+}
+
+#[tauri::command]
+pub fn updater_state() -> UpdaterState {
+    UpdaterState {
+        portable: crate::portable::root().is_some(),
+    }
+}

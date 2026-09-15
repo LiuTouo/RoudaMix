@@ -126,6 +126,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
             tauri_plugin_autostart::Builder::new()
                 .app_name("RoudaMix")
@@ -150,6 +151,7 @@ pub fn run() {
             commands::connect_status,
             commands::engine_command,
             commands::respawn_engine,
+            commands::updater_state,
             settings::get_settings,
             settings::set_settings,
             settings::list_sessions,

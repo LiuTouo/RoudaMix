@@ -40,5 +40,14 @@
       "../engine/build/Release/roudamix-engine.exe": "roudamix-engine.exe",
       "../engine/build/Release/roudamix-worker.exe": "roudamix-worker.exe"
     }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": ["https://github.com/LiuTouo/RoudaMix/releases/latest/download/latest.json"],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFEMEY0NTQ2MjA4MkQ4NDEKUldSQjJJSWdSa1VQclpaZnBFbGFSVFQyOG1FTTA3MjgwSWtoNUNhZWhTMnhjQXFBbFMybW8rMnIK",
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }
