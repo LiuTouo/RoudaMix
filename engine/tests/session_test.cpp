@@ -1,5 +1,5 @@
 // session 單測(無 plugin 環境:v4 roundtrip / v2-v3 migration / 壞 slot / v1 拒載)。
-// 真 plugin 的 save→load roundtrip 走 scripts/m5a-engine-tracks.ps1(pipe 層)。
+// 真 plugin 的 save→load roundtrip 走 scripts/legacy/m5a-engine-tracks.ps1(pipe 層)。
 // CHECK 而非 assert:Release/NDEBUG 下 assert 是 no-op,測試會空轉(M3 實測踩過)。
 #include <cstdio>
 #include <cstdlib>

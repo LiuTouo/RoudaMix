@@ -170,7 +170,7 @@ if(MSVC)
 endif()
 add_test(NAME vst3_host COMMAND vst3_host_test)
 
-# session 檔案序列化/載入(無 plugin 環境;真 plugin roundtrip 走 m5a-engine-tracks.ps1)
+# session 檔案序列化/載入(無 plugin 環境;真 plugin roundtrip 走 legacy/m5a-engine-tracks.ps1)
 add_executable(session_test tests/session_test.cpp src/session.cpp src/audio_engine.cpp
     src/pdc_planner.cpp src/route_planner.cpp src/pdc_delay_line.cpp src/rt_crossfade.cpp src/track_graph.cpp src/app_capture.cpp src/render_sink.cpp src/mic_capture.cpp src/wasapi_clock.cpp
     src/asio_device.cpp src/pcm_convert.cpp src/telemetry.cpp src/vst3_host.cpp
