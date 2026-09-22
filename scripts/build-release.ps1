@@ -31,12 +31,8 @@ if (-not $SkipRestore) {
 Invoke-ReleaseCommand cmake @('-S', 'engine', '-B', 'engine/build', '-A', 'x64')
 Invoke-ReleaseCommand cmake @('--build', 'engine/build', '--config', 'Release', '--parallel', '2')
 if (-not $SkipTests) {
-    Invoke-ReleaseCommand $Python @('-m', 'unittest', 'discover', '-s', 'scripts', '-p', 'release_test.py')
-    Invoke-ReleaseCommand ctest @('--test-dir', 'engine/build', '-C', 'Release', '--output-on-failure')
-    Invoke-ReleaseCommand npm @('run', 'test:protocol')
-    Invoke-ReleaseCommand npm @('--prefix', 'ui', 'run', 'check')
-    Invoke-ReleaseCommand npm @('--prefix', 'ui', 'test')
-    Invoke-ReleaseCommand cargo @('test', '--workspace', '--locked')
+    Invoke-ReleaseCommand powershell @('-NoProfile', '-ExecutionPolicy', 'Bypass',
+        '-File', 'scripts/test-all.ps1', '-Python', $Python)
 }
 Invoke-ReleaseCommand $Python @('scripts/release.py', 'notices')
 
