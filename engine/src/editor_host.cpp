@@ -139,11 +139,11 @@ private:
     std::atomic<uint32> references_{1};
 };
 
-// 帶2 控制項的矩形(client 座標;帶高 36,控制項上下留 4~8px)
-RECT power_rect(int /*cw*/) noexcept { return {8, kTabH + 4, 44, kStripH - 4}; }
-RECT save_btn_rect(int /*cw*/) noexcept { return {52, kTabH + 7, 156, kStripH - 7}; }
-RECT load_btn_rect(int /*cw*/) noexcept { return {164, kTabH + 7, 268, kStripH - 7}; }
-RECT preset_name_rect(int cw) noexcept { return {278, kTabH + 4, cw - 10, kStripH - 4}; }
+// 帶2 控制項的矩形(client 座標;帶高 36,控制項上下留 5~6px)
+RECT power_rect(int /*cw*/) noexcept { return {8, kTabH + 5, 36, kStripH - 5}; }
+RECT save_btn_rect(int /*cw*/) noexcept { return {44, kTabH + 6, 148, kStripH - 6}; }
+RECT load_btn_rect(int /*cw*/) noexcept { return {156, kTabH + 6, 260, kStripH - 6}; }
+RECT preset_name_rect(int cw) noexcept { return {270, kTabH + 4, cw - 10, kStripH - 4}; }
 
 LRESULT CALLBACK host_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept;
 LRESULT CALLBACK tabs_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept;
@@ -254,6 +254,10 @@ struct EditorHost::Impl {
     };
     std::vector<Tab> tabs_data;
     IPtr<EditorPlugFrame> frame;
+    // 帶列 hover 狀態(tabs 視窗座標;WM_MOUSEMOVE 維護、WM_MOUSELEAVE 清除)
+    int hover_tab = -1;     // 可點(未活)tab index;-1 無
+    int hover_btn = 0;      // 1 電源、2 儲存、3 載入;0 無
+    bool hover_tracked = false;
 
     ~Impl() {
         if (wnd != nullptr) DestroyWindow(wnd);  // WM_DESTROY 內 detach + 清欄位
@@ -319,7 +323,8 @@ struct EditorHost::Impl {
         if (engine != nullptr) {
             for (const auto& t : engine->plugin_tabs()) {
                 if (t.instance_id != id) continue;
-                title += L" - " + to_wide(t.track_name);
+                // 標題帶 plugin 名 + 軌道名(專業 host 慣例:一看知是哪顆插件)
+                title += L" - " + to_wide(t.label) + L" - " + to_wide(t.track_name);
                 break;
             }
         }
@@ -566,7 +571,8 @@ LRESULT CALLBACK host_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
 // ---- 頂部列:帶1 tabs + 帶2 bypass/preset(全部自繪 + hit-test,單一 HWND)----
 
 void draw_power_icon(HDC dc, int cx, int cy, double rad, bool bypassed) {
-    // 電源鍵(比照 UI 端使用者提供 SVG):開 = 綠 #16A34A、bypass = 黑。
+    // 電源鍵(比照 UI 端使用者提供 SVG):開 = 綠 #16A34A、bypass = 暗灰
+    // (原畫黑 = 深色底上隱形,改 kTextIdle 暗但可辨識)。
     // GDI 筆無反鋸齒 + 折線頂點取整數 = 線條抖;改 GDI+(AA + 浮點座標)。
     // 圓(頂部 90° 開口)+ 豎線從頂穿到圓心;筆寬 = SVG 40/236 比例。
     static const ULONG_PTR gdip_token = [] {
@@ -576,7 +582,7 @@ void draw_power_icon(HDC dc, int cx, int cy, double rad, bool bypassed) {
         return t;
     }();
     (void)gdip_token;
-    const Gdiplus::Color color = bypassed ? Gdiplus::Color(255, 0, 0, 0)
+    const Gdiplus::Color color = bypassed ? Gdiplus::Color(255, 0x8a, 0x91, 0x9b)
                                           : Gdiplus::Color(255, 0x16, 0xA3, 0x4A);
     const float penw = (std::max)(2.0f, static_cast<float>(rad * 40.0 / 236.0));
     Gdiplus::Graphics g(dc);
@@ -597,14 +603,20 @@ HPEN btn_border_pen() noexcept {
     return p;
 }
 
-// 圓角平面按鈕(raised 填色 + 1px 邊框 + 置中文字;半徑對齊主程式 6px,圓太大 = 網頁感)
-void draw_modern_button(HDC dc, RECT r, const wchar_t* text) {
-    const HGDIOBJ old_pen = SelectObject(dc, btn_border_pen());
-    const HGDIOBJ old_brush = SelectObject(dc, tab_active_brush());
+HPEN accent_pen() noexcept {
+    static const HPEN p = CreatePen(PS_SOLID, 1, kAccent);
+    return p;
+}
+
+// 平面按鈕:無填色(= 與帶同底)+ 1px 邊框 + 暗文字;hover 邊框/文字轉亮 ——
+// 同主程式 button:hover 只換 border-color 的靜音語彙,不再是厚實實體按鈕
+void draw_preset_button(HDC dc, RECT r, const wchar_t* text, bool hover) {
+    const HGDIOBJ old_pen = SelectObject(dc, hover ? accent_pen() : btn_border_pen());
+    const HGDIOBJ old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
     RoundRect(dc, r.left, r.top, r.right, r.bottom, 6, 6);
     SelectObject(dc, old_pen);
     SelectObject(dc, old_brush);
-    SetTextColor(dc, kTextActive);
+    SetTextColor(dc, hover ? kTextActive : kTextIdle);
     DrawTextW(dc, text, -1, &r,
               DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 }
@@ -627,21 +639,23 @@ LRESULT CALLBACK tabs_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
         SetBkMode(dc, TRANSPARENT);
         SelectObject(dc, strip_font());
         const auto& tabs = self->tabs_data;
+        int active_idx = -1;
         if (!tabs.empty()) {
             const int tw = (std::min)(160, cw / static_cast<int>(tabs.size()));
             for (int i = 0; i < static_cast<int>(tabs.size()); ++i) {
                 const auto& t = tabs[static_cast<size_t>(i)];
-                const bool active = t.id == self->active_id;
-                RECT tr{i * tw, 0, (i + 1) * tw, kTabH - 1};
-                if (active) {
-                    FillRect(dc, &tr, tab_active_brush());
-                    RECT line{i * tw, kTabH - 3, (i + 1) * tw, kTabH - 1};
-                    FillRect(dc, &line, accent_brush());
-                }
+                if (t.id == self->active_id) active_idx = i;
+                // 文字即分頁:無框無底(方框 = 表單感);active/hover 亮文字,
+                // active 另有 accent 底線(在分隔線之後蓋上 = 連續直線,
+                // 同主程式 tabs 的 2px border-bottom 語彙)
+                RECT tr{i * tw, 0, (i + 1) * tw, kTabH};
                 RECT text = tr;
                 text.left += 8;
                 text.right -= 8;
-                SetTextColor(dc, t.dim ? kTextDim : active ? kTextActive : kTextIdle);
+                SetTextColor(dc, t.dim ? kTextDim
+                                       : (active_idx == i || self->hover_tab == i)
+                                             ? kTextActive
+                                             : kTextIdle);
                 DrawTextW(dc, t.name.c_str(), -1, &text,
                           DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
             }
@@ -649,17 +663,23 @@ LRESULT CALLBACK tabs_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
         // 帶1/帶2 分隔線
         RECT div{0, kTabH - 1, cw, kTabH};
         FillRect(dc, &div, tab_active_brush());
+        if (active_idx >= 0) {
+            const int tw = (std::min)(160, cw / static_cast<int>(tabs.size()));
+            RECT line{active_idx * tw, kTabH - 2, (active_idx + 1) * tw, kTabH};
+            FillRect(dc, &line, accent_brush());
+        }
         if (self->active_id != 0) {
             bool bypassed = false;
             if (const auto* slot = self->find_slot(self->active_id); slot != nullptr)
                 bypassed = slot->bypass;
             const RECT pr = power_rect(cw);
+            if (self->hover_btn == 1) FillRect(dc, &pr, tab_active_brush());  // hover 淡底
             draw_power_icon(dc, (pr.left + pr.right) / 2, (pr.top + pr.bottom) / 2,
-                            (pr.bottom - pr.top) / 2.0 - 3.0, bypassed);
+                            (pr.bottom - pr.top) / 2.0 - 4.0, bypassed);
             if (save_btn_rect(cw).right < cw)
-                draw_modern_button(dc, save_btn_rect(cw), L"儲存 Preset");
+                draw_preset_button(dc, save_btn_rect(cw), L"儲存 Preset", self->hover_btn == 2);
             if (load_btn_rect(cw).right < cw)
-                draw_modern_button(dc, load_btn_rect(cw), L"載入 Preset");
+                draw_preset_button(dc, load_btn_rect(cw), L"載入 Preset", self->hover_btn == 3);
             RECT nr = preset_name_rect(cw);
             SetTextColor(dc, kTextIdle);
             DrawTextW(dc, self->preset_name.c_str(), -1, &nr,
@@ -714,6 +734,54 @@ LRESULT CALLBACK tabs_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
         }
         return 0;
     }
+    case WM_MOUSEMOVE: {
+        if (self == nullptr) break;
+        if (!self->hover_tracked) {
+            TRACKMOUSEEVENT tme{sizeof(TRACKMOUSEEVENT), TME_LEAVE, h, 0};
+            TrackMouseEvent(&tme);
+            self->hover_tracked = true;
+        }
+        const int x = GET_X_LPARAM(lp);
+        const int y = GET_Y_LPARAM(lp);
+        RECT rc{};
+        GetClientRect(h, &rc);
+        const int cw = rc.right - rc.left;
+        const auto& tabs = self->tabs_data;
+        int ntab = -1;
+        int nbtn = 0;
+        if (y < kTabH) {
+            if (!tabs.empty()) {
+                const int tw = (std::min)(160, cw / static_cast<int>(tabs.size()));
+                const int idx = x / tw;
+                if (idx >= 0 && idx < static_cast<int>(tabs.size())) {
+                    const auto& t = tabs[static_cast<size_t>(idx)];
+                    if (!t.dim && t.id != self->active_id) ntab = idx;  // 可點才回饋
+                }
+            }
+        } else if (self->active_id != 0) {
+            const POINT pt{x, y};
+            const RECT pr = power_rect(cw);
+            const RECT sr = save_btn_rect(cw);
+            const RECT lr = load_btn_rect(cw);
+            if (PtInRect(&pr, pt)) nbtn = 1;
+            else if (sr.right < cw && PtInRect(&sr, pt)) nbtn = 2;
+            else if (lr.right < cw && PtInRect(&lr, pt)) nbtn = 3;
+        }
+        if (ntab != self->hover_tab || nbtn != self->hover_btn) {
+            self->hover_tab = ntab;
+            self->hover_btn = nbtn;
+            InvalidateRect(h, nullptr, FALSE);
+        }
+        // 可點區 = 手型游標(原生視窗的專業工具手感)
+        SetCursor(LoadCursorW(nullptr, (ntab >= 0 || nbtn != 0) ? IDC_HAND : IDC_ARROW));
+        return 0;
+    }
+    case WM_MOUSELEAVE:
+        self->hover_tracked = false;
+        self->hover_tab = -1;
+        self->hover_btn = 0;
+        InvalidateRect(h, nullptr, FALSE);
+        return 0;
     default:
         break;
     }
