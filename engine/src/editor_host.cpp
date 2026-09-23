@@ -772,8 +772,11 @@ LRESULT CALLBACK tabs_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
             self->hover_btn = nbtn;
             InvalidateRect(h, nullptr, FALSE);
         }
-        // 可點區 = 手型游標(原生視窗的專業工具手感)
-        SetCursor(LoadCursorW(nullptr, (ntab >= 0 || nbtn != 0) ? IDC_HAND : IDC_ARROW));
+        // 可點區 = 手型游標(原生視窗的專業工具手感)。
+        // IDC_* 在未定義 UNICODE 時是 LPSTR,沿 register_class 既有轉型手法
+        SetCursor(LoadCursorW(nullptr, (ntab >= 0 || nbtn != 0)
+                                            ? reinterpret_cast<LPCWSTR>(IDC_HAND)
+                                            : reinterpret_cast<LPCWSTR>(IDC_ARROW)));
         return 0;
     }
     case WM_MOUSELEAVE:
