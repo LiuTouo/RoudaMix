@@ -124,7 +124,7 @@ render 裝置,`list_render_devices` 列 endpoints)。每軌一條 VST 鏈
 | `set_monitor_bypass` | 只讓所有 low-latency outputs 略過該 plugin；Stream primary 不受影響 |
 | `set_param` | value normalized [0,1];高頻(旋鈕)—— 成功只 reply、不廣播 status、不動 epoch;權威值見 `status.tracks[].plugins[].params` |
 | `get_params` | — |
-| `open_editor` | 開 plugin 自帶 GUI(engine process 的 owned 浮動視窗,tab 標籤 = 軌名·plugin 名)。無 editor 回 `plugin_no_editor`。editor 內改參數 = `set_param` 語意(不廣播 status);UI 想同步權威值輪詢 `get_params` |
+| `open_editor` | 開 plugin 自帶 GUI(engine process 的獨立浮動視窗，topmost、無工作列項；tab 標籤 = 軌名·plugin 名)。無 editor 回 `plugin_no_editor`。editor 內改參數 = `set_param` 語意(不廣播 status)；UI 想同步權威值輪詢 `get_params` |
 | `close_editor` | 關 editor 視窗(plugin 視窗自帶 X 關掉也同效) |
 | `save_preset` | 寫 `.vstpreset`(VST3 容器:`Comp`=component state + `Cont`=controller state + `RmxP`=host 權威表私有 chunk,其他 host 會略過;class ID 為 32 hex 大寫 ASCII);非 mutation(不動 epoch/不廣播) |
 | `load_preset` | 讀 `.vstpreset` 套用(component setState → controller setComponentState);成功 = mutation(廣播 status)。host 端 param 權威值重同步:檔案帶 `RmxP` chunk 時優先採用;無 `RmxP`(外部 host 存的)且 controller 同步成功時自 controller;皆無 = 保持現值。容器缺 `Comp` chunk 或 class ID 不符回 `preset_io` |

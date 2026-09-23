@@ -7,6 +7,10 @@
 // preset)必經 EditorHostCmd POST 到 main window,由 main.cpp 的 handler 鎖
 // Router 臨界區走正規路徑 —— host 的 wnd_proc 可能在 dispatch 持鎖中被
 // DestroyWindow 的 sent message 同步重入,host 自身絕不鎖(自死鎖)。
+// 視窗拓撲:host 是**無 owner 的獨立 top-level 視窗**(WS_EX_TOPMOST 浮上面)。
+// 不可用跨 process 的 UI 主視窗當 owner:跨進程 ownership 會把兩邊 thread 的
+// input queue 接在一起,焦點/前景狀態共用,關閉 host 時的 close 手勢可能落在
+// 主視窗上(實害:彈出視窗關閉連帶主視窗被關)。
 #include "editor_host.hpp"
 
 #include "audio_engine.hpp"
@@ -46,9 +50,7 @@ constexpr wchar_t kHostClassName[] = L"RmxVST3Editor";   // 沿用:m3b probe 以
 constexpr wchar_t kTabsClassName[] = L"RmxEditorTabs";
 constexpr wchar_t kClientClassName[] = L"RmxEditorClient";
 
-#ifndef GWL_HWNDPARENT  // 部分SDK header 條件編譯才給;SetWindowLongPtr 的 owner 欄
-#define GWL_HWNDPARENT (-8)
-#endif
+// (跨進程 owner 已移除,不再需要 GWL_HWNDPARENT)
 
 // 深色主題(zinc 系,貼 app 風格)
 // 對齊主程式 ui/app.css 色票(去網頁感第一步 = 同一個深色系)
@@ -78,6 +80,7 @@ void foreground_window(HWND wnd) noexcept {
     // 窗先滅/tid 已死 = 呼叫無效返回,不卡
     std::thread([wnd] {
         for (int i = 0; i < 20; ++i) {
+            if (!IsWindow(wnd)) return;  // 窗已關:dance 立即停,不留死 hwnd 重試
             if (GetForegroundWindow() == wnd) break;
             const HWND fg = GetForegroundWindow();
             const DWORD fg_tid = fg != nullptr ? GetWindowThreadProcessId(fg, nullptr) : 0;
@@ -239,7 +242,6 @@ void post_host_cmd(HWND target, int kind, std::uint32_t id, std::wstring path = 
 struct EditorHost::Impl {
     AudioEngine* engine = nullptr;
     HWND post_to = nullptr;  // EditorHostCmd 投遞目標(main window)
-    HWND owner = nullptr;    // UI 主視窗(owned 浮動視窗;null = 獨立)
     HWND wnd = nullptr, tabs = nullptr, client = nullptr;
     std::uint32_t active_id = 0;
     std::vector<std::uint32_t> opened_ids;
@@ -339,15 +341,15 @@ struct EditorHost::Impl {
         if (!children_registered) return false;
         if (frame == nullptr) frame = owned(new EditorPlugFrame());
         // WS_EX_TOOLWINDOW:不進工作列/Alt-Tab(Studio Pro 浮動視窗感);
-        // owner 是 UI 主視窗 → owned 視窗永在主程式之上、隨其最小化。
-        // owner 可能已死(UI 重啟 race):IsWindow 不過 = 退回獨立視窗
-        const HWND own = owner != nullptr && IsWindow(owner) ? owner : nullptr;
+        // WS_EX_TOPMOST:浮在主程式之上(取代舊 owner 綁定的置頂效果 ——
+        // 跨進程 owner 會接合兩邊 input queue,已移除,見檔頭註解)。
         // WS_VISIBLE:create 即顯示。spawn engine 的 STARTUPINFO 帶 SW_HIDE 時
         // (Start-Process -WindowStyle Hidden),首個 top-level 視窗的第一個
         // ShowWindow 呼叫會被替換成 startup 的 SW_HIDE —— 視窗建了但永遠 hidden
-        wnd = CreateWindowExW(WS_EX_TOOLWINDOW, kHostClassName, L"RoudaMix",
-                              WS_OVERLAPPEDWINDOW | WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT,
-                              480, 360, own, nullptr, GetModuleHandleW(nullptr), this);
+        wnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, kHostClassName,
+                              L"RoudaMix", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                              CW_USEDEFAULT, CW_USEDEFAULT, 480, 360, nullptr,
+                              nullptr, GetModuleHandleW(nullptr), this);
         if (wnd == nullptr) return false;
         // 深色標題列:預設亮色 caption 在深色主題裡 = 割裂感(舊 Win10 無 35/36 = 略過,
         // 20 號 immersive dark 從 1809+ 就有)
@@ -447,10 +449,11 @@ void EditorHost::set_command_target(HWND post_to) noexcept {
     impl_->post_to = post_to;
 }
 
-void EditorHost::set_owner(HWND owner) noexcept {
-    impl_->owner = owner;
-    if (impl_->wnd != nullptr && owner != nullptr && IsWindow(owner))
-        SetWindowLongPtrW(impl_->wnd, GWL_HWNDPARENT, reinterpret_cast<LONG_PTR>(owner));
+void EditorHost::set_owner(HWND /*owner*/) noexcept {
+    // 相容保留:set_editor_owner 命令仍回 ok,但**不再把 UI 主視窗掛成 owner**。
+    // 跨進程 ownership 會接合兩 process 的 input queue(焦點/前景共用),
+    // 彈出視窗關閉時的 close 手勢可能誤落在主視窗 = 主視窗連帶被關。
+    // 主視窗 HWND 從此不跨進邊界。(舊版:GWL_HWNDPARENT)
 }
 
 bool EditorHost::open(std::uint32_t instance_id, std::string& err) {

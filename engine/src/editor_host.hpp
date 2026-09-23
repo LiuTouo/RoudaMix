@@ -38,8 +38,9 @@ public:
 
     void set_engine(AudioEngine* engine) noexcept;   // main() 接線一次
     void set_command_target(HWND post_to) noexcept;  // EditorHostCmd 投遞目標
-    // 主視窗 HWND(set_editor_owner 命令):host 掛成 owner 的浮動視窗
-    // (無工作列項、隨主程式最小化、永在主程式之上)。UI 沒給 = 獨立視窗
+    // 舊版曾掛 UI 主視窗當跨進程 owner —— 會接合兩 process 的 input queue,
+    // 關彈出視窗時 close 手勢可能誤落主視窗。已改為獨立視窗(見 editor_host.cpp
+    // 檔頭);此命令保留接受、引擎端 no-op,協定不變。
     void set_owner(HWND owner) noexcept;
     // open_editor 命令:開/切換到該 plugin(已顯示 = 帶前景);err 帶原因
     bool open(std::uint32_t instance_id, std::string& err);
