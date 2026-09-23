@@ -135,22 +135,22 @@
     height: min(760px, 88dvh);
     max-width: 92vw;
     max-height: 88dvh;
-    padding: 20px;
+    padding: 14px 16px;
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: 8px;
     background: var(--bg-panel);
     color: var(--text);
     overflow: hidden;
   }
   .plugin-picker[open] { display: flex; flex-direction: column; gap: 14px; }
-  .plugin-picker::backdrop { background: rgb(0 0 0 / 0.55); }
+  .plugin-picker::backdrop { background: rgb(0 0 0 / 0.5); }
   .dialog-head, .toolbar, .statusline { flex-shrink: 0; }
-  .dialog-title { font-size: 17px; overflow-wrap: anywhere; }
+  .plugin-picker .dialog-title { overflow-wrap: anywhere; }
   .toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
   label { display: flex; flex-direction: column; gap: 6px; color: var(--text-dim); font-size: 12px; }
   .search-field { flex: 1 1 320px; min-width: 0; }
   .grouping-field { flex: 0 1 150px; min-width: 0; }
-  input, select { box-sizing: border-box; min-width: 0; width: 100%; height: 36px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg); color: var(--text); font: inherit; }
+  input, select { box-sizing: border-box; min-width: 0; width: 100%; height: 36px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
   .clear { height: 36px; }
   .statusline { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-size: 12px; color: var(--text-dim); }
   .statusline > :first-child { margin-right: auto; }
