@@ -63,6 +63,32 @@ constexpr COLORREF kTextDim = RGB(0x56, 0x5b, 0x64);
 constexpr COLORREF kOnGreen = RGB(0x3d, 0xdc, 0x84);     // = --ok
 constexpr COLORREF kBtnBorder = RGB(0x33, 0x38, 0x3f);   // = --border
 
+// ---- 毛玻璃（與 app 深色主題自然融合）----
+// Win11 22H2+ 走 DWM acrylic backdrop；舊系統 fallback 未文件化 blur-behind。
+// 舊 SDK 無定義則補常數。
+#ifndef DWMWA_SYSTEMBACKDROP_TYPE
+#define DWMWA_SYSTEMBACKDROP_TYPE 38
+#endif
+#ifndef DWMSBT_TRANSIENTWINDOW
+#define DWMSBT_TRANSIENTWINDOW 3
+#endif
+#ifndef DWMWA_COLOR_NONE
+#define DWMWA_COLOR_NONE 0xFFFFFFFE
+#endif
+struct ACCENT_POLICY {
+    int AccentState;
+    int AccentFlags;
+    COLORREF GradientColor;
+    int AnimationId;
+};
+struct WINDOWCOMPOSITIONATTRIBDATA {
+    int Attrib;
+    void* PvData;
+    SIZE_T CbData;
+};
+constexpr int kWcaAccentPolicy = 19;
+constexpr int kAccentEnableBlurBehind = 3;
+
 HFONT strip_font() {
     static HFONT f = CreateFontW(-13, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0,
                                  CLEARTYPE_QUALITY, 0, L"Segoe UI");
@@ -174,6 +200,26 @@ HBRUSH tab_active_brush() noexcept {
 HBRUSH accent_brush() noexcept {
     static const HBRUSH b = CreateSolidBrush(kAccent);
     return b;
+}
+
+void ensure_gdiplus() noexcept {
+    static const ULONG_PTR gdip_token = [] {
+        Gdiplus::GdiplusStartupInput in;
+        ULONG_PTR t = 0;
+        Gdiplus::GdiplusStartup(&t, &in, nullptr);
+        return t;
+    }();
+    (void)gdip_token;
+}
+
+// 半透明深色填滿：毛玻璃 blur 透出、同時維持 app 深色主調（自然融合）。
+// kStripBg @ ~78%——文字與控制項照舊以不透明 GDI 繪在其上。
+void fill_glass(HDC dc, int x, int y, int w, int h) noexcept {
+    if (w <= 0 || h <= 0) return;
+    ensure_gdiplus();
+    Gdiplus::Graphics g(dc);
+    const Gdiplus::SolidBrush brush(Gdiplus::Color(198, 0x1c, 0x1f, 0x24));
+    g.FillRectangle(&brush, Gdiplus::Rect(x, y, w, h));
 }
 
 // 對話框 modal 期間 dispatch 可重入(rack 可能變),套用前以 id 重查 slot
@@ -360,10 +406,30 @@ struct EditorHost::Impl {
         // 20 號 immersive dark 從 1809+ 就有)
         const BOOL dark = TRUE;
         DwmSetWindowAttribute(wnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
-        const COLORREF cap = kStripBg, brc = kBtnBorder, txt = kTextActive;
-        DwmSetWindowAttribute(wnd, DWMWA_CAPTION_COLOR, &cap, sizeof(cap));
+        const COLORREF brc = kBtnBorder, txt = kTextActive;
         DwmSetWindowAttribute(wnd, DWMWA_BORDER_COLOR, &brc, sizeof(brc));
         DwmSetWindowAttribute(wnd, DWMWA_TEXT_COLOR, &txt, sizeof(txt));
+        // 毛玻璃:整窗延伸框架 + Win11 22H2+ acrylic backdrop;
+        // caption 透明讓玻璃浮出。失敗(舊系統)→ 未文件化 blur-behind fallback。
+        // plugin client 區照舊實心深色 —— plugin 自繪不透玻璃,自然融合 =
+        // 玻璃只在標題列與控制帶,不爭 plugin 內容。
+        const int backdrop = DWMSBT_TRANSIENTWINDOW;
+        if (FAILED(DwmSetWindowAttribute(wnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop,
+                                         sizeof(backdrop)))) {
+            const auto set_comp = reinterpret_cast<SetWindowCompositionAttributeFn>(
+                GetProcAddress(GetModuleHandleW(L"user32"),
+                               "SetWindowCompositionAttribute"));
+            if (set_comp != nullptr) {
+                const ACCENT_POLICY accent{kAccentEnableBlurBehind, 0, 0, 0};
+                WINDOWCOMPOSITIONATTRIBDATA data{kWcaAccentPolicy, &accent,
+                                                 sizeof(accent)};
+                set_comp(wnd, &data);
+            }
+        }
+        const MARGINS glass{-1};
+        DwmExtendFrameIntoClientArea(wnd, &glass);
+        const COLORREF cap_none = DWMWA_COLOR_NONE;
+        DwmSetWindowAttribute(wnd, DWMWA_CAPTION_COLOR, &cap_none, sizeof(cap_none));
         frame->hwnd = wnd;
         frame->extra_cy = kStripH;
         tabs = CreateWindowExW(0, kTabsClassName, L"", WS_CHILD | WS_VISIBLE, 0, 0, 480,
@@ -575,13 +641,7 @@ void draw_power_icon(HDC dc, int cx, int cy, double rad, bool bypassed) {
     // (原畫黑 = 深色底上隱形,改 kTextIdle 暗但可辨識)。
     // GDI 筆無反鋸齒 + 折線頂點取整數 = 線條抖;改 GDI+(AA + 浮點座標)。
     // 圓(頂部 90° 開口)+ 豎線從頂穿到圓心;筆寬 = SVG 40/236 比例。
-    static const ULONG_PTR gdip_token = [] {
-        Gdiplus::GdiplusStartupInput in;
-        ULONG_PTR t = 0;
-        Gdiplus::GdiplusStartup(&t, &in, nullptr);
-        return t;
-    }();
-    (void)gdip_token;
+    ensure_gdiplus();
     const Gdiplus::Color color = bypassed ? Gdiplus::Color(255, 0x8a, 0x91, 0x9b)
                                           : Gdiplus::Color(255, 0x16, 0xA3, 0x4A);
     const float penw = (std::max)(2.0f, static_cast<float>(rad * 40.0 / 236.0));
@@ -629,13 +689,15 @@ LRESULT CALLBACK tabs_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
     }
     auto* self = reinterpret_cast<EditorHost::Impl*>(GetWindowLongPtrW(h, GWLP_USERDATA));
     switch (msg) {
+    case WM_ERASEBKGND:
+        return 1;  // 玻璃化:不實心底,透明淡化由 WM_PAINT fill_glass 完成
     case WM_PAINT: {
         PAINTSTRUCT ps;
         HDC dc = BeginPaint(h, &ps);
         RECT rc{};
         GetClientRect(h, &rc);
         const int cw = rc.right - rc.left;
-        FillRect(dc, &rc, dark_brush());
+        fill_glass(dc, 0, 0, cw, rc.bottom - rc.top);
         SetBkMode(dc, TRANSPARENT);
         SelectObject(dc, strip_font());
         const auto& tabs = self->tabs_data;
