@@ -88,6 +88,8 @@ struct WINDOWCOMPOSITIONATTRIBDATA {
 };
 constexpr int kWcaAccentPolicy = 19;
 constexpr int kAccentEnableBlurBehind = 3;
+using SetWindowCompositionAttributeFn = BOOL(WINAPI*)(HWND,
+                                                      WINDOWCOMPOSITIONATTRIBDATA*);
 
 HFONT strip_font() {
     static HFONT f = CreateFontW(-13, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0,
@@ -420,7 +422,7 @@ struct EditorHost::Impl {
                 GetProcAddress(GetModuleHandleW(L"user32"),
                                "SetWindowCompositionAttribute"));
             if (set_comp != nullptr) {
-                const ACCENT_POLICY accent{kAccentEnableBlurBehind, 0, 0, 0};
+                ACCENT_POLICY accent{kAccentEnableBlurBehind, 0, 0, 0};
                 WINDOWCOMPOSITIONATTRIBDATA data{kWcaAccentPolicy, &accent,
                                                  sizeof(accent)};
                 set_comp(wnd, &data);
