@@ -7,6 +7,7 @@ import './styles.css';
 import { installTooltip } from '../lib/tooltip';
 import { startPreviewMeters } from './tauri';
 import { installStyleSwitcher } from './switcher';
+import { installVstEditorPrototype } from './vstEditor';
 
 // TrackStrip 的高度偏好也只留在記憶體，重新整理即回復固定基準。
 const storageDescriptor = Object.getOwnPropertyDescriptor(window, 'localStorage');
@@ -23,11 +24,13 @@ Object.defineProperty(window, 'localStorage', { configurable: true, value: memor
 document.title = 'RoudaMix — 風格預覽';
 const app = mount(App, { target: document.getElementById('app')! });
 const removeSwitcher = installStyleSwitcher();
+const removeEditor = installVstEditorPrototype();
 const removeTooltip = installTooltip();
 const stopMeters = startPreviewMeters();
 
 if (import.meta.hot) import.meta.hot.dispose(() => {
   removeSwitcher();
+  removeEditor();
   removeTooltip();
   stopMeters();
   void unmount(app);

@@ -34,7 +34,7 @@ export function installStyleSwitcher() {
   const pre = toolbar.querySelector('pre')!;
   const details = toolbar.querySelector('details')!;
   const collapse = toolbar.querySelector<HTMLButtonElement>('.prototype-collapse')!;
-  let current = 'C';
+  let current = 'C2';  // 已選定方向：分段機架
   let collapsed = false;
 
   function showState() {
@@ -111,10 +111,10 @@ export function installStyleSwitcher() {
   attachToActiveDialog();
   const observer = new MutationObserver(attachToActiveDialog);
   observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['open'] });
-  const onPopState = () => select(new URL(location.href).searchParams.get('variant') ?? 'C', false);
+  const onPopState = () => select(new URL(location.href).searchParams.get('variant') ?? 'C2', false);
   window.addEventListener('popstate', onPopState);
   window.addEventListener('prototype-state', showState);
-  select(new URL(location.href).searchParams.get('variant') ?? 'C');
+  select(new URL(location.href).searchParams.get('variant') ?? 'C2');
 
   return () => {
     observer.disconnect();

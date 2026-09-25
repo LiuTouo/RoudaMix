@@ -1,4 +1,7 @@
 // 暫用原型的 Tauri 邊界：所有回覆來自記憶體，不呼叫桌面、設備或檔案系統。
+// Resource／Channel 僅為滿足 plugin-updater 對 @tauri-apps/api/core 的型別匯入（別名會把整個模組換成此檔）。
+export class Resource {}
+export class Channel {}
 import type { MetersFrame, Snapshot, Track } from '../lib/types';
 import type { AppSettings } from '../lib/ipc';
 import { catalog, devices, initialStatus, slot } from './fixtures';
@@ -156,6 +159,9 @@ function engine(kind: string, payload: Record<string, any>): unknown {
     case 'get_params': return { instanceId: payload.instanceId, params: [] };
     case 'open_editor':
       previewNotice('VST 原生編輯器僅能在桌面版開啟；目前為風格預覽');
+      window.dispatchEvent(new CustomEvent('prototype-open-editor', {
+        detail: { name: plugin?.name },
+      }));
       return { instanceId: payload.instanceId, editor: false };
     case 'close_editor': case 'set_editor_owner': return {};
     default:
