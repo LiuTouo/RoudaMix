@@ -726,7 +726,8 @@ LRESULT CALLBACK host_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
                 RECT rc{}, cr{};
                 GetClientRect(h, &rc);
                 cr = close_btn_rect(rc.right);
-                if (PtInRect(&cr, pt)) return HTCLIENT;
+                const POINT cpt{x, y};  // client 座標（pt 是螢幕座標，不能直接比）
+                if (PtInRect(&cr, cpt)) return HTCLIENT;
                 return HTCAPTION;
             }
         }
