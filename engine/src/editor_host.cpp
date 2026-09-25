@@ -64,25 +64,34 @@ constexpr COLORREF kOnGreen = RGB(0x3d, 0xdc, 0x84);     // = --ok
 constexpr COLORREF kBtnBorder = RGB(0x33, 0x38, 0x3f);   // = --border
 
 // ---- 毛玻璃（與 app 深色主題自然融合）----
-// Win11 22H2+ 的 DWM acrylic backdrop。**需系統「透明效果」開啟**：關閉時
-// backdrop 會畫成不透明底色，caption 透明色反而變成突兀亮底 —— 這時整組
-// 玻璃樣式跳過，回實心深色。
-#ifndef DWMWA_SYSTEMBACKDROP_TYPE
-#define DWMWA_SYSTEMBACKDROP_TYPE 38
-#endif
-#ifndef DWMSBT_TRANSIENTWINDOW
-#define DWMSBT_TRANSIENTWINDOW 3
-#endif
-#ifndef DWMWA_COLOR_NONE
-#define DWMWA_COLOR_NONE 0xFFFFFFFE
-#endif
+// acrylic blur-behind（TranslucentTB／PowerToys 同款，不隨視窗失焦退化）。
+// **需系統「透明效果」開啟**：關閉時 blur 不會作用，整組玻璃樣式跳過，
+// 回實心深色。未文件化 API，動態載入、取不到就回實心。
+struct ACCENT_POLICY {
+    int AccentState;
+    int AccentFlags;
+    COLORREF GradientColor;  // AABBGGRR 深色 tint
+    int AnimationId;
+};
+struct WINDOWCOMPOSITIONATTRIBDATA {
+    int Attrib;
+    void* PvData;
+    SIZE_T CbData;
+};
+constexpr int kWcaAccentPolicy = 19;
+constexpr int kAccentEnableAcrylicBlurBehind = 4;
+constexpr int kAccentFlagBlendColor = 2;
+constexpr COLORREF kGlassTint = 0xB41C1F24;  // kStripBg @ ~70%
+using SetWindowCompositionAttributeFn = BOOL(WINAPI*)(HWND,
+                                                      WINDOWCOMPOSITIONATTRIBDATA*);
+
 bool transparency_enabled() noexcept {
     DWORD enabled = 1, size = sizeof(enabled);
     if (FAILED(RegGetValueW(HKEY_CURRENT_USER,
                             L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
                             L"EnableTransparency", RRF_RT_REG_DWORD, nullptr,
                             &enabled, &size)))
-        return true;  // 讀不到 = 讓 DWM 自己決定,當開啟
+        return true;  // 讀不到 = 讓系統自己決定,當開啟
     return enabled != 0;
 }
 
@@ -291,7 +300,7 @@ struct EditorHost::Impl {
     int hover_tab = -1;     // 可點(未活)tab index;-1 無
     int hover_btn = 0;      // 1 電源、2 儲存、3 載入;0 無
     bool hover_tracked = false;
-    bool glass = false;     // 毛玻璃生效(系統透明效果開 + DWM backdrop 成功)
+    bool glass = false;     // 毛玻璃生效(系統透明效果開 + accent 套用成功)
 
     ~Impl() {
         if (wnd != nullptr) DestroyWindow(wnd);  // WM_DESTROY 內 detach + 清欄位
@@ -397,22 +406,29 @@ struct EditorHost::Impl {
         const COLORREF brc = kBtnBorder, txt = kTextActive;
         DwmSetWindowAttribute(wnd, DWMWA_BORDER_COLOR, &brc, sizeof(brc));
         DwmSetWindowAttribute(wnd, DWMWA_TEXT_COLOR, &txt, sizeof(txt));
-        // 毛玻璃:整窗延伸框架 + Win11 22H2+ acrylic backdrop;caption 透明讓
-        // 玻璃浮出。**需系統「透明效果」開啟**——關閉時 backdrop 畫成不透明
-        // 底色(caption 變突兀亮底),整組玻璃樣式跳過,回實心深色。
-        // plugin client 區照舊實心深色 —— plugin 自繪不透玻璃,自然融合 =
-        // 玻璃只在標題列與控制帶,不爭 plugin 內容。
+        // 毛玻璃：acrylic blur-behind + 整窗延伸框架 + caption 透明。
+        // **需系統「透明效果」開啟**——關閉時 blur 不作用，整組玻璃樣式跳
+        // 過，回實心深色。plugin client 區照舊實心 —— plugin 自繪不透玻璃，
+        // 自然融合 = 玻璃只在標題列與控制帶，不爭 plugin 內容。
         glass = transparency_enabled();
         if (glass) {
-            const int backdrop_value = DWMSBT_TRANSIENTWINDOW;
-            glass = SUCCEEDED(DwmSetWindowAttribute(
-                wnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop_value,
-                sizeof(backdrop_value)));
+            const auto set_comp = reinterpret_cast<SetWindowCompositionAttributeFn>(
+                GetProcAddress(GetModuleHandleW(L"user32"),
+                               "SetWindowCompositionAttribute"));
+            if (set_comp == nullptr) {
+                glass = false;
+            } else {
+                ACCENT_POLICY accent{kAccentEnableAcrylicBlurBehind,
+                                     kAccentFlagBlendColor, kGlassTint, 0};
+                WINDOWCOMPOSITIONATTRIBDATA data{kWcaAccentPolicy, &accent,
+                                                 sizeof(accent)};
+                glass = set_comp(wnd, &data) != FALSE;
+            }
         }
         if (glass) {
             const MARGINS glass_margins{-1};
             DwmExtendFrameIntoClientArea(wnd, &glass_margins);
-            const COLORREF cap_none = DWMWA_COLOR_NONE;
+            const COLORREF cap_none = 0xFFFFFFFE;  // DWMWA_COLOR_NONE(舊 SDK 無定義)
             DwmSetWindowAttribute(wnd, DWMWA_CAPTION_COLOR, &cap_none,
                                   sizeof(cap_none));
         } else {
@@ -678,17 +694,13 @@ LRESULT CALLBACK tabs_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
     }
     auto* self = reinterpret_cast<EditorHost::Impl*>(GetWindowLongPtrW(h, GWLP_USERDATA));
     switch (msg) {
-    case WM_ERASEBKGND:
-        if (self != nullptr && self->glass) return 1;  // 玻璃:不實心底
-        break;  // 非玻璃:class 刷實心深色(原樣)
     case WM_PAINT: {
         PAINTSTRUCT ps;
         HDC dc = BeginPaint(h, &ps);
         RECT rc{};
         GetClientRect(h, &rc);
         const int cw = rc.right - rc.left;
-        if (self == nullptr || !self->glass) FillRect(dc, &rc, dark_brush());
-        // 玻璃生效時不填底:控制帶直接呈 DWM acrylic,文字/控制項畫在其上
+        FillRect(dc, &rc, dark_brush());
         SetBkMode(dc, TRANSPARENT);
         SelectObject(dc, strip_font());
         const auto& tabs = self->tabs_data;
