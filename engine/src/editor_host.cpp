@@ -1,5 +1,7 @@
-// Studio Pro 式 editor host 實作。單一 top-level 視窗 + 兩個子視窗:
-//   tabs(RmxEditorTabs)= 頂部 56px 自繪列:帶1 plugin tabs、帶2 bypass 電源鈕 +
+// Studio Pro 式 editor host 實作。單一 top-level 視窗,自繪 caption(無 DWM
+// 標題列)+ 兩個子視窗:
+//   caption(視窗自己畫)= 頂部 32px:視窗標題 + 關閉鈕,霜面語言與帶列一致
+//   tabs(RmxEditorTabs)= 帶1 plugin tabs、帶2 bypass 電源鈕 +
 //                        載入 Preset 鈕 + preset 檔名
 //   client(RmxEditorClient)= 深色底,plugin 原生 editor attach 在這
 // 執行緒模型:全部 main thread(engine 的 message loop 服務)。host 讀 rack
@@ -41,6 +43,7 @@ namespace {
 using namespace Steinberg;
 
 constexpr int kTabH = 28;       // 帶1:plugin tabs
+constexpr int kCaptionH = 32;   // 自繪標題列(取代 DWM caption,同高)
 constexpr int kStripH = 64;     // 帶1 tabs 28 + 帶2 控制 36
 constexpr int kClientMinW = 80;
 constexpr int kClientMinH = 60;
@@ -115,7 +118,7 @@ void foreground_window(HWND wnd) noexcept {
 class EditorPlugFrame final : public IPlugFrame {
 public:
     HWND hwnd{};        // host top-level(視窗銷毀時清 null,擋遲到的 resizeView)
-    int extra_cy = kStripH;
+    int extra_cy = kCaptionH + kStripH;
 
     tresult PLUGIN_API queryInterface(const TUID requested_iid, void** obj) override {
         if (obj == nullptr) return kInvalidArgument;
@@ -192,39 +195,34 @@ COLORREF lerp_rgb(COLORREF a, COLORREF b, int num, int den) noexcept {
 // 顆粒感；固定種子 = 每次重繪同一張圖，不會因重建而 shimmer）。以寬度快取，
 // 重繪只剩一次 BitBlt。寬度變了才重建（resize 中 ~64 行 FillRect + 數千
 // SetPixel，一次性 <1ms）。
-HBITMAP frost_strip_bg(int w) noexcept {
-    static HBITMAP bmp = nullptr;
-    static int cached_w = -1;
-    if (bmp != nullptr && w == cached_w) return bmp;
-    if (bmp != nullptr) DeleteObject(bmp);
-    cached_w = w;
-    const HDC screen = GetDC(nullptr);
-    bmp = CreateCompatibleBitmap(screen, w, kStripH);
-    const HDC mem = CreateCompatibleDC(screen);
-    ReleaseDC(nullptr, screen);
-    const HGDIOBJ old = SelectObject(mem, bmp);
-    for (int y = 0; y < kStripH; ++y) {
-        const COLORREF c = y < kTabH ? lerp_rgb(kFrostTop, kStripBg, y, kTabH)
-                                     : lerp_rgb(kStripBg, kFrostBottom, y - kTabH,
-                                                kStripH - kTabH);
+// 霜面底紋本體：垂直漸層（kFrostTop 經 kStripBg 折點下探 kFrostBottom）+
+// 固定種子細噪點（霜的顆粒感；固定種子 = 每次重繪同一張圖，不會因重建而
+// shimmer）。以寬度快取，重繪只剩一次 BitBlt。mid_y = kStripBg 折點；
+// top_highlight = 面板頂緣 1px 高光（只有視窗最頂 = 標題列要）。
+void paint_frost(HDC mem, int w, int h, int mid_y, bool top_highlight) noexcept {
+    for (int y = 0; y < h; ++y) {
+        const COLORREF c = y < mid_y ? lerp_rgb(kFrostTop, kStripBg, y, mid_y)
+                                     : lerp_rgb(kStripBg, kFrostBottom, y - mid_y,
+                                                h - mid_y);
         const RECT row{0, y, w, y + 1};
         const HBRUSH b = CreateSolidBrush(c);
         FillRect(mem, &row, b);
         DeleteObject(b);
     }
-    // 帶頂 1px 高光 + 帶底 1px 收邊：霧面玻璃的厚度感
-    RECT hl{0, 0, w, 1};
-    const HBRUSH hi = CreateSolidBrush(lerp_rgb(kFrostTop, kTextActive, 1, 8));
-    FillRect(mem, &hl, hi);
-    DeleteObject(hi);
-    RECT lo{0, kStripH - 1, w, kStripH};
+    if (top_highlight) {
+        const RECT hl{0, 0, w, 1};
+        const HBRUSH hi = CreateSolidBrush(lerp_rgb(kFrostTop, kTextActive, 1, 8));
+        FillRect(mem, &hl, hi);
+        DeleteObject(hi);
+    }
+    const RECT lo{0, h - 1, w, h};
     const HBRUSH shade = CreateSolidBrush(kFrostBottom);
     FillRect(mem, &lo, shade);
     DeleteObject(shade);
     // 霜噪：LCG 固定種子，±3 灑在 2x2 格
     unsigned seed = 0x1234abcdu;
     const auto next = [&seed] { seed = seed * 1664525u + 1013904223u; return (seed >> 16) & 0xffu; };
-    for (int y = 1; y < kStripH - 1; y += 2) {
+    for (int y = 1; y < h - 1; y += 2) {
         for (int x = 0; x < w; x += 2) {
             const int d = static_cast<int>(next() % 7u) - 3;
             if (d == 0) continue;
@@ -235,9 +233,35 @@ HBITMAP frost_strip_bg(int w) noexcept {
                                     static_cast<COLORREF>(bl < 0 ? 0 : bl > 255 ? 255 : bl)));
         }
     }
+}
+
+HBITMAP frost_cached(int w, int h, int mid_y, bool top_highlight,
+                     HBITMAP& bmp, int& cached_w, int& cached_h) noexcept {
+    if (bmp != nullptr && w == cached_w && h == cached_h) return bmp;
+    if (bmp != nullptr) DeleteObject(bmp);
+    cached_w = w;
+    cached_h = h;
+    const HDC screen = GetDC(nullptr);
+    bmp = CreateCompatibleBitmap(screen, w, h);
+    const HDC mem = CreateCompatibleDC(screen);
+    ReleaseDC(nullptr, screen);
+    const HGDIOBJ old = SelectObject(mem, bmp);
+    paint_frost(mem, w, h, mid_y, top_highlight);
     SelectObject(mem, old);
     DeleteDC(mem);
     return bmp;
+}
+
+HBITMAP frost_strip_bg(int w) noexcept {
+    static HBITMAP bmp = nullptr;
+    static int cached_w = -1, cached_h = -1;
+    return frost_cached(w, kStripH, kTabH, false, bmp, cached_w, cached_h);
+}
+
+HBITMAP frost_caption_bg(int w) noexcept {
+    static HBITMAP bmp = nullptr;
+    static int cached_w = -1, cached_h = -1;
+    return frost_cached(w, kCaptionH, kCaptionH / 2, true, bmp, cached_w, cached_h);
 }
 
 HBRUSH tab_active_brush() noexcept {
@@ -342,6 +366,10 @@ struct EditorHost::Impl {
     int hover_tab = -1;     // 可點(未活)tab index;-1 無
     int hover_btn = 0;      // 1 電源、2 儲存、3 載入;0 無
     bool hover_tracked = false;
+    bool cap_hover = false;      // 關閉鈕 hover(自繪 caption)
+    bool cap_hover_tracked = false;
+    bool active = false;         // 視窗是否前景(標題文字亮度)
+    std::wstring title;          // 自繪 caption 文字快取
     int last_view_w = -1, last_view_h = -1;  // 上次餵給 view 的 client 尺寸(擋回聲)
 
     ~Impl() {
@@ -389,10 +417,11 @@ struct EditorHost::Impl {
         GetClientRect(wnd, &rc);
         const int cw = rc.right - rc.left;
         const int ch = rc.bottom - rc.top;
-        MoveWindow(tabs, 0, 0, cw, kStripH, FALSE);  // 不先擦:WM_PAINT 單趟自畫,resize 不閃
-        MoveWindow(client, 0, kStripH, cw, ch - kStripH, TRUE);  // CLIPCHILDREN:擦不到 plugin 區
+        MoveWindow(tabs, 0, kCaptionH, cw, ch - kCaptionH, FALSE);  // 不先擦:WM_PAINT 單趟自畫,resize 不閃
+        MoveWindow(client, 0, kCaptionH + kStripH, cw, ch - kCaptionH - kStripH,
+                   TRUE);  // CLIPCHILDREN:擦不到 plugin 區
         if (const auto* slot = find_slot(active_id); slot != nullptr && slot->plugin->editor_open()) {
-            const int vh = ch - kStripH;
+            const int vh = ch - kCaptionH - kStripH;
             // 只在 client 尺寸真的變了才餵 onSize:plugin 收 onSize 回 resizeView
             // → host WM_SIZE → 又 onSize 的回聲迴圈(閃爍/暴衝)從這裡斷掉
             if (cw != last_view_w || vh != last_view_h) {
@@ -405,7 +434,7 @@ struct EditorHost::Impl {
     }
 
     void resize_to_client(int w, int h) noexcept {
-        RECT rc{0, 0, w, h + kStripH};
+        RECT rc{0, 0, w, h + kCaptionH + kStripH};
         AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
         SetWindowPos(wnd, nullptr, 0, 0, rc.right - rc.left, rc.bottom - rc.top,
                      SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
@@ -421,7 +450,13 @@ struct EditorHost::Impl {
                 break;
             }
         }
+        this->title = title;  // 自繪 caption 文字快取
         SetWindowTextW(wnd, title.c_str());
+        // 標題也畫在自繪 caption 上：重繪 caption 帶
+        RECT rc{};
+        GetClientRect(wnd, &rc);
+        const RECT cap{0, 0, rc.right, kCaptionH};
+        InvalidateRect(wnd, &cap, FALSE);
     }
 
     // 沒窗就建(含子視窗)。回傳「本次新建」(呼叫端在 attach 失敗時要拆)
@@ -442,11 +477,14 @@ struct EditorHost::Impl {
         // WS_EX_TOOLWINDOW:不進工作列/Alt-Tab(Studio Pro 浮動視窗感);
         // WS_EX_TOPMOST:浮在主程式之上(取代舊 owner 綁定的置頂效果 ——
         // 跨進程 owner 會接合兩邊 input queue,已移除,見檔頭註解)。
+        // 去掉 WS_MAXIMIZEBOX:自繪 caption 不做最大化(NCCALCSIZE 移框後
+        // 最大化要另處理工作區內縮,編輯器浮窗用不到)。
         // WS_CLIPCHILDREN:parent 擦底/重繪剪掉子視窗範圍 = 不閃子視窗內容
-        // (anti-flicker 標配)。**不帶 WS_VISIBLE**:建好→上玻璃→attach→定尺寸
-        // 後 activate 一次顯示;開窗途中每步都是一次可見的組合變化 = 開窗閃爍。
+        // (anti-flicker 標配)。**不帶 WS_VISIBLE**:建好→定尺寸→attach→
+        // activate 一次顯示;開窗途中每步都是一次可見的組合變化 = 開窗閃爍。
         wnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, kHostClassName,
-                              L"RoudaMix", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
+                              L"RoudaMix",
+                              (WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX) | WS_CLIPCHILDREN,
                               CW_USEDEFAULT, CW_USEDEFAULT, 480, 360, nullptr,
                               nullptr, GetModuleHandleW(nullptr), this);
         if (wnd == nullptr) return false;
@@ -454,23 +492,22 @@ struct EditorHost::Impl {
         // 會被替換成 SW_HIDE(視窗永遠 hidden)。先祭一枚 SW_HIDE 消耗掉替換額度,
         // 之後 activate 的 SW_SHOW 才是真的。(create 不帶 WS_VISIBLE 才有此坑)
         ShowWindow(wnd, SW_HIDE);
-        // 標題列實心深色（與霜面帶列同源），深色主題不割裂；
-        // 深色 caption + 邊框/文字色從 1809+ 就有，舊系統自動略過
+        // 深色視窗：caption 已自繪，這裡只留 immersive dark + 邊框色
+        // （Win11 DWM 會沿自繪視窗外圍畫 1px 邊框）。舊系統自動略過。
         const BOOL dark = TRUE;
         DwmSetWindowAttribute(wnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
-        const COLORREF brc = kBtnBorder, txt = kTextActive;
+        const COLORREF brc = kBtnBorder;
         DwmSetWindowAttribute(wnd, DWMWA_BORDER_COLOR, &brc, sizeof(brc));
-        DwmSetWindowAttribute(wnd, DWMWA_TEXT_COLOR, &txt, sizeof(txt));
-        const COLORREF cap = kStripBg;
-        DwmSetWindowAttribute(wnd, DWMWA_CAPTION_COLOR, &cap, sizeof(cap));
         frame->hwnd = wnd;
-        frame->extra_cy = kStripH;
-        tabs = CreateWindowExW(0, kTabsClassName, L"", WS_CHILD | WS_VISIBLE, 0, 0, 480,
-                               kStripH, wnd, nullptr, GetModuleHandleW(nullptr), this);
+        frame->extra_cy = kCaptionH + kStripH;
+        tabs = CreateWindowExW(0, kTabsClassName, L"", WS_CHILD | WS_VISIBLE,
+                               0, kCaptionH, 480, kStripH, wnd, nullptr,
+                               GetModuleHandleW(nullptr), this);
         // WS_CLIPCHILDREN:client 擦深色底時剪掉 plugin 子視窗範圍,resize 不閃 plugin
         client = CreateWindowExW(0, kClientClassName, L"",
-                                 WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN, 0, kStripH,
-                                 480, 300, wnd, nullptr, GetModuleHandleW(nullptr), this);
+                                 WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
+                                 0, kCaptionH + kStripH, 480, 300, wnd, nullptr,
+                                 GetModuleHandleW(nullptr), this);
         return tabs != nullptr && client != nullptr;
     }
 
@@ -625,6 +662,29 @@ namespace {
 
 // ---- host top-level ----
 
+// 自繪 caption 的關閉鈕：24x?;方塊內 × 與帶列控制同語彙（hover 淡底亮字）
+RECT close_btn_rect(int cw) noexcept { return {cw - kCaptionH, 0, cw, kCaptionH}; }
+
+void draw_close_glyph(HDC dc, int cw, bool hover, bool pressed) noexcept {
+    const RECT r = close_btn_rect(cw);
+    if (hover) {
+        const HBRUSH bg = CreateSolidBrush(pressed ? kFrostBottom : kTabActiveBg);
+        FillRect(dc, &r, bg);
+        DeleteObject(bg);
+    }
+    ensure_gdiplus();
+    const Gdiplus::Color color = (hover || pressed)
+                                     ? Gdiplus::Color(255, 0xd8, 0xdc, 0xe2)
+                                     : Gdiplus::Color(255, 0x8a, 0x91, 0x9b);
+    Gdiplus::Graphics g(dc);
+    g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+    Gdiplus::Pen pen(color, 1.6f);
+    const float cx = (r.left + r.right) / 2.0f, cy = (r.top + r.bottom) / 2.0f;
+    constexpr float half = 5.0f;
+    g.DrawLine(&pen, cx - half, cy - half, cx + half, cy + half);
+    g.DrawLine(&pen, cx - half, cy + half, cx + half, cy - half);
+}
+
 LRESULT CALLBACK host_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept {
     if (msg == WM_NCCREATE) {
         // 建立時把 EditorHost::Impl* 存進 GWLP_USERDATA;不存則之後 self 永遠
@@ -635,6 +695,43 @@ LRESULT CALLBACK host_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
     }
     auto* self = reinterpret_cast<EditorHost::Impl*>(GetWindowLongPtrW(h, GWLP_USERDATA));
     switch (msg) {
+    case WM_NCCALCSIZE:
+        // 自繪 caption：wp=TRUE 時回 0 = 整窗皆工作區，DWM 標題列（含紅色
+        // 關閉鈕的 activate 淡入/重繪動畫 = 開窗閃爍）從此不存在。
+        // 不支援最大化（無 WS_MAXIMIZEBOX），不需處理最大化內縮。
+        if (wp) return 0;
+        break;
+    case WM_NCHITTEST: {
+        // 邊框已移除，拖曳/縮放全自訂：邊緣 6px 縮放熱區；caption 帶回
+        // HTCAPTION（可拖曳；無最大化 = 雙擊無作用），關閉鈕回 HTCLIENT
+        // 收滑鼠事件。
+        auto* slf = reinterpret_cast<EditorHost::Impl*>(GetWindowLongPtrW(h, GWLP_USERDATA));
+        if (slf != nullptr && slf->wnd != nullptr) {
+            const POINT pt{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+            RECT wr{};
+            GetWindowRect(h, &wr);
+            const int x = pt.x - wr.left, y = pt.y - wr.top;
+            const int w = wr.right - wr.left, hh = wr.bottom - wr.top;
+            constexpr int edge = 6;
+            const bool L = x < edge, R = x >= w - edge, T = y < edge, B = y >= hh - edge;
+            if (T && L) return HTTOPLEFT;
+            if (T && R) return HTTOPRIGHT;
+            if (B && L) return HTBOTTOMLEFT;
+            if (B && R) return HTBOTTOMRIGHT;
+            if (L) return HTLEFT;
+            if (R) return HTRIGHT;
+            if (T) return HTTOP;
+            if (B) return HTBOTTOM;
+            if (y < kCaptionH) {
+                RECT rc{}, cr{};
+                GetClientRect(h, &rc);
+                cr = close_btn_rect(rc.right);
+                if (PtInRect(&cr, pt)) return HTCLIENT;
+                return HTCAPTION;
+            }
+        }
+        break;
+    }
     case WM_CLOSE:
         DestroyWindow(h);
         return 0;
@@ -650,21 +747,106 @@ LRESULT CALLBACK host_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
             self->opened_ids.clear();
         }
         return 0;
+    case WM_PAINT: {
+        // 自繪 caption：霜面底紋 + 標題 + 關閉鈕（單趟繪製，無 DWM 動畫）
+        PAINTSTRUCT ps;
+        HDC dc = BeginPaint(h, &ps);
+        RECT rc{};
+        GetClientRect(h, &rc);
+        const int cw = rc.right - rc.left;
+        const HDC mem = CreateCompatibleDC(dc);
+        const HGDIOBJ old_bmp = SelectObject(mem, frost_caption_bg(cw));
+        BitBlt(dc, 0, 0, cw, kCaptionH, mem, 0, 0, SRCCOPY);
+        SelectObject(mem, old_bmp);
+        DeleteDC(mem);
+        // caption/帶列 分隔線（同帶1/帶2 分隔線語彙）
+        RECT div{0, kCaptionH - 1, cw, kCaptionH};
+        FillRect(dc, &div, tab_active_brush());
+        // 標題：前景亮、失焦暗（WM_ACTIVATE 重繪一次，無動畫）
+        if (self != nullptr && !self->title.empty()) {
+            SetBkMode(dc, TRANSPARENT);
+            SelectObject(dc, strip_font());
+            RECT tr{10, 0, cw - kCaptionH - 8, kCaptionH - 1};
+            SetTextColor(dc, self->active ? kTextActive : kTextIdle);
+            DrawTextW(dc, self->title.c_str(), -1, &tr,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        }
+        if (self != nullptr)
+            draw_close_glyph(dc, cw, self->cap_hover, self->cap_hover);
+        EndPaint(h, &ps);
+        return 0;
+    }
+    case WM_ACTIVATE:
+        if (self != nullptr) {
+            self->active = LOWORD(wp) != WA_INACTIVE;
+            RECT rc{};
+            GetClientRect(h, &rc);
+            const RECT cap{0, 0, rc.right, kCaptionH};
+            InvalidateRect(h, &cap, FALSE);
+        }
+        break;
+    case WM_MOUSEMOVE: {
+        // 只需要追關閉鈕（caption 其餘區域 = HTCAPTION，收不到 client 滑鼠）
+        if (self == nullptr) break;
+        if (!self->cap_hover_tracked) {
+            TRACKMOUSEEVENT tme{sizeof(TRACKMOUSEEVENT), TME_LEAVE, h, 0};
+            TrackMouseEvent(&tme);
+            self->cap_hover_tracked = true;
+        }
+        const POINT pt{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+        RECT rc{}, cr{};
+        GetClientRect(h, &rc);
+        cr = close_btn_rect(rc.right);
+        const bool over = PtInRect(&cr, pt) != FALSE;
+        if (over != self->cap_hover) {
+            self->cap_hover = over;
+            RECT rc2{};
+            GetClientRect(h, &rc2);
+            const RECT cap{0, 0, rc2.right, kCaptionH};
+            InvalidateRect(h, &cap, FALSE);
+        }
+        SetCursor(LoadCursorW(nullptr, reinterpret_cast<LPCWSTR>(IDC_ARROW)));
+        return 0;
+    }
+    case WM_MOUSELEAVE:
+        if (self != nullptr && self->cap_hover) {
+            self->cap_hover = false;
+            RECT rc{};
+            GetClientRect(h, &rc);
+            const RECT cap{0, 0, rc.right, kCaptionH};
+            InvalidateRect(h, &cap, FALSE);
+        }
+        self->cap_hover_tracked = false;
+        return 0;
+    case WM_LBUTTONDOWN: {
+        // 關閉鈕：按下即關（自繪 chrome 慣例；caption 其餘 = 拖曳區不走這）
+        if (self != nullptr) {
+            const POINT pt{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+            RECT rc{}, cr{};
+            GetClientRect(h, &rc);
+            cr = close_btn_rect(rc.right);
+            if (pt.y < kCaptionH && PtInRect(&cr, pt)) {
+                PostMessageW(h, WM_CLOSE, 0, 0);
+                return 0;
+            }
+        }
+        break;
+    }
     case WM_SIZE:
         if (self != nullptr && wp != SIZE_MINIMIZED) self->layout_children();
         return 0;
     case WM_GETMINMAXINFO: {
         auto* mmi = reinterpret_cast<MINMAXINFO*>(lp);
         // 寬下限 = 帶2 全控能完整顯示(不是 editor 需求 —— editor 小就置中留深色底)
-        RECT rc{0, 0, kHostMinClientW, kClientMinH + kStripH};
+        RECT rc{0, 0, kHostMinClientW, kClientMinH + kCaptionH + kStripH};
         AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
         mmi->ptMinTrackSize.x = rc.right - rc.left;
         mmi->ptMinTrackSize.y = rc.bottom - rc.top;
         return 0;
     }
     case WM_ERASEBKGND:
-        // client 全被 tabs+client 蓋滿:不擦底。擦了只會在 resize 新露出的帶上
-        // 閃一塊實色(蓋過毛玻璃),子視窗隨後蓋回 = 閃爍。
+        // client 被 caption(自繪)+ tabs+client 蓋滿:不擦底。擦了只會在 resize
+        // 新露出的帶上閃一塊實色,子視窗隨後蓋回 = 閃爍。
         return 1;
     case WM_SETFOCUS:
         // 點 tab 列/邊框搶走 focus 會斷 plugin 鍵盤輸入 → 轉給 client
