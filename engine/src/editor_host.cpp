@@ -63,37 +63,16 @@ constexpr COLORREF kTextDim = RGB(0x56, 0x5b, 0x64);
 constexpr COLORREF kOnGreen = RGB(0x3d, 0xdc, 0x84);     // = --ok
 constexpr COLORREF kBtnBorder = RGB(0x33, 0x38, 0x3f);   // = --border
 
-// ---- 毛玻璃（與 app 深色主題自然融合）----
-// acrylic blur-behind（TranslucentTB／PowerToys 同款，不隨視窗失焦退化）。
-// **需系統「透明效果」開啟**：關閉時 blur 不會作用，整組玻璃樣式跳過，
-// 回實心深色。未文件化 API，動態載入、取不到就回實心。
-struct ACCENT_POLICY {
-    int AccentState;
-    int AccentFlags;
-    COLORREF GradientColor;  // AABBGGRR 深色 tint
-    int AnimationId;
-};
-struct WINDOWCOMPOSITIONATTRIBDATA {
-    int Attrib;
-    void* PvData;
-    SIZE_T CbData;
-};
-constexpr int kWcaAccentPolicy = 19;
-constexpr int kAccentEnableAcrylicBlurBehind = 4;
-constexpr int kAccentFlagBlendColor = 2;
-constexpr COLORREF kGlassTint = 0xB41C1F24;  // kStripBg @ ~70%
-using SetWindowCompositionAttributeFn = BOOL(WINAPI*)(HWND,
-                                                      WINDOWCOMPOSITIONATTRIBDATA*);
+// ---- 霜面帶列（自繪毛玻璃感）----
+// 曾嘗試 OS 級 blur：WCA accent acrylic 在 24H2 每幀重套，帶列以 ~15Hz
+// 交替明滅 = 使用者看到的「瘋狂閃爍」；DWMWA_SYSTEMBACKDROP_TYPE（Mica／
+// Acrylic）在 26100 上 S_OK 卻永不渲染（最小視窗 + 訊息泵實測）。OS blur
+// 在本機不可用 → 改自繪霜面底紋：垂直漸層 + 固定種子細噪點，單次 BitBlt
+// 組合，結構上不可能閃，且任何機器（含 Win10 portable）外觀一致。
 
-bool transparency_enabled() noexcept {
-    DWORD enabled = 1, size = sizeof(enabled);
-    if (FAILED(RegGetValueW(HKEY_CURRENT_USER,
-                            L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
-                            L"EnableTransparency", RRF_RT_REG_DWORD, nullptr,
-                            &enabled, &size)))
-        return true;  // 讀不到 = 讓系統自己決定,當開啟
-    return enabled != 0;
-}
+// 霜面用色（zinc 系，帶1 頂微亮 → 帶2 底微深）
+constexpr COLORREF kFrostTop = RGB(0x2a, 0x2e, 0x35);
+constexpr COLORREF kFrostBottom = RGB(0x19, 0x1c, 0x20);
 
 HFONT strip_font() {
     static HFONT f = CreateFontW(-13, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0,
@@ -109,9 +88,14 @@ void foreground_window(HWND wnd) noexcept {
     // main 的 message loop 卡住(probe 實測過)。dance 丟 helper thread ——
     // attach 對象必須是「呼叫 SetForegroundWindow 的 thread」= helper 自己
     // (在主 thread 捕捉 tid 會 attach 錯邊,helper 沒接到 input queue 權限)。
-    // 窗先滅/tid 已死 = 呼叫無效返回,不卡
+    // 窗先滅/tid 已死 = 呼叫無效返回,不卡。
+    // **重試上限 3**:正常路徑(使用者剛在 UI 點開,attach 前景 thread 後第
+    // 一次就成了;失敗也在第 2~3 次內定局)。probe 實測對上不讓路的系統件
+    // 時,20 次 x 50ms 的 attach/SetForeground 循環 = 開窗後整整 1 秒的
+    // caption/佇列抖動(瘋狂閃爍的下半場)。拿不到前景就停手:編輯器仍在
+    // 最上層看得見,使用者點一下即可,不值得用閃爍換。
     std::thread([wnd] {
-        for (int i = 0; i < 20; ++i) {
+        for (int i = 0; i < 3; ++i) {
             if (!IsWindow(wnd)) return;  // 窗已關:dance 立即停,不留死 hwnd 重試
             if (GetForegroundWindow() == wnd) break;
             const HWND fg = GetForegroundWindow();
@@ -121,7 +105,7 @@ void foreground_window(HWND wnd) noexcept {
             const BOOL ok = SetForegroundWindow(wnd);
             if (fg_tid != 0 && fg_tid != my_tid) AttachThreadInput(my_tid, fg_tid, FALSE);
             if (ok) break;
-            Sleep(50);  // 被拒(對方 thread 忙/沒 pump)→ 等一輪再試,共 ~1s
+            Sleep(80);  // 被拒(對方 thread 忙/沒 pump)→ 等一輪再試,共 ~160ms
         }
     }).detach();
 }
@@ -196,6 +180,64 @@ ATOM register_class(const wchar_t* name, WNDPROC proc, HBRUSH bg, UINT style) no
 HBRUSH dark_brush() noexcept {
     static const HBRUSH b = CreateSolidBrush(kStripBg);
     return b;
+}
+
+COLORREF lerp_rgb(COLORREF a, COLORREF b, int num, int den) noexcept {
+    return RGB(GetRValue(a) + (GetRValue(b) - GetRValue(a)) * num / den,
+               GetGValue(a) + (GetGValue(b) - GetGValue(a)) * num / den,
+               GetBValue(a) + (GetBValue(b) - GetBValue(a)) * num / den);
+}
+
+// 帶列霜面底紋：垂直漸層（帶1 頂亮 → 帶2 底深）+ 固定種子細噪點（霜的
+// 顆粒感；固定種子 = 每次重繪同一張圖，不會因重建而 shimmer）。以寬度快取，
+// 重繪只剩一次 BitBlt。寬度變了才重建（resize 中 ~64 行 FillRect + 數千
+// SetPixel，一次性 <1ms）。
+HBITMAP frost_strip_bg(int w) noexcept {
+    static HBITMAP bmp = nullptr;
+    static int cached_w = -1;
+    if (bmp != nullptr && w == cached_w) return bmp;
+    if (bmp != nullptr) DeleteObject(bmp);
+    cached_w = w;
+    const HDC screen = GetDC(nullptr);
+    bmp = CreateCompatibleBitmap(screen, w, kStripH);
+    const HDC mem = CreateCompatibleDC(screen);
+    ReleaseDC(nullptr, screen);
+    const HGDIOBJ old = SelectObject(mem, bmp);
+    for (int y = 0; y < kStripH; ++y) {
+        const COLORREF c = y < kTabH ? lerp_rgb(kFrostTop, kStripBg, y, kTabH)
+                                     : lerp_rgb(kStripBg, kFrostBottom, y - kTabH,
+                                                kStripH - kTabH);
+        const RECT row{0, y, w, y + 1};
+        const HBRUSH b = CreateSolidBrush(c);
+        FillRect(mem, &row, b);
+        DeleteObject(b);
+    }
+    // 帶頂 1px 高光 + 帶底 1px 收邊：霧面玻璃的厚度感
+    RECT hl{0, 0, w, 1};
+    const HBRUSH hi = CreateSolidBrush(lerp_rgb(kFrostTop, kTextActive, 1, 8));
+    FillRect(mem, &hl, hi);
+    DeleteObject(hi);
+    RECT lo{0, kStripH - 1, w, kStripH};
+    const HBRUSH shade = CreateSolidBrush(kFrostBottom);
+    FillRect(mem, &lo, shade);
+    DeleteObject(shade);
+    // 霜噪：LCG 固定種子，±3 灑在 2x2 格
+    unsigned seed = 0x1234abcdu;
+    const auto next = [&seed] { seed = seed * 1664525u + 1013904223u; return (seed >> 16) & 0xffu; };
+    for (int y = 1; y < kStripH - 1; y += 2) {
+        for (int x = 0; x < w; x += 2) {
+            const int d = static_cast<int>(next() % 7u) - 3;
+            if (d == 0) continue;
+            const COLORREF c = GetPixel(mem, x, y);
+            const int r = GetRValue(c) + d, g = GetGValue(c) + d, bl = GetBValue(c) + d;
+            SetPixel(mem, x, y, RGB(static_cast<COLORREF>(r < 0 ? 0 : r > 255 ? 255 : r),
+                                    static_cast<COLORREF>(g < 0 ? 0 : g > 255 ? 255 : g),
+                                    static_cast<COLORREF>(bl < 0 ? 0 : bl > 255 ? 255 : bl)));
+        }
+    }
+    SelectObject(mem, old);
+    DeleteDC(mem);
+    return bmp;
 }
 
 HBRUSH tab_active_brush() noexcept {
@@ -300,7 +342,7 @@ struct EditorHost::Impl {
     int hover_tab = -1;     // 可點(未活)tab index;-1 無
     int hover_btn = 0;      // 1 電源、2 儲存、3 載入;0 無
     bool hover_tracked = false;
-    bool glass = false;     // 毛玻璃生效(系統透明效果開 + accent 套用成功)
+    int last_view_w = -1, last_view_h = -1;  // 上次餵給 view 的 client 尺寸(擋回聲)
 
     ~Impl() {
         if (wnd != nullptr) DestroyWindow(wnd);  // WM_DESTROY 內 detach + 清欄位
@@ -347,11 +389,19 @@ struct EditorHost::Impl {
         GetClientRect(wnd, &rc);
         const int cw = rc.right - rc.left;
         const int ch = rc.bottom - rc.top;
-        MoveWindow(tabs, 0, 0, cw, kStripH, TRUE);
-        MoveWindow(client, 0, kStripH, cw, ch - kStripH, TRUE);
-        if (const auto* slot = find_slot(active_id); slot != nullptr && slot->plugin->editor_open())
-            slot->plugin->editor_resize_view(cw, ch - kStripH);
-        center_editor_child();
+        MoveWindow(tabs, 0, 0, cw, kStripH, FALSE);  // 不先擦:WM_PAINT 單趟自畫,resize 不閃
+        MoveWindow(client, 0, kStripH, cw, ch - kStripH, TRUE);  // CLIPCHILDREN:擦不到 plugin 區
+        if (const auto* slot = find_slot(active_id); slot != nullptr && slot->plugin->editor_open()) {
+            const int vh = ch - kStripH;
+            // 只在 client 尺寸真的變了才餵 onSize:plugin 收 onSize 回 resizeView
+            // → host WM_SIZE → 又 onSize 的回聲迴圈(閃爍/暴衝)從這裡斷掉
+            if (cw != last_view_w || vh != last_view_h) {
+                last_view_w = cw;
+                last_view_h = vh;
+                slot->plugin->editor_resize_view(cw, vh);
+            }
+            center_editor_child();
+        }
     }
 
     void resize_to_client(int w, int h) noexcept {
@@ -377,10 +427,11 @@ struct EditorHost::Impl {
     // 沒窗就建(含子視窗)。回傳「本次新建」(呼叫端在 attach 失敗時要拆)
     bool ensure_window() {
         if (wnd != nullptr) return false;
-        // class 只註冊一次(RegisterClassExW 對重複註冊回 0,非錯誤訊號)
-        static const ATOM host_atom = register_class(kHostClassName, &host_wnd_proc,
-                                                     dark_brush(),
-                                                     CS_HREDRAW | CS_VREDRAW);
+        // class 只註冊一次(RegisterClassExW 對重複註冊回 0,非錯誤訊號)。
+        // 不帶 CS_HREDRAW/CS_VREDRAW:client 全被 tabs+client 子視窗蓋滿,這兩旗標
+        // 只會在每次 resize 強制整窗失效+擦底 = 閃爍來源;子視窗自己管理重繪。
+        static const ATOM host_atom =
+            register_class(kHostClassName, &host_wnd_proc, dark_brush(), 0);
         if (host_atom == 0) return false;
         static bool children_registered = [] {
             return register_class(kTabsClassName, &tabs_wnd_proc, dark_brush(), 0) != 0 &&
@@ -391,55 +442,34 @@ struct EditorHost::Impl {
         // WS_EX_TOOLWINDOW:不進工作列/Alt-Tab(Studio Pro 浮動視窗感);
         // WS_EX_TOPMOST:浮在主程式之上(取代舊 owner 綁定的置頂效果 ——
         // 跨進程 owner 會接合兩邊 input queue,已移除,見檔頭註解)。
-        // WS_VISIBLE:create 即顯示。spawn engine 的 STARTUPINFO 帶 SW_HIDE 時
-        // (Start-Process -WindowStyle Hidden),首個 top-level 視窗的第一個
-        // ShowWindow 呼叫會被替換成 startup 的 SW_HIDE —— 視窗建了但永遠 hidden
+        // WS_CLIPCHILDREN:parent 擦底/重繪剪掉子視窗範圍 = 不閃子視窗內容
+        // (anti-flicker 標配)。**不帶 WS_VISIBLE**:建好→上玻璃→attach→定尺寸
+        // 後 activate 一次顯示;開窗途中每步都是一次可見的組合變化 = 開窗閃爍。
         wnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, kHostClassName,
-                              L"RoudaMix", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                              L"RoudaMix", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
                               CW_USEDEFAULT, CW_USEDEFAULT, 480, 360, nullptr,
                               nullptr, GetModuleHandleW(nullptr), this);
         if (wnd == nullptr) return false;
-        // 深色標題列:預設亮色 caption 在深色主題裡 = 割裂感(舊 Win10 無 35/36 = 略過,
-        // 20 號 immersive dark 從 1809+ 就有)
+        // spawn 的 STARTUPINFO 帶 SW_HIDE 時,本視窗「第一次」ShowWindow 的參數
+        // 會被替換成 SW_HIDE(視窗永遠 hidden)。先祭一枚 SW_HIDE 消耗掉替換額度,
+        // 之後 activate 的 SW_SHOW 才是真的。(create 不帶 WS_VISIBLE 才有此坑)
+        ShowWindow(wnd, SW_HIDE);
+        // 標題列實心深色（與霜面帶列同源），深色主題不割裂；
+        // 深色 caption + 邊框/文字色從 1809+ 就有，舊系統自動略過
         const BOOL dark = TRUE;
         DwmSetWindowAttribute(wnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
         const COLORREF brc = kBtnBorder, txt = kTextActive;
         DwmSetWindowAttribute(wnd, DWMWA_BORDER_COLOR, &brc, sizeof(brc));
         DwmSetWindowAttribute(wnd, DWMWA_TEXT_COLOR, &txt, sizeof(txt));
-        // 毛玻璃：acrylic blur-behind + 整窗延伸框架 + caption 透明。
-        // **需系統「透明效果」開啟**——關閉時 blur 不作用，整組玻璃樣式跳
-        // 過，回實心深色。plugin client 區照舊實心 —— plugin 自繪不透玻璃，
-        // 自然融合 = 玻璃只在標題列與控制帶，不爭 plugin 內容。
-        glass = transparency_enabled();
-        if (glass) {
-            const auto set_comp = reinterpret_cast<SetWindowCompositionAttributeFn>(
-                GetProcAddress(GetModuleHandleW(L"user32"),
-                               "SetWindowCompositionAttribute"));
-            if (set_comp == nullptr) {
-                glass = false;
-            } else {
-                ACCENT_POLICY accent{kAccentEnableAcrylicBlurBehind,
-                                     kAccentFlagBlendColor, kGlassTint, 0};
-                WINDOWCOMPOSITIONATTRIBDATA data{kWcaAccentPolicy, &accent,
-                                                 sizeof(accent)};
-                glass = set_comp(wnd, &data) != FALSE;
-            }
-        }
-        if (glass) {
-            const MARGINS glass_margins{-1};
-            DwmExtendFrameIntoClientArea(wnd, &glass_margins);
-            const COLORREF cap_none = 0xFFFFFFFE;  // DWMWA_COLOR_NONE(舊 SDK 無定義)
-            DwmSetWindowAttribute(wnd, DWMWA_CAPTION_COLOR, &cap_none,
-                                  sizeof(cap_none));
-        } else {
-            const COLORREF cap = kStripBg;
-            DwmSetWindowAttribute(wnd, DWMWA_CAPTION_COLOR, &cap, sizeof(cap));
-        }
+        const COLORREF cap = kStripBg;
+        DwmSetWindowAttribute(wnd, DWMWA_CAPTION_COLOR, &cap, sizeof(cap));
         frame->hwnd = wnd;
         frame->extra_cy = kStripH;
         tabs = CreateWindowExW(0, kTabsClassName, L"", WS_CHILD | WS_VISIBLE, 0, 0, 480,
                                kStripH, wnd, nullptr, GetModuleHandleW(nullptr), this);
-        client = CreateWindowExW(0, kClientClassName, L"", WS_CHILD | WS_VISIBLE, 0, kStripH,
+        // WS_CLIPCHILDREN:client 擦深色底時剪掉 plugin 子視窗範圍,resize 不閃 plugin
+        client = CreateWindowExW(0, kClientClassName, L"",
+                                 WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN, 0, kStripH,
                                  480, 300, wnd, nullptr, GetModuleHandleW(nullptr), this);
         return tabs != nullptr && client != nullptr;
     }
@@ -479,9 +509,11 @@ struct EditorHost::Impl {
             return false;
         }
         active_id = id;
+        last_view_w = last_view_h = -1;  // 新 view:強制首次 layout 餵 onSize
         if (std::find(opened_ids.begin(), opened_ids.end(), id) == opened_ids.end())
             opened_ids.push_back(id);
         resize_to_client(w, h);
+        layout_children();  // 同尺寸重開不觸發 WM_SIZE → 補一次置中/onSize
         set_title(id);
         ShowWindow(wnd, SW_SHOW);
         foreground_window(wnd);
@@ -630,6 +662,10 @@ LRESULT CALLBACK host_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
         mmi->ptMinTrackSize.y = rc.bottom - rc.top;
         return 0;
     }
+    case WM_ERASEBKGND:
+        // client 全被 tabs+client 蓋滿:不擦底。擦了只會在 resize 新露出的帶上
+        // 閃一塊實色(蓋過毛玻璃),子視窗隨後蓋回 = 閃爍。
+        return 1;
     case WM_SETFOCUS:
         // 點 tab 列/邊框搶走 focus 會斷 plugin 鍵盤輸入 → 轉給 client
         if (self != nullptr && self->client != nullptr) SetFocus(self->client);
@@ -694,13 +730,22 @@ LRESULT CALLBACK tabs_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
     }
     auto* self = reinterpret_cast<EditorHost::Impl*>(GetWindowLongPtrW(h, GWLP_USERDATA));
     switch (msg) {
+    case WM_ERASEBKGND:
+        // 底紋由 WM_PAINT 單趟 BitBlt 蓋滿：跳過 class brush 擦底（擦了只會
+        // 在擦底→填底之間閃一塊）
+        return 1;
     case WM_PAINT: {
         PAINTSTRUCT ps;
         HDC dc = BeginPaint(h, &ps);
         RECT rc{};
         GetClientRect(h, &rc);
         const int cw = rc.right - rc.left;
-        FillRect(dc, &rc, dark_brush());
+        // 霜面底紋：快取好的漸層+噪點一 blit 蓋滿，其上再畫文字/控制項
+        const HDC mem = CreateCompatibleDC(dc);
+        const HGDIOBJ old_bmp = SelectObject(mem, frost_strip_bg(cw));
+        BitBlt(dc, 0, 0, cw, kStripH, mem, 0, 0, SRCCOPY);
+        SelectObject(mem, old_bmp);
+        DeleteDC(mem);
         SetBkMode(dc, TRANSPARENT);
         SelectObject(dc, strip_font());
         const auto& tabs = self->tabs_data;
