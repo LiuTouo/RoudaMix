@@ -35,6 +35,7 @@
   import PluginPicker from "./PluginPicker.svelte";
   import DestinationSelect from "./DestinationSelect.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
+  import PluginEditor from "./PluginEditor.svelte";
   import type {
     AudioApp,
     CaptureDevice,
@@ -512,14 +513,11 @@
     }
   }
 
-  // 開啟即忘:關閉由 plugin 原生視窗自己做(engine 端冪等)
-  async function openEditor(slot: RackSlot) {
-    err = "";
-    try {
-      await engineCommand("open_editor", { instanceId: slot.instanceId });
-    } catch (e) {
-      err = errorText(e);
-    }
+  // 編輯面板：點插件名稱開 host 端玻璃面板（真實 get_params/set_param）；
+  // 原生 plugin 視窗改由面板內「原生視窗」按鈕另開。
+  let editSlot = $state<RackSlot | null>(null);
+  function openEditor(slot: RackSlot) {
+    editSlot = slot;
   }
 
   // ---- VST 鏈拖曳排序(move_plugin = erase+insert 最終位置;▲▼ 已移除)----
@@ -1252,6 +1250,9 @@
     />
   {/if}
   <ConfirmDialog confirm={confirmBox} onAnswer={answerConfirm} />
+  {#if editSlot}
+    <PluginEditor slot={editSlot} onBypass={bypass} onClose={() => (editSlot = null)} />
+  {/if}
 
   {#if tip}
     <div class="gaintip mono" style="left:{tip.x + 14}px; top:{tip.y - 28}px"
