@@ -131,3 +131,24 @@ html[data-ui-style="c"][data-ui-style] .plug {
 html[data-ui-style="c"][data-ui-style] .vstlist { box-shadow: inset 0 0 0 1px var(--border); border-radius: 3px; }
 html[data-ui-style="c"][data-ui-style] #app .plug .plugicon { box-shadow: inset 0 0 0 1px var(--border); }
 html[data-ui-style="c"][data-ui-style] .tabs { box-shadow: inset 0 -1px var(--border); }
+
+/* C2：分段機架 — 正式樣式。插件是嵌入槽位，不是浮在上方的卡片。
+   （樣式定案來自 prototype/vst-editor-styles 分支的風格預覽；覆寫上方程式碼區塊。） */
+html[data-ui-style="c"] { --proto-radius: 5px; }
+html[data-ui-style="c"] .vstlist { box-shadow: none; }
+html[data-ui-style="c"] .plug {
+  background: var(--bg-panel); border-color: var(--border); border-radius: 3px;
+  box-shadow: inset 0 2px 3px #00000028;
+}
+html[data-ui-style="c"] .plugtitle { box-shadow: inset 0 -1px var(--border); }
+html[data-ui-style="c"] .plugactions { background: var(--bg); border-radius: 3px; }
+html[data-ui-style="c"] #app .plug .plugicon { box-shadow: none; background: transparent; }
+html[data-ui-style="c"] .vsthead { background: var(--bg-panel); box-shadow: inset 0 1px #ffffff05; }
+html[data-ui-style="c"] .vstfoot { background: var(--bg-panel); }
+html[data-ui-style="c"] .plugin-picker ul { box-shadow: none; }
+html[data-ui-style="c"] #app .plugin-picker .plugin-row {
+  background: var(--bg); border-color: var(--border); border-radius: 4px;
+  box-shadow: inset 0 2px 4px #00000025;
+}
+html[data-ui-style="c"] .settingsdlg .formrow { box-shadow: inset 0 0 0 1px #ffffff04; border-radius: 4px; }
+html[data-ui-style="c"] .tabs button { border-radius: 4px 4px 0 0; }
