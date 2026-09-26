@@ -417,7 +417,10 @@ struct EditorHost::Impl {
         GetClientRect(wnd, &rc);
         const int cw = rc.right - rc.left;
         const int ch = rc.bottom - rc.top;
-        MoveWindow(tabs, 0, kCaptionH, cw, ch - kCaptionH, FALSE);  // 不先擦:WM_PAINT 單趟自畫,resize 不閃
+        // tabs 只佔帶高(kStripH):若讓它延伸到窗底,會蓋住 client(第一個建立的
+        // 子視窗 = z 最上) —— plugin 區所有滑鼠輸入被 tabs 吃掉,編輯器開了卻
+        // 點不動。不重疊 = hit-test 直達 client,不受 sibling z-order 影響。
+        MoveWindow(tabs, 0, kCaptionH, cw, kStripH, FALSE);  // 不先擦:WM_PAINT 單趟自畫,resize 不閃
         MoveWindow(client, 0, kCaptionH + kStripH, cw, ch - kCaptionH - kStripH,
                    TRUE);  // CLIPCHILDREN:擦不到 plugin 區
         if (const auto* slot = find_slot(active_id); slot != nullptr && slot->plugin->editor_open()) {
@@ -856,6 +859,10 @@ LRESULT CALLBACK host_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
     default:
         return DefWindowProcW(h, msg, wp, lp);
     }
+    // switch 內 break 的路徑(NCCALCSIZE wp=FALSE、NCHITTEST 非熱區、非關閉鈕的
+    // LBUTTONDOWN 等)必須落到 DefWindowProc:少了這行 = 落到函式末尾無回傳值,
+    // MSVC C4715,回傳 eax 垃圾(NCHITTEST 回 0x96 這種非 HT 碼的來源)。
+    return DefWindowProcW(h, msg, wp, lp);
 }
 
 // ---- 頂部列:帶1 tabs + 帶2 bypass/preset(全部自繪 + hit-test,單一 HWND)----
