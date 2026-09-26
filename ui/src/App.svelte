@@ -35,6 +35,13 @@
   import { MutationQueue, mutKey, type MutationRunResult } from "./lib/mutations";
   import { connView, epochChanged } from "./lib/connPhase";
   import { errorText, friendlyError, OverloadDetector } from "./lib/errors";
+  import {
+    AlarmSet,
+    createAlertBeeper,
+    SILENT_SECONDS,
+    SilenceWatcher,
+    type AlarmKey,
+  } from "./lib/silence";
   import { visibleRange, spacerWidths, dropPosFromX } from "./lib/laneView";
   import { reorderLane } from "./lib/laneOrder";
   import {
@@ -122,13 +129,14 @@
     autoDismissMs = 0,
     dismissible = autoDismissMs <= 0,
     onDismiss?: () => void,
-  ): void {
+  ): number {
     const id = nextNoticeId++;
     notices = [
       ...notices.slice(-4),
       { id, kind, msg, raw, dismissible, autoDismissMs, onDismiss },
     ];
     if (autoDismissMs > 0) setTimeout(() => dismissNotice(id), autoDismissMs);
+    return id;
   }
   function dismissNotice(id: number): void {
     const dismissed = notices.find((n) => n.id === id);
@@ -190,6 +198,118 @@
         );
     }
   }
+  // ---- K:輸入看門狗(靜音/來源失效/裝置未啟動 → 嗶聲 + 通知)----
+  const silenceWatcher = new SilenceWatcher();
+  const alarms = new AlarmSet();
+  const beeper = createAlertBeeper();
+  const alarmNoticeIds = new Map<AlarmKey, number>();
+
+  /** 靜音監測資格:只有麥克風類輸入(ASIO/WASAPI in)且未靜音、gain > 0、有錶、無錯 ——
+   *  App/FX 軌與被靜音的軌本來就常無聲,不判斷以免誤報 */
+  function silenceEligible(t: Track): boolean {
+    return (
+      t.kind === "audio" &&
+      t.source !== null &&
+      (t.source.type === "asioIn" || t.source.type === "wasapiIn") &&
+      !t.mute &&
+      t.gain > 0 &&
+      t.metered !== false &&
+      !t.error
+    );
+  }
+
+  function alarmMsg(key: AlarmKey): string {
+    if (key === "stale") return "音訊未啟動 —— 沒有輸入訊號，請檢查音訊裝置設定";
+    const i = key.indexOf(":");
+    const id = Number(key.slice(i + 1));
+    const t = status?.tracks.find((x) => x.trackId === id);
+    const name = t?.name ?? `軌道 ${id}`;
+    if (key.startsWith("silence:"))
+      return `輸入沒有聲音：軌道「${name}」已超過 ${SILENT_SECONDS} 秒無訊號`;
+    return `輸入來源失效：軌道「${name}」— ${t?.error ?? "來源已失效"}`;
+  }
+
+  function syncBeeper(): void {
+    if (alarms.shouldBeep) beeper.start();
+    else beeper.stop();
+  }
+
+  function raiseAlarm(key: AlarmKey): void {
+    if (!alarms.raise(key)) return;
+    alarmNoticeIds.set(
+      key,
+      addNotice("error", alarmMsg(key), undefined, 0, true, () => {
+        alarmNoticeIds.delete(key);
+        alarms.dismiss(key); // 手動關閉:同一來源恢復訊號前不再重複警示
+        syncBeeper();
+      }),
+    );
+    syncBeeper();
+  }
+
+  function clearAlarm(key: AlarmKey): void {
+    if (!alarms.clear(key)) return;
+    const nid = alarmNoticeIds.get(key);
+    alarmNoticeIds.delete(key);
+    if (nid !== undefined) dismissNotice(nid);
+    syncBeeper();
+  }
+
+  /** engine 換代重連:警示與通知全收 */
+  function resetInputAlarms(): void {
+    silenceWatcher.reset();
+    const keys = alarms.activeKeys;
+    alarms.reset();
+    for (const key of keys) {
+      const nid = alarmNoticeIds.get(key);
+      alarmNoticeIds.delete(key);
+      if (nid !== undefined) dismissNotice(nid);
+    }
+    beeper.stop();
+  }
+
+  /** 每 meter tick 餵靜音偵測;strip 缺 frame(graph 變更瞬間)視為不判斷 */
+  function feedSilence(m: MetersFrame): void {
+    const st = status;
+    if (!st) return;
+    const byTrackId = indexByTrackId({ table: st.telemetryStrips, strips: m.strips });
+    for (const t of st.tracks) {
+      if (t.kind === "output") continue;
+      const strip = byTrackId.get(t.trackId);
+      const trans = silenceWatcher.sample(
+        t.trackId,
+        strip ? Math.max(strip.peakL, strip.peakR) : 0,
+        silenceEligible(t) && strip !== undefined,
+      );
+      if (trans === "alert") raiseAlarm(`silence:${t.trackId}`);
+      else if (trans === "clear") clearAlarm(`silence:${t.trackId}`);
+    }
+  }
+
+  // 權威狀態驅動的警示:輸入軌 error 來源失效、裝置未啟動(audioStale);
+  // 軌道刪除或音訊停止時收掉對應的靜音警示(裝置層級由 stale 警示負責)
+  $effect(() => {
+    const st = status;
+    if (!st) return;
+    const live = st.running ? new Set(st.tracks.map((t) => t.trackId)) : new Set<number>();
+    for (const id of silenceWatcher.ids()) {
+      if (!live.has(id)) {
+        silenceWatcher.forget(id);
+        clearAlarm(`silence:${id}`);
+      }
+    }
+    const present = new Set<AlarmKey>();
+    if (audioStale) present.add("stale");
+    for (const t of st.tracks) {
+      if (t.kind !== "output" && t.error) present.add(`srcfail:${t.trackId}`);
+    }
+    for (const key of alarms.activeKeys) {
+      if ((key === "stale" || key.startsWith("srcfail:")) && !present.has(key))
+        clearAlarm(key);
+    }
+    for (const key of present) raiseAlarm(key);
+  });
+
   // ---- M:右鍵選單(全域一份;TrackStrip 發起)----
   let menu = $state<{
     x: number;
@@ -349,6 +469,7 @@
           restoreError = "";
           currentSessionPath = null; // 新 engine 尚未成功恢復任何檔案，不得覆寫上一代 Session
           scanJob = transitionScanJob(scanJob, { type: "reset" }).state;
+          resetInputAlarms(); // K:engine 換代,輸入警示全收
         }
         conn = c;
         if (c.connected && devices.length === 0) void refreshDevices();
@@ -448,6 +569,7 @@
       await onMeters((m) => {
         meters = m;
         feedLoad(); // J:負載警示 debounce(持續過載才通知)
+        feedSilence(m); // K:輸入靜音看門狗(持續靜音才警示)
       }),
     );
       sub(
