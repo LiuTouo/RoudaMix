@@ -2,11 +2,12 @@
 // 純狀態機,不碰 DOM/Audio;App.svelte 負責餵 level、發通知與驅動嗶聲。
 // 判斷只靠 telemetry 已有的 peak,不動 engine/ABI。
 
-/** 線性振幅門檻 ≈ -60 dBFS(低於 = 視為靜音) */
-export const PEAK_THRESHOLD = 0.001;
-/** 30Hz telemetry × 300 frame = 連續 10 秒靜音才警示(單次停頓不誤報) */
-export const SILENT_FRAMES = 300;
-export const SILENT_SECONDS = 10;
+/** 數位靜音門檻:peak 低於此 = 裝置實際上送出全零(被靜音/閘門全關/斷訊),
+ *  而非「沒說話」—— 房間噪聲再小也會高於此(計無噪聲抑制的原始 WASAPI 擷取) */
+export const PEAK_THRESHOLD = 1e-6;
+/** 30Hz telemetry × 900 frame = 連續 30 秒全零才警示(說話間的停頓不誤報) */
+export const SILENT_FRAMES = 900;
+export const SILENT_SECONDS = 30;
 /** 有警示時的嗶聲間隔 */
 export const BEEP_INTERVAL_MS = 3000;
 
@@ -31,6 +32,7 @@ export class SilenceWatcher {
 
   /**
    * 餵新 frame;level 為該軌 max(peakL, peakR) 線性振幅。
+   * 只有實際的數位靜音(裝置送全零)才會累積計數 —— 沒說話但有房間噪聲不算。
    * monitored=false(被靜音/gain 0/無 meter/來源失效)＝不判斷,警示解除、計數歸零。
    * 回傳 "alert"(剛轉為靜音警示)/ "clear"(剛解除)/ null(無轉換)。
    */

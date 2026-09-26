@@ -225,7 +225,7 @@
     const t = status?.tracks.find((x) => x.trackId === id);
     const name = t?.name ?? `軌道 ${id}`;
     if (key.startsWith("silence:"))
-      return `輸入沒有聲音：軌道「${name}」已超過 ${SILENT_SECONDS} 秒無訊號`;
+      return `輸入沒有聲音：軌道「${name}」已 ${SILENT_SECONDS} 秒完全無訊號 —— 麥克風可能被靜音或來源已中斷`;
     return `輸入來源失效：軌道「${name}」— ${t?.error ?? "來源已失效"}`;
   }
 
