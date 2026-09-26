@@ -258,6 +258,17 @@
     return a.length === b.length && a.every((v, i) => v === b[i]);
   }
 
+  // 輸入軌快速勾選:系統輸出(監聽/串流)直接列在軌條上,popup 不重複列出;
+  // 勾選與「輸出到」共用 toggleDest/shownDests(engine 保證每 role 恰好一條,這裡僅防禦)
+  const inputStrip = $derived(track.kind === "audio" || track.kind === "app");
+  const sysOuts = $derived(
+    inputStrip
+      ? [tracks.find((t) => t.systemRole === "monitor"), tracks.find((t) => t.systemRole === "stream")]
+          .filter((t) => t !== undefined)
+      : [],
+  );
+  const sysLabel = (t: Track) => (t.systemRole === "monitor" ? "監聽" : "串流");
+
   /** 側鏈來源(fx 軌):與 dests 同款的本地疊加 + latest-wins;
    *  engine 回報的是 fx 軌的來源清單(status tracks[].sidechain) */
   let sidechainLocal = $state<number[] | null>(null);
@@ -1003,8 +1014,25 @@
     <span class="lbl">輸出到</span>
     <DestinationSelect trackId={track.trackId} trackName={track.name}
       options={destCandidates(tracks, track.trackId)} selected={shownDests}
-      pending={destsLocal !== null} onToggle={toggleDest} />
+      pending={destsLocal !== null} onToggle={toggleDest}
+      omitIds={sysOuts.map((t) => t.trackId)} />
   </div>
+
+  {#if sysOuts.length > 0}
+    <div class="row destination-row">
+      <span class="lbl">系統輸出</span>
+      {#each sysOuts as sys (sys.trackId)}
+        <label class="sys-dest">
+          <input type="checkbox" checked={shownDests.includes(sys.trackId)}
+            onchange={(e) => toggleDest(sys.trackId, e.currentTarget.checked)}
+            aria-label="{track.name} 路由到{sysLabel(sys)}"
+            data-tooltip="直接切換此輸入軌是否送往{sysLabel(sys)}輸出；與「輸出到」同步套用。" />
+          <span class="sys-dot" style:background={cssColor(sys.color)} aria-hidden="true"></span>
+          <span>{sysLabel(sys)}</span>
+        </label>
+      {/each}
+    </div>
+  {/if}
 
   {#if track.kind === "fx"}
     <div class="row destination-row" data-tooltip="側鏈:來源軌訊號只進此軌插件的 aux input,不進混音">
@@ -1356,6 +1384,16 @@
     font-size: 12px;
     flex-shrink: 0;
   }
+  /* 系統輸出快速勾選(輸入軌):與 destination-trigger 同高度的小 chip */
+  .sys-dest {
+    display: flex; align-items: center; gap: 5px; min-width: 0;
+    padding: 3px 6px; font-size: 12px; line-height: normal; cursor: pointer;
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: var(--proto-radius, 4px);
+  }
+  .sys-dest:hover { background: var(--bg-raised); }
+  .sys-dest input { flex: none; margin: 0; width: 14px; height: 14px; accent-color: var(--accent); }
+  .sys-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
   /* VST 常駐 box:預設自適應內容(超出即內捲),拖底部把手可拉長 */
   .vst {
     flex: 0 1 auto;

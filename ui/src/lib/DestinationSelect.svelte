@@ -13,6 +13,7 @@
     label = "輸出到",
     panelSuffix = "destinations",
     emptyText = "沒有可接收路由的 FX 或輸出軌。",
+    omitIds = [],
   }: {
     trackId: number;
     trackName: string;
@@ -25,11 +26,14 @@
     /** 同一軌多個實例時 popover id 去重(寫死會讓 popovertarget 解析到第一個) */
     panelSuffix?: string;
     emptyText?: string;
+    /** popup 隱藏的候選(輸入軌的系統輸出改走快速勾選);摘要仍解析完整 options */
+    omitIds?: number[];
   } = $props();
 
   const panelId = $derived(`track-${panelSuffix}-${trackId}`);
   const names = $derived(selected.map((id) => options.find((option) => option.trackId === id)?.name ?? `#${id}`));
   const summary = $derived(names.length ? names.join("、") : "(無)");
+  const visibleOptions = $derived(options.filter((option) => !omitIds.includes(option.trackId)));
   let trigger: HTMLButtonElement;
   let panel: HTMLDivElement;
   let expanded = $state(false);
@@ -42,7 +46,7 @@
     const width = Math.min(Math.max(rect.width, 240), window.innerWidth - edge * 2);
     const below = Math.max(0, window.innerHeight - rect.bottom - gap - edge);
     const above = Math.max(0, rect.top - gap - edge);
-    const preferred = Math.min(320, 44 + options.length * 30);
+    const preferred = Math.min(320, 44 + visibleOptions.length * 30);
     const downward = below >= preferred || below >= above;
     panel.style.width = `${width}px`;
     panel.style.maxHeight = `${downward ? below : above}px`;
@@ -107,7 +111,7 @@
     aria-expanded={expanded}
     aria-controls={panelId}
     aria-label={`${trackName} 的${label}：${summary}`}
-    disabled={options.length === 0}
+    disabled={visibleOptions.length === 0}
     data-tooltip={options.length === 0 ? emptyText : `${label}：${names.length ? names.join("、") : "未選擇"}。可勾選多個，立即套用。`}
   >
     <span class="destination-summary">{options.length === 0 ? "(無可用目的地)" : summary}</span>
@@ -134,7 +138,7 @@
   >
     <fieldset>
       <legend>{label} · 可多選</legend>
-      {#each options as option (option.trackId)}
+      {#each visibleOptions as option (option.trackId)}
         <label class="destination-option">
           <input type="checkbox" checked={selected.includes(option.trackId)}
             onchange={(event) => onToggle(option.trackId, event.currentTarget.checked)} />

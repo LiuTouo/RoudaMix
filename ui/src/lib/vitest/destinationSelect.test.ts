@@ -147,3 +147,46 @@ describe("輸出目的地多選下拉", () => {
     expect(trigger().textContent).toContain("(無)");
   });
 });
+
+// 輸入軌快速勾選:系統輸出(monitor/stream)直接列在軌條上,popup 不重複列出
+const systemFixtures = () => {
+  const fx = fixtures();
+  fx[2].systemRole = "monitor";
+  fx[3].systemRole = "stream";
+  return fx;
+};
+const quickBoxes = () => [...document.querySelectorAll<HTMLInputElement>(".sys-dest input")];
+
+async function checkQuick(index: number, value: boolean) {
+  const input = quickBoxes()[index];
+  input.checked = value;
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+  flushSync();
+}
+
+describe("輸入軌系統輸出快速勾選", () => {
+  it("監聽/串流以快速勾選呈現，popup 不再重複列出，摘要仍顯示系統軌名稱", () => {
+    show(systemFixtures());
+    expect(quickBoxes()).toHaveLength(2);
+    expect(quickBoxes().map((input) => input.checked)).toEqual([true, false]);
+    expect(document.querySelector(".sys-dest")?.textContent).toContain("監聽");
+    expect(checkboxes()).toHaveLength(1); // popup 只剩 fx 混響
+    expect(trigger().textContent).toContain("監聽");
+  });
+
+  it("快速勾選與「輸出到」共用 dests，立即送出且互相同步", async () => {
+    show(systemFixtures());
+    await checkQuick(1, true); // 勾串流
+    expect(command.mock.calls.at(-1)).toEqual(["track_set_dests", { trackId: 1, dests: [3, 4] }]);
+    expect(quickBoxes().map((input) => input.checked)).toEqual([true, true]);
+    await checkQuick(0, false); // 取消監聽
+    expect(command.mock.calls.at(-1)).toEqual(["track_set_dests", { trackId: 1, dests: [4] }]);
+    expect(trigger().textContent).toContain("串流");
+  });
+
+  it("fx 軌沒有快速勾選列，popup 仍列出系統輸出", () => {
+    show([track(8, "效果", "fx"), ...systemFixtures().slice(2)]);
+    expect(quickBoxes()).toHaveLength(0);
+    expect(checkboxes()).toHaveLength(3); // fx 軌:監聽/串流仍在 popup
+  });
+});
