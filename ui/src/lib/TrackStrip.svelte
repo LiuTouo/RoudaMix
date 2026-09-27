@@ -7,7 +7,7 @@
   import { mountDragGhost, removeDragGhost } from "./ghost";
   import { open as openFile } from "@tauri-apps/plugin-dialog";
   import { engineCommand } from "./protocol-commands.generated";
-  import { cssColor, destCandidates, parseColor, sidechainCandidates, stripOfTrack, type MeterStripView } from "./tracks";
+  import { cssColor, destCandidates, matteColor, parseColor, sidechainCandidates, stripOfTrack, type MeterStripView } from "./tracks";
   import { MutationQueue, mutKey } from "./mutations";
   import { reorderLane } from "./laneOrder";
   import { pluginMenuItems } from "./pluginMenu";
@@ -822,7 +822,7 @@
   data-track-id={track.trackId}
   role="listitem"
   aria-label="軌道 {track.name}"
-  data-tooltip="拖曳軌道空白區調整順序；雙擊軌道名稱可重新命名；按右鍵開啟排序選單。"
+  data-tooltip="拖曳軌道空白區調整順序；點下方色塊的名稱可改名、點色塊其他處可換色；按右鍵開啟排序選單。"
   oncontextmenu={(e) => {
     if ((e.target as HTMLElement).closest("input, select, button, dialog")) return;
     e.preventDefault();
@@ -830,39 +830,6 @@
   }}
 >
   <div class="head">
-    <input
-      type="color"
-      class="swatch"
-      value={cssColor(track.color)}
-      data-tooltip="設定此軌道的識別色。"
-      aria-label="軌道 {track.name} 的顏色"
-      onchange={(e) => setColor(e.currentTarget.value)}
-    />
-    {#if editing}
-      <input
-        class="nameedit"
-        bind:this={nameInput}
-        bind:value={draft}
-        draggable="false"
-        aria-label="軌道名稱(Enter 套用、Esc 取消)"
-        onkeydown={(e) => {
-          if (e.key === "Enter") commitName();
-          else if (e.key === "Escape") editing = false;
-        }}
-        onblur={commitName}
-        ondblclick={(e) => e.stopPropagation()}
-      />
-    {:else}
-      <!-- P2-P:語意控制(非無語意 span);雙擊/Enter 進入改名 -->
-      <button
-        class="name"
-        data-tooltip="{track.name} — 雙擊重新命名；鍵盤操作時按 Enter。"
-        aria-label="軌道名稱:{track.name}(雙擊改名)"
-        ondblclick={startEdit}
-        onclick={(e) => e.detail === 0 && startEdit()}
-        >{track.name}</button
-      >
-    {/if}
     <span class="badge">{track.kind}</span>
     {#if latencyEnabled && isOutput && track.latencyPolicy === "lowLatency"}
       <span
@@ -1027,7 +994,7 @@
             onchange={(e) => toggleDest(sys.trackId, e.currentTarget.checked)}
             aria-label="{track.name} 路由到{sysLabel(sys)}"
             data-tooltip="直接切換此輸入軌是否送往{sysLabel(sys)}輸出；與「輸出到」同步套用。" />
-          <span class="sys-dot" style:background={cssColor(sys.color)} aria-hidden="true"></span>
+          <span class="sys-dot" style:background={matteColor(sys.color)} aria-hidden="true"></span>
           <span>{sysLabel(sys)}</span>
         </label>
       {/each}
@@ -1264,7 +1231,41 @@
   </div>
   </div>
 
-  <div class="colorbar" style="background:{cssColor(track.color)}"></div>
+  <!-- 名稱+識別色合併在底部色塊:點色塊開調色盤,點名稱改名(空白不套用) -->
+  <div class="colorbar" style="background:{matteColor(track.color)}">
+    <input
+      type="color"
+      class="barpick"
+      value={cssColor(track.color)}
+      data-tooltip="設定此軌道的識別色。"
+      aria-label="軌道 {track.name} 的顏色"
+      onchange={(e) => setColor(e.currentTarget.value)}
+    />
+    {#if editing}
+      <input
+        class="nameedit"
+        bind:this={nameInput}
+        bind:value={draft}
+        draggable="false"
+        aria-label="軌道名稱(Enter 套用、Esc 取消;不可空白)"
+        onkeydown={(e) => {
+          if (e.key === "Enter") commitName();
+          else if (e.key === "Escape") editing = false;
+        }}
+        onblur={commitName}
+        ondblclick={(e) => e.stopPropagation()}
+      />
+    {:else}
+      <!-- P2-P:語意控制(非無語意 span);單擊/Enter 進入改名 -->
+      <button
+        class="name"
+        data-tooltip="{track.name} — 點此重新命名(不可空白)；點色塊其他處可換色。"
+        aria-label="軌道名稱:{track.name}(點擊改名)"
+        onclick={startEdit}
+        >{track.name}</button
+      >
+    {/if}
+  </div>
 
   {#if err || track.error}
     <!-- P1-O:錯誤文字可選取複製;tooltip 帶完整原文 -->
@@ -1323,18 +1324,40 @@
     align-items: center;
     gap: 6px;
     min-width: 0;
+    min-height: 20px;
   }
-  .swatch {
-    width: 16px;
-    height: 16px;
+  /* 名稱+識別色色塊(底部,通欄):霧面底色 + 可點換色 + 可點改名 */
+  .colorbar {
+    position: relative;
+    height: 26px;
+    border-radius: 0 0 7px 7px; /* 對齊 strip 8px 圓角(扣 1px 邊框) */
+    margin: 0 -10px; /* 吃掉 padding,通欄 */
+    padding: 0 10px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08); /* 霧面質感的上緣受光 */
+  }
+  /* 透明滿版色票:點色塊任何位置(名稱以外)都開原生調色盤 */
+  .barpick {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
     padding: 0;
-    border: 1px solid var(--border);
-    border-radius: 4px;
+    border: 0;
     background: none;
+    opacity: 0;
     cursor: pointer;
   }
+  .barpick:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
   .name {
-    /* P2-P:改名入口改為 button(語意控制);視覺維持纯文字 */
+    /* P2-P:改名入口改為 button(語意控制);位在色塊上,維持纯文字 */
+    position: relative;
+    z-index: 1;
     background: none;
     border: none;
     padding: 0;
@@ -1342,6 +1365,7 @@
     font-size: 13px;
     font-weight: 600;
     color: var(--text);
+    text-shadow: 0 1px 2px rgb(0 0 0 / 0.5); /* 霧面底色上的可讀性 */
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1350,10 +1374,12 @@
     text-align: left;
   }
   .name:hover {
-    color: var(--accent);
+    color: white;
     border: none;
   }
   .nameedit {
+    position: relative;
+    z-index: 1;
     font-size: 13px;
     font-weight: 600;
     min-width: 0;
@@ -1742,11 +1768,6 @@
   .gain {
     font-size: 11px;
     color: var(--text-dim);
-  }
-  .colorbar {
-    height: 4px;
-    border-radius: 2px;
-    margin: 0 -10px; /* 吃掉 padding,通欄 */
   }
   .add {
     align-self: flex-start;

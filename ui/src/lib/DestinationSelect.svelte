@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { cssColor } from "./tracks";
+  import { matteColor } from "./tracks";
   import type { Track } from "./types";
 
   let {
@@ -142,7 +142,7 @@
         <label class="destination-option">
           <input type="checkbox" checked={selected.includes(option.trackId)}
             onchange={(event) => onToggle(option.trackId, event.currentTarget.checked)} />
-          <span class="destination-dot" style:background={cssColor(option.color)} aria-hidden="true"></span>
+          <span class="destination-dot" style:background={matteColor(option.color)} aria-hidden="true"></span>
           <span class="destination-name">{option.name}</span>
         </label>
       {/each}

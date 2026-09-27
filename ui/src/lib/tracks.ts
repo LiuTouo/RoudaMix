@@ -74,6 +74,12 @@ export function cssColor(c: number): string {
   return `#${(c & 0xffffff).toString(16).padStart(6, "0")}`;
 }
 
+// 霧面質感:識別色一律與面板底色混色降飽和,全 UI 統一霧面風格(只作顯示,
+// 不回寫 engine;input[type=color] 的 value 仍用純 cssColor)
+export function matteColor(c: number): string {
+  return `color-mix(in srgb, ${cssColor(c)} 40%, var(--bg-panel))`;
+}
+
 // css "#rrggbb" → 0xRRGGBB(非 syncUI 控件值)
 export function parseColor(css: string): number {
   const n = Number.parseInt(css.replace("#", ""), 16);
