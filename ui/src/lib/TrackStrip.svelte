@@ -1337,6 +1337,7 @@
     align-items: center;
     gap: 6px;
     box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08); /* 霧面質感的上緣受光 */
+    justify-content: center; /* 名稱藥丸置中;藥丸以外區域點擊換色 */
   }
   /* 透明滿版色票:點色塊任何位置(名稱以外)都開原生調色盤 */
   .barpick {
@@ -1355,27 +1356,27 @@
     outline-offset: -2px;
   }
   .name {
-    /* P2-P:改名入口改為 button(語意控制);位在色塊上,維持纯文字 */
+    /* P2-P:改名入口改為 button(語意控制);藥丸外觀與色條點擊區明顯區分 */
     position: relative;
     z-index: 1;
-    background: none;
-    border: none;
-    padding: 0;
+    background: rgb(0 0 0 / 0.35);
+    border: 1px solid rgb(255 255 255 / 0.18);
+    border-radius: 11px;
+    padding: 1px 12px;
     font: inherit;
     font-size: 13px;
     font-weight: 600;
     color: var(--text);
-    text-shadow: 0 1px 2px rgb(0 0 0 / 0.5); /* 霧面底色上的可讀性 */
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    min-width: 0;
-    flex: 1;
-    text-align: left;
+    max-width: 100%;
+    cursor: pointer;
   }
   .name:hover {
+    background: rgb(0 0 0 / 0.55);
+    border-color: rgb(255 255 255 / 0.35);
     color: white;
-    border: none;
   }
   .nameedit {
     position: relative;
@@ -1383,8 +1384,13 @@
     font-size: 13px;
     font-weight: 600;
     min-width: 0;
+    max-width: 100%;
     flex: 1;
     padding: 1px 4px;
+    text-align: center;
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    background: rgb(0 0 0 / 0.35);
   }
   .badge {
     font-size: 10px;
