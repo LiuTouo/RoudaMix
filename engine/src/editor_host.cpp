@@ -42,9 +42,10 @@ namespace {
 
 using namespace Steinberg;
 
-constexpr int kTabH = 28;       // 帶1:plugin tabs
+constexpr int kTabH = 28;       // 帶1:plugin tabs(每列高)
+constexpr int kTabPadX = 8;     // 帶1:變寬分頁左右 padding(名稱完整不截斷)
 constexpr int kCaptionH = 32;   // 自繪標題列(取代 DWM caption,同高)
-constexpr int kStripH = 64;     // 帶1 tabs 28 + 帶2 控制 36
+constexpr int kBand2H = 36;     // 帶2:bypass 電源鈕 + preset 控制
 constexpr int kClientMinW = 80;
 constexpr int kClientMinH = 60;
 constexpr int kHostMinClientW = 282;  // 帶2 全控(電源+兩鈕,load 右緣 268 + 邊距)
@@ -118,7 +119,7 @@ void foreground_window(HWND wnd) noexcept {
 class EditorPlugFrame final : public IPlugFrame {
 public:
     HWND hwnd{};        // host top-level(視窗銷毀時清 null,擋遲到的 resizeView)
-    int extra_cy = kCaptionH + kStripH;
+    int extra_cy = kCaptionH + kTabH + kBand2H;
 
     tresult PLUGIN_API queryInterface(const TUID requested_iid, void** obj) override {
         if (obj == nullptr) return kInvalidArgument;
@@ -158,11 +159,11 @@ private:
     std::atomic<uint32> references_{1};
 };
 
-// 帶2 控制項的矩形(client 座標;帶高 36,控制項上下留 5~6px)
-RECT power_rect(int /*cw*/) noexcept { return {8, kTabH + 5, 36, kStripH - 5}; }
-RECT save_btn_rect(int /*cw*/) noexcept { return {44, kTabH + 6, 148, kStripH - 6}; }
-RECT load_btn_rect(int /*cw*/) noexcept { return {156, kTabH + 6, 260, kStripH - 6}; }
-RECT preset_name_rect(int cw) noexcept { return {270, kTabH + 4, cw - 10, kStripH - 4}; }
+// 帶2 控制項的矩形(ty = 帶2 頂 = 帶1 列數 × kTabH;列數隨分頁換行變動)
+RECT power_rect(int ty) noexcept { return {8, ty + 5, 36, ty + kBand2H - 5}; }
+RECT save_btn_rect(int ty) noexcept { return {44, ty + 6, 148, ty + kBand2H - 6}; }
+RECT load_btn_rect(int ty) noexcept { return {156, ty + 6, 260, ty + kBand2H - 6}; }
+RECT preset_name_rect(int ty, int cw) noexcept { return {270, ty + 4, cw - 10, ty + kBand2H - 4}; }
 
 LRESULT CALLBACK host_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept;
 LRESULT CALLBACK tabs_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept;
@@ -252,10 +253,10 @@ HBITMAP frost_cached(int w, int h, int mid_y, bool top_highlight,
     return bmp;
 }
 
-HBITMAP frost_strip_bg(int w) noexcept {
+HBITMAP frost_strip_bg(int w, int h) noexcept {
     static HBITMAP bmp = nullptr;
     static int cached_w = -1, cached_h = -1;
-    return frost_cached(w, kStripH, kTabH, false, bmp, cached_w, cached_h);
+    return frost_cached(w, h, h - kBand2H, false, bmp, cached_w, cached_h);
 }
 
 HBITMAP frost_caption_bg(int w) noexcept {
@@ -359,8 +360,14 @@ struct EditorHost::Impl {
         std::wstring name;
         bool dim;      // 無 editor / 上次 attach 失敗
         bool bypass;
+        int x = 0, y = 0, w = 0;  // 換行版面 strip 座標(y = 列頂;layout_tabs 填)
     };
     std::vector<Tab> tabs_data;
+    bool tabs_measured = false;  // 分頁文字寬已量(名單變更時重置)
+    int rows = 1;                // 帶1 換行列數(寬度不足時延伸下一列)
+
+    int strip_h() const noexcept { return kTabH * rows + kBand2H; }
+    int band2_y() const noexcept { return kTabH * rows; }
     IPtr<EditorPlugFrame> frame;
     // 帶列 hover 狀態(tabs 視窗座標;WM_MOUSEMOVE 維護、WM_MOUSELEAVE 清除)
     int hover_tab = -1;     // 可點(未活)tab index;-1 無
@@ -380,15 +387,55 @@ struct EditorHost::Impl {
         return engine != nullptr ? engine->find_slot(id) : nullptr;
     }
 
-    // 以 tracks 現況重建 tab 快取 + 重繪(main thread 直接讀,無需鎖)
+    // 以 tracks 現況重建 tab 快取 + 重繪(main thread 直接讀,無需鎖)。
+    // 名稱前加全域連續流水號(1.、2.…):分頁列順序 = tracks × chain,chain 內
+    // 即聲音實際進入順序;與主畫面機架列表編號同源同號。
     void render_tabs() {
         tabs_data.clear();
+        tabs_measured = false;  // 名單變了,待重新量測
         if (engine == nullptr) return;
+        int n = 0;
         for (const auto& t : engine->plugin_tabs()) {
-            tabs_data.push_back(
-                {t.instance_id, to_wide(t.label), !t.editor_capable, t.bypass});
+            tabs_data.push_back({t.instance_id,
+                                 std::to_wstring(++n) + L". " + to_wide(t.label),
+                                 !t.editor_capable, t.bypass});
         }
         if (tabs != nullptr) InvalidateRect(tabs, nullptr, FALSE);
+    }
+
+    // 量測變寬分頁文字寬(+ padding);名單不變只量一次
+    void ensure_measured() {
+        if (tabs_measured || tabs_data.empty() || tabs == nullptr) return;
+        const HDC dc = GetDC(tabs);
+        if (dc == nullptr) return;
+        const HGDIOBJ old = SelectObject(dc, strip_font());
+        for (auto& t : tabs_data) {
+            SIZE sz{};
+            GetTextExtentPoint32W(dc, t.name.c_str(), static_cast<int>(t.name.size()), &sz);
+            t.w = sz.cx + kTabPadX * 2;
+        }
+        SelectObject(dc, old);
+        ReleaseDC(tabs, dc);
+        tabs_measured = true;
+    }
+
+    // 換行版面:寬度不足時延伸下一列(名稱完整不截斷、不需捲動);
+    // 列首分頁再寬也獨佔一列(只能靠加寬視窗)。回傳列數。
+    int layout_tabs(int cw) {
+        ensure_measured();
+        int x = 0, y = 0;
+        rows = 1;
+        for (auto& t : tabs_data) {
+            if (x > 0 && x + t.w > cw) {
+                x = 0;
+                y += kTabH;
+                ++rows;
+            }
+            t.x = x;
+            t.y = y;
+            x += t.w;
+        }
+        return rows;
     }
 
     // 原生 editor 比 client 小(plugin 不縮放,如 kHs Gain)→ 置中,周圍留深色底
@@ -417,14 +464,16 @@ struct EditorHost::Impl {
         GetClientRect(wnd, &rc);
         const int cw = rc.right - rc.left;
         const int ch = rc.bottom - rc.top;
-        // tabs 只佔帶高(kStripH):若讓它延伸到窗底,會蓋住 client(第一個建立的
+        layout_tabs(cw);  // 視窗寬變了 → 列數/帶高跟著變
+        const int sh = strip_h();
+        // tabs 只佔帶高:若讓它延伸到窗底,會蓋住 client(第一個建立的
         // 子視窗 = z 最上) —— plugin 區所有滑鼠輸入被 tabs 吃掉,編輯器開了卻
         // 點不動。不重疊 = hit-test 直達 client,不受 sibling z-order 影響。
-        MoveWindow(tabs, 0, kCaptionH, cw, kStripH, FALSE);  // 不先擦:WM_PAINT 單趟自畫,resize 不閃
-        MoveWindow(client, 0, kCaptionH + kStripH, cw, ch - kCaptionH - kStripH,
+        MoveWindow(tabs, 0, kCaptionH, cw, sh, FALSE);  // 不先擦:WM_PAINT 單趟自畫,resize 不閃
+        MoveWindow(client, 0, kCaptionH + sh, cw, ch - kCaptionH - sh,
                    TRUE);  // CLIPCHILDREN:擦不到 plugin 區
         if (const auto* slot = find_slot(active_id); slot != nullptr && slot->plugin->editor_open()) {
-            const int vh = ch - kCaptionH - kStripH;
+            const int vh = ch - kCaptionH - sh;
             // 只在 client 尺寸真的變了才餵 onSize:plugin 收 onSize 回 resizeView
             // → host WM_SIZE → 又 onSize 的回聲迴圈(閃爍/暴衝)從這裡斷掉
             if (cw != last_view_w || vh != last_view_h) {
@@ -437,10 +486,28 @@ struct EditorHost::Impl {
     }
 
     void resize_to_client(int w, int h) noexcept {
-        RECT rc{0, 0, w, h + kCaptionH + kStripH};
+        layout_tabs(w);  // 以目標寬度定列數(strip 高隨之)
+        if (frame != nullptr) frame->extra_cy = kCaptionH + strip_h();
+        RECT rc{0, 0, w, h + kCaptionH + strip_h()};
         AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
         SetWindowPos(wnd, nullptr, 0, 0, rc.right - rc.left, rc.bottom - rc.top,
                      SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+
+    // 列數變化(插件增刪/重新編號/視窗寬變)→ 以目前 client 尺寸重設外框高,
+    // plugin editor 高度不被帶列加高吃掉;WM_SIZE → layout_children 收尾
+    void sync_strip_height() {
+        if (wnd == nullptr || client == nullptr) return;
+        RECT hc{}, cc{};
+        GetClientRect(wnd, &hc);
+        GetClientRect(client, &cc);
+        const int old_strip = strip_h();
+        layout_tabs(hc.right);
+        if (strip_h() != old_strip) {
+            resize_to_client(hc.right, cc.bottom);
+            layout_children();
+        }
+        if (tabs != nullptr) InvalidateRect(tabs, nullptr, FALSE);
     }
 
     void set_title(std::uint32_t id) {
@@ -502,14 +569,14 @@ struct EditorHost::Impl {
         const COLORREF brc = kBtnBorder;
         DwmSetWindowAttribute(wnd, DWMWA_BORDER_COLOR, &brc, sizeof(brc));
         frame->hwnd = wnd;
-        frame->extra_cy = kCaptionH + kStripH;
+        frame->extra_cy = kCaptionH + strip_h();
         tabs = CreateWindowExW(0, kTabsClassName, L"", WS_CHILD | WS_VISIBLE,
-                               0, kCaptionH, 480, kStripH, wnd, nullptr,
+                               0, kCaptionH, 480, strip_h(), wnd, nullptr,
                                GetModuleHandleW(nullptr), this);
         // WS_CLIPCHILDREN:client 擦深色底時剪掉 plugin 子視窗範圍,resize 不閃 plugin
         client = CreateWindowExW(0, kClientClassName, L"",
                                  WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
-                                 0, kCaptionH + kStripH, 480, 300, wnd, nullptr,
+                                 0, kCaptionH + strip_h(), 480, 300, wnd, nullptr,
                                  GetModuleHandleW(nullptr), this);
         return tabs != nullptr && client != nullptr;
     }
@@ -558,6 +625,7 @@ struct EditorHost::Impl {
         ShowWindow(wnd, SW_SHOW);
         foreground_window(wnd);
         render_tabs();
+        sync_strip_height();
         return true;
     }
 
@@ -654,6 +722,7 @@ void EditorHost::notify_tracks_changed() {
         }
     }
     impl_->render_tabs();
+    impl_->sync_strip_height();
     if (impl_->active_id != 0) impl_->set_title(impl_->active_id);
 }
 
@@ -842,7 +911,8 @@ LRESULT CALLBACK host_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
     case WM_GETMINMAXINFO: {
         auto* mmi = reinterpret_cast<MINMAXINFO*>(lp);
         // 寬下限 = 帶2 全控能完整顯示(不是 editor 需求 —— editor 小就置中留深色底)
-        RECT rc{0, 0, kHostMinClientW, kClientMinH + kCaptionH + kStripH};
+        // 高下限用單列帶高:列數增加時 sync_strip_height 會自動調高外框。
+        RECT rc{0, 0, kHostMinClientW, kClientMinH + kCaptionH + kTabH + kBand2H};
         AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
         mmi->ptMinTrackSize.x = rc.right - rc.left;
         mmi->ptMinTrackSize.y = rc.bottom - rc.top;
@@ -930,57 +1000,56 @@ LRESULT CALLBACK tabs_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
         RECT rc{};
         GetClientRect(h, &rc);
         const int cw = rc.right - rc.left;
-        // 霜面底紋：快取好的漸層+噪點一 blit 蓋滿，其上再畫文字/控制項
+        // 換行版面(列數隨寬度);霜面底紋 cache 依 (寬,高)
+        const int rows = self->layout_tabs(cw);
+        const int ty = kTabH * rows;  // 帶1/帶2 分界
+        const int sh = ty + kBand2H;
         const HDC mem = CreateCompatibleDC(dc);
-        const HGDIOBJ old_bmp = SelectObject(mem, frost_strip_bg(cw));
-        BitBlt(dc, 0, 0, cw, kStripH, mem, 0, 0, SRCCOPY);
+        const HGDIOBJ old_bmp = SelectObject(mem, frost_strip_bg(cw, sh));
+        BitBlt(dc, 0, 0, cw, sh, mem, 0, 0, SRCCOPY);
         SelectObject(mem, old_bmp);
         DeleteDC(mem);
         SetBkMode(dc, TRANSPARENT);
         SelectObject(dc, strip_font());
         const auto& tabs = self->tabs_data;
         int active_idx = -1;
-        if (!tabs.empty()) {
-            const int tw = (std::min)(160, cw / static_cast<int>(tabs.size()));
-            for (int i = 0; i < static_cast<int>(tabs.size()); ++i) {
-                const auto& t = tabs[static_cast<size_t>(i)];
-                if (t.id == self->active_id) active_idx = i;
-                // 文字即分頁:無框無底(方框 = 表單感);active/hover 亮文字,
-                // active 另有 accent 底線(在分隔線之後蓋上 = 連續直線,
-                // 同主程式 tabs 的 2px border-bottom 語彙)
-                RECT tr{i * tw, 0, (i + 1) * tw, kTabH};
-                RECT text = tr;
-                text.left += 8;
-                text.right -= 8;
-                SetTextColor(dc, t.dim ? kTextDim
-                                       : (active_idx == i || self->hover_tab == i)
-                                             ? kTextActive
-                                             : kTextIdle);
-                DrawTextW(dc, t.name.c_str(), -1, &text,
-                          DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-            }
+        // 文字即分頁:無框無底(方框 = 表單感);active/hover 亮文字,
+        // active 另有 accent 底線(在分隔線之後蓋上 = 連續直線,
+        // 同主程式 tabs 的 2px border-bottom 語彙)。
+        // 名稱完整不截斷:寬度不足時換行延伸下一列,不出現省略號。
+        for (int i = 0; i < static_cast<int>(tabs.size()); ++i) {
+            const auto& t = tabs[static_cast<size_t>(i)];
+            if (t.id == self->active_id) active_idx = i;
+            RECT tr{t.x, t.y, t.x + t.w, t.y + kTabH};
+            SetTextColor(dc, t.dim ? kTextDim
+                                   : (active_idx == i || self->hover_tab == i)
+                                         ? kTextActive
+                                         : kTextIdle);
+            DrawTextW(dc, t.name.c_str(), -1, &tr,
+                      DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         }
         // 帶1/帶2 分隔線
-        RECT div{0, kTabH - 1, cw, kTabH};
+        RECT div{0, ty - 1, cw, ty};
         FillRect(dc, &div, tab_active_brush());
         if (active_idx >= 0) {
-            const int tw = (std::min)(160, cw / static_cast<int>(tabs.size()));
-            RECT line{active_idx * tw, kTabH - 2, (active_idx + 1) * tw, kTabH};
+            const auto& t = tabs[static_cast<size_t>(active_idx)];
+            RECT line{t.x, t.y + kTabH - 2, t.x + t.w, t.y + kTabH};
             FillRect(dc, &line, accent_brush());
         }
         if (self->active_id != 0) {
             bool bypassed = false;
             if (const auto* slot = self->find_slot(self->active_id); slot != nullptr)
                 bypassed = slot->bypass;
-            const RECT pr = power_rect(cw);
+            const RECT pr = power_rect(self->band2_y());
             if (self->hover_btn == 1) FillRect(dc, &pr, tab_active_brush());  // hover 淡底
             draw_power_icon(dc, (pr.left + pr.right) / 2, (pr.top + pr.bottom) / 2,
                             (pr.bottom - pr.top) / 2.0 - 4.0, bypassed);
-            if (save_btn_rect(cw).right < cw)
-                draw_preset_button(dc, save_btn_rect(cw), L"儲存 Preset", self->hover_btn == 2);
-            if (load_btn_rect(cw).right < cw)
-                draw_preset_button(dc, load_btn_rect(cw), L"載入 Preset", self->hover_btn == 3);
-            RECT nr = preset_name_rect(cw);
+            const int by = self->band2_y();
+            if (save_btn_rect(by).right < cw)
+                draw_preset_button(dc, save_btn_rect(by), L"儲存 Preset", self->hover_btn == 2);
+            if (load_btn_rect(by).right < cw)
+                draw_preset_button(dc, load_btn_rect(by), L"載入 Preset", self->hover_btn == 3);
+            RECT nr = preset_name_rect(by, cw);
             SetTextColor(dc, kTextIdle);
             DrawTextW(dc, self->preset_name.c_str(), -1, &nr,
                       DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
@@ -996,20 +1065,27 @@ LRESULT CALLBACK tabs_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
         GetClientRect(h, &rc);
         const int cw = rc.right - rc.left;
         const auto& tabs = self->tabs_data;
-        if (y < kTabH) {
+        if (y < self->band2_y()) {
             if (tabs.empty()) break;
-            const int tw = (std::min)(160, cw / static_cast<int>(tabs.size()));
-            const int idx = x / tw;
-            if (idx < 0 || idx >= static_cast<int>(tabs.size())) break;
-            const auto& t = tabs[static_cast<size_t>(idx)];
+            int hit = -1;
+            for (int i = 0; i < static_cast<int>(tabs.size()); ++i) {
+                const auto& t = tabs[static_cast<size_t>(i)];
+                if (x >= t.x && x < t.x + t.w && y >= t.y && y < t.y + kTabH) {
+                    hit = i;
+                    break;
+                }
+            }
+            if (hit < 0) break;
+            const auto& t = tabs[static_cast<size_t>(hit)];
             if (t.dim || t.id == self->active_id) break;
             std::string err;
             self->activate(t.id, err);  // 失敗 = dim + 空 client(文件化行為)
         } else if (self->active_id != 0) {
             const POINT pt{x, y};
-            RECT pr = power_rect(cw);
-            RECT sr = save_btn_rect(cw);
-            RECT lr = load_btn_rect(cw);
+            const int by = self->band2_y();
+            RECT pr = power_rect(by);
+            RECT sr = save_btn_rect(by);
+            RECT lr = load_btn_rect(by);
             if (PtInRect(&pr, pt)) {
                 post_host_cmd(self->post_to, kHostBypass, self->active_id);
             } else if (PtInRect(&sr, pt) && sr.right < cw) {
@@ -1049,20 +1125,20 @@ LRESULT CALLBACK tabs_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
         const auto& tabs = self->tabs_data;
         int ntab = -1;
         int nbtn = 0;
-        if (y < kTabH) {
-            if (!tabs.empty()) {
-                const int tw = (std::min)(160, cw / static_cast<int>(tabs.size()));
-                const int idx = x / tw;
-                if (idx >= 0 && idx < static_cast<int>(tabs.size())) {
-                    const auto& t = tabs[static_cast<size_t>(idx)];
-                    if (!t.dim && t.id != self->active_id) ntab = idx;  // 可點才回饋
+        if (y < self->band2_y() && !tabs.empty()) {
+            for (int i = 0; i < static_cast<int>(tabs.size()); ++i) {
+                const auto& t = tabs[static_cast<size_t>(i)];
+                if (x >= t.x && x < t.x + t.w && y >= t.y && y < t.y + kTabH) {
+                    if (!t.dim && t.id != self->active_id) ntab = i;  // 可點才回饋
+                    break;
                 }
             }
         } else if (self->active_id != 0) {
             const POINT pt{x, y};
-            const RECT pr = power_rect(cw);
-            const RECT sr = save_btn_rect(cw);
-            const RECT lr = load_btn_rect(cw);
+            const int by = self->band2_y();
+            const RECT pr = power_rect(by);
+            const RECT sr = save_btn_rect(by);
+            const RECT lr = load_btn_rect(by);
             if (PtInRect(&pr, pt)) nbtn = 1;
             else if (sr.right < cw && PtInRect(&sr, pt)) nbtn = 2;
             else if (lr.right < cw && PtInRect(&lr, pt)) nbtn = 3;
