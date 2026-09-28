@@ -1231,23 +1231,25 @@
         data-tooltip={track.mute ? "此軌目前已靜音；按下可取消靜音。" : "將此軌靜音。"}
         >M</button
       >
-      <input
-        type="range"
-        min="0"
-        max="1.5"
-        step="0.01"
-        value={shownGain}
-        aria-label="{track.name} 音量({Math.round(shownGain * 100)}%;滾輪微調,每格 2%;Ctrl+點擊 = 恢復 100%)"
-        oninput={onGainInput}
-        onchange={onGainChange}
-        onclick={onGainClick}
-        onwheel={onGainWheel}
-        onpointerdown={onFaderDown}
-        onpointermove={onFaderMove}
-        onpointerup={onFaderUp}
-        onpointercancel={onFaderUp}
-        data-tooltip="調整軌道音量；滾輪每格微調 2%；Ctrl + 按一下還原為 100%。目前為 {Math.round(shownGain * 100)}%。"
-      />
+      <div class="slotwrap">
+        <input
+          type="range"
+          min="0"
+          max="1.5"
+          step="0.01"
+          value={shownGain}
+          aria-label="{track.name} 音量({Math.round(shownGain * 100)}%;滾輪微調,每格 2%;Ctrl+點擊 = 恢復 100%)"
+          oninput={onGainInput}
+          onchange={onGainChange}
+          onclick={onGainClick}
+          onwheel={onGainWheel}
+          onpointerdown={onFaderDown}
+          onpointermove={onFaderMove}
+          onpointerup={onFaderUp}
+          onpointercancel={onFaderUp}
+          data-tooltip="調整軌道音量；滾輪每格微調 2%；Ctrl + 按一下還原為 100%。目前為 {Math.round(shownGain * 100)}%。"
+        />
+      </div>
       <span class="gain mono">{Math.round(shownGain * 100)}%</span>
     </div>
     <div class="meterwrap">
@@ -1769,35 +1771,86 @@
     gap: 6px;
     min-height: 0;
   }
-  .fader input[type="range"] {
+  /* 推桿槽 + 刻度:硬體 channel strip 型。槽寬 = 18 = cap 寬,cap 恰好填滿溝槽不外伸 */
+  .slotwrap {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    width: 18px;
+    display: flex;
+  }
+  .slotwrap::before {
+    /* 刻度尺(左側,12 格):對齊 Chromium 實測 thumb 中心行程
+       (邊緣鉗制移動:center(f) = 18.5px + f·(H−36px),H = 槽高;
+       縮 1px 底邊讓第 12 格刻度不被裁掉) */
+    content: "";
+    position: absolute;
+    left: -6px;
+    top: 17.5px;
+    bottom: 17.5px;
+    width: 5px;
+    background: repeating-linear-gradient(
+      180deg,
+      var(--border) 0 1px,
+      transparent 1px calc(100% / 12)
+    );
+  }
+  .slotwrap::after {
+    /* 100%(unity)定位記號:值域 0–150%,對齊實測 thumb 中心行程
+       center(f) = 18.5px + f·(H−36px),f = 值/1.5;1.0 → 2/3 處,−1px 置中 2px 記號 */
+    content: "";
+    position: absolute;
+    left: -9px;
+    bottom: calc(18.5px + (100% - 36px) * 2 / 3 - 1px);
+    width: 8px;
+    height: 2px;
+    background: var(--accent);
+    opacity: 0.75;
+  }
+  .slotwrap input[type="range"] {
     -webkit-appearance: none;
     appearance: none;
     writing-mode: vertical-lr;
     direction: rtl; /* min 下、max 上;WebView2(Chromium ≥123)原生支援 */
-    width: 16px;
-    min-width: 16px;
-    flex: 1;
-    min-height: 0;
+    width: 18px;
+    min-width: 18px;
+    flex: none; /* row 主軸 = 寬度;勿用 flex:1 撐寬,否則槽比 cap 寬 */
+    /* 長度加倍(下限 160→320):空間不足時 strip 改內捲,滑鼠拉取行程保證加倍 */
+    min-height: 320px;
     background: transparent;
     padding: 0;
   }
-  /* 去網頁感:fader cap 樣式(槽 = 內凹深色,cap 帶 accent 上緣) */
-  .fader input[type="range"]::-webkit-slider-runnable-track {
+  /* 硬體推桿:槽 = 內凹深色溝槽 */
+  .slotwrap input[type="range"]::-webkit-slider-runnable-track {
     width: 100%;
-    border-radius: 4px;
-    background: var(--bg);
-    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: linear-gradient(90deg, #04060a, #12151b 50%, #04060a);
+    border: 1px solid #05070a;
+    box-shadow:
+      inset 0 2px 5px rgb(0 0 0 / 0.85),
+      inset 0 -1px 3px rgb(0 0 0 / 0.6);
   }
-  .fader input[type="range"]::-webkit-slider-thumb {
+  /* 硬體推桿 cap:金屬體 + 橫紋 + accent 中心線;與槽同寬置中,不外伸不偏移 */
+  .slotwrap input[type="range"]::-webkit-slider-thumb {
     -webkit-appearance: none;
-    width: 16px;
-    height: 10px;
+    width: 18px;
+    height: 30px;
     border-radius: 3px;
-    background: linear-gradient(180deg, #2e333a, #1a1d22);
-    border: 1px solid #4a525c;
-    border-top-color: var(--accent);
-    box-shadow: 0 1px 4px rgb(0 0 0 / 0.6);
-    margin-left: -1px; /* 抵銷 track border,對齊槽 */
+    border: 1px solid #5b6470;
+    background:
+      linear-gradient(
+        180deg,
+        transparent calc(50% - 1px),
+        var(--accent) calc(50% - 1px) calc(50% + 1px),
+        transparent calc(50% + 1px)
+      ),
+      repeating-linear-gradient(180deg, rgb(255 255 255 / 0.07) 0 1px, transparent 1px 4px),
+      linear-gradient(180deg, #3a424b, #262b32 45%, #171a1f);
+    box-shadow:
+      0 2px 6px rgb(0 0 0 / 0.7),
+      inset 0 1px 0 rgb(255 255 255 / 0.15),
+      inset 0 -2px 3px rgb(0 0 0 / 0.55);
+    margin-left: -1px; /* 同原版對齊公式:抵銷 track border,與槽量齊 */
   }
   .meterwrap {
     flex: 0 0 46px;

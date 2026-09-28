@@ -57,6 +57,17 @@ test("App 對外渲染的掃描入口位於頂欄", () => {
   assert.match(body, /<header[\s\S]*?<button[^>]*>掃描 VST<\/button>/);
 });
 
+test("膠囊通知層獨立於頂欄之外，警示不再擠在頂欄", () => {
+  const body = render(App).body;
+  const headerEnd = body.indexOf("</header>");
+
+  assert.ok(headerEnd > 0, "App 應渲染頂欄");
+  const capsuleAt = body.indexOf("capsules");
+  assert.ok(capsuleAt > headerEnd, "膠囊容器應位於頂欄之後");
+  assert.match(body, /<div[^>]*class="capsules[^"]*"[^>]*>/);
+  assert.doesNotMatch(body.slice(0, headerEnd), /class="notice/);
+});
+
 test("TrackStrip 依 capability 顯示 Monitor Bypass 與 Output Latency Policy", () => {
   const disabled = render(TrackStrip, { props: stripProps(false) }).body;
   const enabled = render(TrackStrip, { props: stripProps(true) }).body;

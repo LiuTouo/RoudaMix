@@ -71,7 +71,8 @@ public:
     };
     std::vector<DeviceSummary> list_devices();
 
-    // M5b:正在出聲的 app(active audio sessions;UI 程序選擇器用)
+    // M5b:正在出聲的 app(active audio sessions,掃全部 active render endpoints;
+    // UI 程序選擇器用)
     struct AudioAppInfo {
         std::uint32_t pid{};
         std::string name;

@@ -217,48 +217,41 @@ std::vector<AudioEngine::DeviceSummary> AudioEngine::list_devices() {
     return result;
 }
 
-// M5b:預設 render 裝置的 active audio sessions = 正在出聲的 app。
+// M5b:所有 active render endpoints 的 active audio sessions = 正在出聲的 app
+// (含出聲到非預設裝置的程序;process loopback 抓程序樹,與實體 endpoint 無關)。
 // 呼叫端 = main thread(STA);列舉失敗(無裝置等)= 空清單不報錯
 std::vector<AudioEngine::AudioAppInfo> AudioEngine::list_audio_apps() {
     std::vector<AudioAppInfo> apps;
     IMMDeviceEnumerator* enumerator = nullptr;
-    IMMDevice* device = nullptr;
-    IAudioSessionManager2* manager = nullptr;
-    IAudioSessionEnumerator* sessions = nullptr;
-    auto release_all = [&]() {
-        if (sessions != nullptr) sessions->Release();
-        if (manager != nullptr) manager->Release();
-        if (device != nullptr) device->Release();
-        if (enumerator != nullptr) enumerator->Release();
-    };
-    HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
-                                  __uuidof(IMMDeviceEnumerator),
-                                  reinterpret_cast<void**>(&enumerator));
-    if (FAILED(hr)) return apps;
-    if (FAILED(enumerator->GetDefaultAudioEndpoint(eRender, eMultimedia, &device)) ||
-        device == nullptr) {
-        release_all();
+    IMMDeviceCollection* collection = nullptr;
+    if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+                                __uuidof(IMMDeviceEnumerator),
+                                reinterpret_cast<void**>(&enumerator))))
         return apps;
-    }
-    if (FAILED(device->Activate(__uuidof(IAudioSessionManager2), CLSCTX_ALL, nullptr,
-                                reinterpret_cast<void**>(&manager))) ||
-        manager == nullptr) {
-        release_all();
-        return apps;
-    }
-    if (FAILED(manager->GetSessionEnumerator(&sessions)) || sessions == nullptr) {
-        release_all();
-        return apps;
-    }
-    int count = 0;
-    if (FAILED(sessions->GetCount(&count))) {
-        release_all();
+    // 全 render endpoints(非只預設):其他裝置出聲的程序也要進選擇清單
+    if (FAILED(enumerator->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &collection)) ||
+        collection == nullptr) {
+        if (collection != nullptr) collection->Release();
+        enumerator->Release();
         return apps;
     }
     const std::uint32_t self_pid = GetCurrentProcessId();
     // exe 路徑表(一次列舉,basename 給 name、完整路徑給 path = 同名程序辨識)
     const auto proc_paths = list_process_full_paths();
-    for (int i = 0; i < count; ++i) {
+    UINT device_count = 0;
+    if (SUCCEEDED(collection->GetCount(&device_count))) {
+        for (UINT d = 0; d < device_count; ++d) {
+            IMMDevice* device = nullptr;
+            if (FAILED(collection->Item(d, &device)) || device == nullptr) continue;
+            IAudioSessionManager2* manager = nullptr;
+            IAudioSessionEnumerator* sessions = nullptr;
+            if (SUCCEEDED(device->Activate(__uuidof(IAudioSessionManager2), CLSCTX_ALL, nullptr,
+                                           reinterpret_cast<void**>(&manager))) &&
+                manager != nullptr)
+                (void)manager->GetSessionEnumerator(&sessions);
+            int count = 0;
+            if (sessions != nullptr) (void)sessions->GetCount(&count);
+            for (int i = 0; i < count; ++i) {
         IAudioSessionControl* control = nullptr;
         if (FAILED(sessions->GetSession(i, &control)) || control == nullptr) continue;
         IAudioSessionControl2* control2 = nullptr;
@@ -278,7 +271,8 @@ std::vector<AudioEngine::AudioAppInfo> AudioEngine::list_audio_apps() {
                         if (p != pid) continue;
                         info.path = full;
                         const auto slash = full.find_last_of("\\/");
-                        info.name = slash != std::string::npos ? full.substr(slash + 1) : full;
+                        info.name =
+                            slash != std::string::npos ? full.substr(slash + 1) : full;
                         break;
                     }
                     if (info.name.empty()) info.name = "pid " + std::to_string(pid);
@@ -289,7 +283,13 @@ std::vector<AudioEngine::AudioAppInfo> AudioEngine::list_audio_apps() {
         }
         control->Release();
     }
-    release_all();
+            if (sessions != nullptr) sessions->Release();
+            if (manager != nullptr) manager->Release();
+            device->Release();
+        }
+    }
+    collection->Release();
+    enumerator->Release();
     return apps;
 }
 

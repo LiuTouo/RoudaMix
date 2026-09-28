@@ -140,7 +140,8 @@ render 裝置,`list_render_devices` 列 endpoints)。每軌一條 VST 鏈
 此操作允許短暫旁通，不保證無縫音訊切換。
 
 `list_render_devices` 列出 WASAPI render endpoints，供串流軌選擇裝置。
-`list_audio_apps` 列出預設 render 裝置的 active audio sessions；名稱採 exe basename，
+`list_audio_apps` 列出所有 active render endpoints(含非預設裝置)的 active audio
+sessions；名稱採 exe basename，
 完整路徑用於辨識同名程序。app 軌 needsRebind(pid 0)時，UI 以此清單讓使用者選擇，
 不得依程序名稱猜 PID。
 

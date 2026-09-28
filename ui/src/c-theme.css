@@ -11,7 +11,7 @@ html[data-ui-style="c"] {
 }
 /* 共用元件語彙。選取狀態與原有語意色不併入裝飾色。 */
 html[data-ui-style="c"][data-ui-style] body { background: var(--bg); }
-html[data-ui-style="c"][data-ui-style] :is(.strip, .bar, .settingsdlg, .plugin-picker, .dirtydlg) {
+html[data-ui-style="c"][data-ui-style] :is(.strip, .bar, .capsule, .settingsdlg, .plugin-picker, .dirtydlg) {
   background: var(--proto-panel); border-color: var(--border); box-shadow: var(--proto-surface-shadow);
 }
 html[data-ui-style="c"][data-ui-style] :is(.strip, .settingsdlg, .plugin-picker, .dirtydlg) {

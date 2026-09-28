@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { fly } from "svelte/transition";
   import { open, save } from "@tauri-apps/plugin-dialog";
   import {
     disable as disableAutostart,
@@ -22,6 +23,7 @@
     type RevisionDirtyState,
   } from "./lib/revisionDirty";
   import { applyStatus, type AuthoritativeStatusPayload } from "./lib/applyStatus";
+  import { capsuleItems, type CapsuleItem } from "./lib/capsules";
   import { indexByTrackId } from "./lib/tracks";
   import {
     initialDeviceStream,
@@ -104,7 +106,11 @@
   let autostartBusy = $state(false);
   let startMinimizedBusy = $state(false);
   let folderFiles = $state<string[]>([]);
-  const audioStale = $derived(deviceStream.stale); // 應該在跑但沒跑(啟動失敗)→ 頂欄極簡警示
+  const audioStale = $derived(deviceStream.stale); // 應該在跑但沒跑(啟動失敗)→ 膠囊警示
+  let audioStaleDismissed = $state(false); // 膠囊 × 關閉;stale 解除後重置(下次失效再現)
+  $effect(() => {
+    if (!audioStale) audioStaleDismissed = false;
+  });
   let ensuredDefaults = false; // 首次連線確保有系統輸出;engine 端保保證唯一
   const mutations = new MutationQueue((key, error, tag) => {
     if (key === mutKey.device && tag !== "auto-start") showNotice(error);
@@ -143,6 +149,21 @@
     notices = notices.filter((n) => n.id !== id);
     dismissed?.onDismiss?.();
   }
+  function copyNoticeText(msg: string, raw?: string): void {
+    void copyText(`${msg}\n${raw ?? ""}`).then((ok) =>
+      addNotice("info", ok ? "已複製到剪貼簿" : "複製失敗(剪貼簿不可用)"),
+    );
+  }
+  // ---- 膠囊通知:iPhone 式頂端滑入(純資料由 lib/capsules.ts 產生) ----
+  function onCapsuleAction(c: CapsuleItem): void {
+    if (c.action === "dismiss" && c.noticeId !== undefined) dismissNotice(c.noticeId);
+    else if (c.action === "openSettings") settingsOpen = true;
+    else if (c.action === "collapse") missing = [];
+  }
+  function onCapsuleClose(c: CapsuleItem): void {
+    if (c.key === "audioStale") audioStaleDismissed = true;
+    else if (c.key === "restoreError") restoreError = "";
+  }
   function observeLatencyRuntime(tracks: Track[]): void {
     revisionDirty = transitionRevisionDirty(revisionDirty, { type: "runtimeObserved" });
     if (!latencyEnabled) return;
@@ -177,11 +198,6 @@
     } catch {
       return false;
     }
-  }
-  function copyNotice(n: Notice): void {
-    void copyText(`${n.msg}\n${n.raw ?? ""}`).then((ok) =>
-      addNotice("info", ok ? "已複製到剪貼簿" : "複製失敗(剪貼簿不可用)"),
-    );
   }
   // ---- J:callback load 持續過載警示(單次尖峰不洗版)----
   const overload = new OverloadDetector(1.0, 6, 12); // ~0.13s 連續超載起算、~0.27s 正常解除
@@ -420,7 +436,7 @@
     // 否則音量條右鍵會彈網頁選單。排除式選擇器與 c-theme.css 同款。
     const onCtx = (e: MouseEvent) => {
       const t = e.target as HTMLElement;
-      if (t.closest?.(".err, .notice-msg, .apppath, .dirpath, input:not([type='range'], [type='checkbox'], [type='color']), textarea")) return;
+      if (t.closest?.(".err, .apppath, .dirpath, input:not([type='range'], [type='checkbox'], [type='color']), textarea")) return;
       e.preventDefault();
     };
     window.addEventListener("contextmenu", onCtx);
@@ -1481,6 +1497,17 @@
   /** P1-L:連線顯示模型(細分 phase + tone;connPhase.ts 純函式) */
   const cv = $derived(connView(conn, connProbeErr));
   const selDev = $derived(devices.find((d) => d.deviceKey === selected) ?? null);
+  /** 膠囊通知 view-model(警示→通知,最新在下) */
+  const capsuleList = $derived(
+    capsuleItems({
+      notices,
+      audioStale,
+      audioStaleDismissed,
+      audioStaleDetail: notice,
+      restoreError,
+      missing,
+    }),
+  );
   // ASIO / plugin latency 單位 = samples;統一走 lib/format.samplesToMs(2 位小數)
 </script>
 
@@ -1514,46 +1541,9 @@
       ? `取消掃描${scanProgress ? ` ${scanProgress.done}/${scanProgress.total}` : ""}`
       : "掃描 VST"}</button
   >
-  {#if audioStale}
-    <button class="err aslink" onclick={() => (settingsOpen = true)} data-tooltip={`音訊啟動異常：${notice}`}
-      >音訊未啟動 — 詳情見設定</button
-    >
-  {/if}
-  {#if restoreError}
-    <button class="err aslink" onclick={() => (settingsOpen = true)} data-tooltip={`Session 恢復失敗：${restoreError}`}
-      >Session 恢復失敗,已開空白 — 詳情見設定</button
-    >
-  {/if}
-  {#if missing.length > 0}
-    <button
-      class="err aslink"
-      onclick={() => (missing = [])}
-      data-tooltip={`未載入的 plugin：\n${missing
-        .map((m) => `${m.trackName} [${m.index}] ${m.name || m.pluginPath}：${m.message}`)
-        .join("\n")}`}
-      >⚠ {missing.length} 個 plugin 無法載入(已保留 placeholder)— 點此收起</button
-    >
-  {/if}
   {#if dirty}
     <span class="dim" data-tooltip="目前 Session 有尚未儲存的變更。">● 未儲存</span>
   {/if}
-  <!-- P1-O:通知中心(最近數條;技術細節可複製) -->
-  {#each notices as n (n.id)}
-    <span class="notice" class:iserr={n.kind === "error"}>
-      <span class="notice-msg" data-tooltip={`詳細訊息：${n.raw ?? n.msg}`}>{n.msg}</span>
-      {#if n.raw}
-        <button class="settings" onclick={() => copyNotice(n)} data-tooltip="複製此通知的完整技術資訊至剪貼簿。">複製</button>
-      {/if}
-      {#if n.dismissible}
-        <button
-          class="settings"
-          onclick={() => dismissNotice(n.id)}
-          aria-label="關閉此通知"
-          data-tooltip="關閉此通知。"
-        >×</button>
-      {/if}
-    </span>
-  {/each}
   <span style="flex:1"></span>
   {#if running}
     <span class="dot ok"></span>
@@ -1596,6 +1586,30 @@
     >
   {/if}
 </header>
+
+<!-- P1-O→膠囊:iPhone 式頂端滑入通知;警示在前、通知在後,點擊本體執行動作 -->
+<div class="capsules">
+  {#each capsuleList as c (c.key)}
+    <div class="capsule" class:iserr={c.kind === "error"} transition:fly={{ y: -64, duration: 280 }}>
+      <button class="capsule-body" data-tooltip={c.tooltip} onclick={() => onCapsuleAction(c)}>{c.msg}</button>
+      {#if c.raw}
+        <button
+          class="capsule-btn"
+          onclick={() => copyNoticeText(c.msg, c.raw)}
+          data-tooltip="複製此通知的完整技術資訊至剪貼簿。"
+        >複製</button>
+      {/if}
+      {#if c.closable}
+        <button
+          class="capsule-btn"
+          aria-label="關閉此警示"
+          data-tooltip="關閉此警示；狀態恢復後再次失效時會重新出現。"
+          onclick={() => onCapsuleClose(c)}
+        >×</button>
+      {/if}
+    </div>
+  {/each}
+</div>
 
 <main>
   <!-- 單一水平帶:輸入群組(左)→ 輸出群組(右),都往右長;超出寬度橫向卷動(shift+滾輪原生) -->
@@ -2009,14 +2023,6 @@
     padding: 2px 8px;
     font-size: 12px;
   }
-  .aslink {
-    background: none;
-    border: none;
-    padding: 2px 0;
-    cursor: pointer;
-    text-decoration: underline;
-    text-underline-offset: 3px;
-  }
   .settingsdlg {
     background: var(--bg-panel);
     color: var(--text);
@@ -2268,23 +2274,62 @@
   .startinfo {
     font-size: 11px;
   }
-  /* P1-O:頂欄通知 */
-  .notice {
-    display: inline-flex;
+  /* P1-O→膠囊:iPhone 式頂端滑入通知(容器不攔點擊,膠囊本體攔) */
+  .capsules {
+    position: fixed;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    z-index: 70; /* 內容之上;低於 latency drawer(80)與 dialog top layer */
+    pointer-events: none;
+  }
+  .capsule {
+    pointer-events: auto;
+    display: flex;
     align-items: center;
     gap: 4px;
-    max-width: 340px;
+    max-width: min(480px, 90vw);
+    padding: 5px 14px;
+    border-radius: 999px;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    box-shadow: 0 4px 16px rgb(0 0 0 / 0.3);
   }
-  .notice-msg {
+  .capsule.iserr {
+    border-color: color-mix(in srgb, var(--warn) 45%, var(--border));
+  }
+  .capsule-body {
+    flex: 0 1 auto;
+    min-width: 0;
+    background: none;
+    border: none;
+    padding: 0;
     font-size: 12px;
     color: var(--text);
+    cursor: pointer;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    user-select: text; /* P1-O:錯誤文字可選取複製 */
   }
-  .notice.iserr .notice-msg {
+  .capsule.iserr .capsule-body {
     color: var(--warn);
+  }
+  .capsule-btn {
+    flex: none;
+    background: none;
+    border: none;
+    padding: 2px 6px;
+    font-size: 12px;
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+  .capsule-btn:hover {
+    color: var(--text);
+    border: none;
   }
   .dot.err {
     background: var(--err);
