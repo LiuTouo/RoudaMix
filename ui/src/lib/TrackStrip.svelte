@@ -476,6 +476,24 @@
     );
   }
 
+  // 全軌 bypass:只作用於非 placeholder 插件;全部已 bypass → 全開,否則全關。
+  const rackPlugins = $derived(track.plugins.filter((s) => !isPh(s)));
+  const allBypassed = $derived(rackPlugins.length > 0 && rackPlugins.every((s) => s.bypassed));
+
+  function bypassAll() {
+    const target = !allBypassed;
+    err = "";
+    for (const slot of rackPlugins) {
+      if (slot.bypassed === target) continue;
+      mq.run(mutKey.plugin(slot.instanceId), "bypass", () =>
+        engineCommand("set_bypass", {
+          instanceId: slot.instanceId,
+          bypassed: target,
+        }),
+      );
+    }
+  }
+
   async function monitorBypass(slot: RackSlot) {
     const request = beginMonitorBypass(
       monitorBypassState,
@@ -1014,6 +1032,26 @@
 
   <div class="lower">
   <div class="vstcol">
+  <!-- 標題列在機架盒子外(正上方);右鍵仍可開機架選單(button 已在 rackMenu 內過濾)。 -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="vsthead" oncontextmenu={rackMenu}>
+    <button
+      class="mini mute rack-b"
+      class:on={allBypassed}
+      disabled={rackPlugins.length === 0}
+      aria-pressed={allBypassed}
+      aria-label={allBypassed
+        ? `恢復 ${track.name} 全部 plugin(目前全軌 bypass 中)`
+        : `Bypass ${track.name} 全部 plugin`}
+      onclick={bypassAll}
+      data-tooltip={allBypassed
+        ? "此軌全部 plugin 目前皆為 bypass；按下可全部恢復處理。"
+        : "將此軌所有 plugin 一次切為 bypass；再按一次全部恢復。"}
+      >B</button
+    >
+    <span>VST 機架 ({track.plugins.length})</span>
+    {#if $pluginTransfer.busy}<span class="dim" role="status">處理中…</span>{/if}
+  </div>
   <!-- 機架是可聚焦的右鍵選單入口，保留 group 語意及內部控制項。 -->
   <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
   <div class="vst" bind:this={vstBox} style={boxH !== null ? `flex:0 0 auto; height:${boxH}px` : ""}
@@ -1023,10 +1061,6 @@
     class:emptydrop={plugDropAt === 0 && track.plugins.length === 0}
     oncontextmenu={rackMenu} onkeydown={(e) => pluginMenuKey(e)}
     ondragover={onPlugDragOver} ondragleave={onPlugDragLeave} ondrop={onPlugDrop}>
-    <div class="vsthead">
-      <span>VST 機架 ({track.plugins.length})</span>
-      {#if $pluginTransfer.busy}<span class="dim" role="status">處理中…</span>{/if}
-    </div>
     <div class="vstlist" role="list" aria-label={`${track.name} 的插件順序`}>
       {#each track.plugins as s, i (s.instanceId)}
         <!-- 可聚焦的插件選單入口，同時維持 listitem 語意。 -->
@@ -1439,15 +1473,14 @@
     border-radius: 6px;
     overflow: hidden;
   }
+  /* 標題列已移到盒子外:不再需要盒內頭部的底色/分隔線 */
   .vsthead {
     flex: none;
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 4px 8px;
+    padding: 0 1px 2px;
     color: var(--text-dim);
-    background: var(--bg-raised);
-    border-bottom: 1px solid var(--border);
     user-select: none;
   }
   .vstlist {
