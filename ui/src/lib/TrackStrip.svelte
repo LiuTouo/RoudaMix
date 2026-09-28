@@ -1004,7 +1004,7 @@
   </div>
 
   {#if sysOuts.length > 0}
-    <div class="row destination-row">
+    <div class="row destination-row routing-row">
       <span class="lbl">系統輸出</span>
       {#each sysOuts as sys (sys.trackId)}
         <label class="sys-dest">
@@ -1017,10 +1017,8 @@
         </label>
       {/each}
     </div>
-  {/if}
-
-  {#if track.kind === "fx"}
-    <div class="row destination-row" data-tooltip="側鏈:來源軌訊號只進此軌插件的 aux input,不進混音">
+  {:else if track.kind === "fx"}
+    <div class="row destination-row routing-row" data-tooltip="側鏈:來源軌訊號只進此軌插件的 aux input,不進混音">
       <span class="lbl">側鏈來源</span>
       <DestinationSelect trackId={track.trackId} trackName={track.name}
         options={sidechainCandidates(tracks)} selected={shownSidechain}
@@ -1028,6 +1026,8 @@
         label="側鏈來源" panelSuffix="sidechain"
         emptyText="沒有可作為側鏈來源的輸入軌。" />
     </div>
+  {:else}
+    <div class="row routing-row" aria-hidden="true"></div>
   {/if}
 
   <div class="lower">
@@ -1356,11 +1356,12 @@
     box-shadow: inset -3px 0 0 0 var(--accent) !important;
   }
   .head {
+    flex: 0 0 22px;
     display: flex;
     align-items: center;
     gap: 6px;
     min-width: 0;
-    min-height: 20px;
+    min-height: 22px;
   }
   /* 名稱+識別色色塊(底部,通欄):霧面底色 + 可點換色 + 可點改名 */
   .colorbar {
@@ -1436,10 +1437,17 @@
     padding: 0 4px;
   }
   .row {
+    /* 各類音軌共用 Audio 軌的列高，讓下方推桿與機架起點一致。 */
+    flex: 0 0 24px;
+    min-height: 24px;
     display: flex;
     align-items: center;
     gap: 6px;
     min-width: 0;
+  }
+  .routing-row {
+    flex-basis: 32px;
+    min-height: 32px;
   }
   .row select {
     flex: 1;
