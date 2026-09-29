@@ -1496,6 +1496,7 @@
   const running = $derived(status?.running ?? false);
   /** P1-L:連線顯示模型(細分 phase + tone;connPhase.ts 純函式) */
   const cv = $derived(connView(conn, connProbeErr));
+  const connTip = $derived(cv.detail ? `連線診斷：${cv.detail}` : `引擎連線狀態：${cv.label}`);
   const selDev = $derived(devices.find((d) => d.deviceKey === selected) ?? null);
   /** 膠囊通知 view-model(警示→通知,最新在下) */
   const capsuleList = $derived(
@@ -1513,8 +1514,8 @@
 
 <header class="bar">
   <!-- P1-L:連線細分狀態(spawning/connected/spawn_failed/version mismatch…)+ retry -->
-  <span class="dot" class:ok={cv.tone === "ok"} class:err={cv.tone === "err"}></span>
-  <span data-tooltip={cv.detail ? `連線診斷：${cv.detail}` : `引擎連線狀態：${cv.label}`}>{cv.label}</span>
+  <span class="dot" class:ok={cv.tone === "ok"} class:err={cv.tone === "err"} data-tooltip={connTip}></span>
+  <span data-tooltip={connTip}>{cv.label}</span>
   {#if cv.phase === "spawn_failed" || cv.phase === "version_mismatch" || cv.phase === "disconnected"}
     <button class="settings" onclick={() => void respawnEngine()}>重試連線</button>
   {/if}

@@ -5,7 +5,7 @@ import { classifyConnError, connView, needsActiveSnapshot, epochChanged } from "
 
 test("connView:五個 phase 標籤 + tone", () => {
   const base = { connected: false, epoch: 0, engineVersion: "" };
-  assert.equal(connView({ ...base, phase: "connected", connected: true }).label, "已連線");
+  assert.equal(connView({ ...base, phase: "connected", connected: true }).label, "就緒");
   assert.equal(connView({ ...base, phase: "connected", connected: true }).tone, "ok");
   assert.equal(connView({ ...base, phase: "spawning" }).label, "引擎啟動中…");
   assert.equal(connView({ ...base, phase: "spawn_failed", detail: "exe not found" }).tone, "err");

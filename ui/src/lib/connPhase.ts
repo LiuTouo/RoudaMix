@@ -27,7 +27,7 @@ export interface ConnView {
 const LABELS: Record<ConnPhase, string> = {
   connecting: "連線中…",
   spawning: "引擎啟動中…",
-  connected: "已連線",
+  connected: "就緒",
   spawn_failed: "引擎啟動失敗",
   disconnected: "已斷線 — 引擎仍在背景執行,重試連線中",
   version_mismatch: "引擎協議版本不符",
