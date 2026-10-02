@@ -36,6 +36,36 @@ template<class F> void eventually(F f, const std::source_location where = std::s
         fake_wasapi::peak(L"master"), fake_wasapi::peak(L"speaker"));
     CHECK(f());
 }
+// 等待 crossfade 結束後的穩態峰值再驗證。monitor crossfade(960 samples 的 RT
+// 進度)與 PDC delay line 過渡會產生一次性中間值暫態(lerp 穿過 ring 內的非
+// 均勻區段),屬設計內防爆音行為;但 peak() 是自上次 clear 的歷史最大值,
+// 暫態會永久卡在窗口裡。且牆鐘 Sleep(100) 無法保證 RT 已消化這些樣本 ——
+// CI runner 的 timer 粒度(15.6ms)讓 fake pump 每圈 ≈15.6ms,100ms 僅推進
+// ~820 frames。改成:等限期內峰值進入 (lo,hi),清樣本後開新視窗再驗一次;
+// 暫態未過就定期清樣本重試,與 RT 節奏完全脫鉤。
+static void steady_peak(const wchar_t* endpoint, float lo, float hi,
+                        const std::source_location where = std::source_location::current()) {
+    auto in_range = [&] {
+        const float p = fake_wasapi::peak(endpoint);
+        return p > lo && p < hi;
+    };
+    for (int i = 0; i < 600; ++i) {
+        if (in_range()) {
+            fake_wasapi::clear_samples();
+            for (int j = 0; j < 100; ++j) {
+                if (in_range()) return;
+                Sleep(10);
+            }
+            // 新視窗又見暫態 → 繼續外圈等待
+        } else if (i % 30 == 29) {
+            fake_wasapi::clear_samples();  // 丟掉卡在窗口裡的一次性暫態
+        }
+        Sleep(10);
+    }
+    std::fprintf(stderr, "Steady peak not reached at line %u (%ls = %f, want (%f,%f))\n",
+        where.line(), endpoint, fake_wasapi::peak(endpoint), lo, hi);
+    std::exit(1);
+}
 static void restore_and_retry(const std::string& module) {
     Session s;
     const auto defaults = s.ok("ensure_system_outputs");
@@ -72,8 +102,7 @@ static void restore_and_retry(const std::string& module) {
         s.start(); Sleep(100); fake_wasapi::clear_samples();
         eventually([] { return fake_wasapi::peak(L"speaker") > .74F; });
         CHECK(fake_wasapi::peak(L"speaker") < .76F);
-        eventually([] { return fake_wasapi::peak(L"master") > .24F; });
-        CHECK(fake_wasapi::peak(L"master") < .26F); // bypass applies only to low-latency output
+        steady_peak(L"master", .24F, .26F); // bypass applies only to low-latency output
         const auto restored = s.status();
         for (const auto& track : restored["tracks"]) {
             if (track["systemRole"] == "monitor") CHECK(track["latencyPolicy"] == "lowLatency");
@@ -186,9 +215,7 @@ int main(int argc, char** argv) {
         s.start();
         const auto before = s.status()["pluginFails"];
         const auto plugin = s.ok("add_plugin", {{"trackId", fx}, {"path", argv[1]}})["instanceId"];
-        fake_wasapi::clear_samples();
-        eventually([] { return fake_wasapi::peak(L"master") > .74F; });
-        CHECK(fake_wasapi::peak(L"master") < .76F);
+        steady_peak(L"master", .74F, .76F);
         CHECK(s.status()["pluginFails"] == before);
         s.ok("track_set_output_latency_policy", {{"trackId", output}, {"policy", "lowLatency"}});
         s.ok("set_monitor_bypass", {{"instanceId", plugin}, {"bypassed", true}});
@@ -201,9 +228,7 @@ int main(int argc, char** argv) {
         s.ok("set_param", {{"instanceId", shadowed}, {"paramId", 100u}, {"value", 0.0}});
         s.ok("load_preset", {{"instanceId", shadowed}, {"path", preset.string()}});
         Sleep(100); // graph crossfade and restored plugin delay settle
-        fake_wasapi::clear_samples();
-        eventually([] { return fake_wasapi::peak(L"master") > .74F; });
-        CHECK(fake_wasapi::peak(L"master") < .76F);
+        steady_peak(L"master", .74F, .76F);
         CHECK(s.status()["pluginFails"] == before);
         s.ok("remove_plugin", {{"instanceId", shadowed}});
         std::filesystem::remove(preset);
