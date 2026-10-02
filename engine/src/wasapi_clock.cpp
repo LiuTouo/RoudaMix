@@ -18,9 +18,11 @@ namespace rmx {
 
 std::unique_ptr<WasapiClock> WasapiClock::create(IAudioCallback* cb,
                                                  std::optional<std::uint32_t> rate_hint,
-                                                 Failure& failure) {
-    auto* clock = new WasapiClock();
+                                                 Failure& failure,
+                                                 std::function<void()> on_fail) {
+    auto clock = std::unique_ptr<WasapiClock>(new WasapiClock());
     clock->callback_ = cb;
+    clock->on_fail_ = std::move(on_fail);
 
     // 系統預設輸出(eMultimedia;eCommunications 是通話裝置)
     IMMDeviceEnumerator* enumerator = nullptr;
@@ -36,7 +38,6 @@ std::unique_ptr<WasapiClock> WasapiClock::create(IAudioCallback* cb,
     if (enumerator != nullptr) enumerator->Release();
     if (device != nullptr) device->Release();
     if (FAILED(hr) || clock->audio_client_ == nullptr) {
-        delete clock;
         failure = Failure{Err::kDeviceOpenFailed,
                           "wasapi: default render device unavailable"};
         return nullptr;
@@ -45,8 +46,6 @@ std::unique_ptr<WasapiClock> WasapiClock::create(IAudioCallback* cb,
     IAudioClient* client = static_cast<IAudioClient*>(clock->audio_client_);
     WAVEFORMATEX* mix = nullptr;
     if (FAILED(client->GetMixFormat(&mix)) || mix == nullptr) {
-        client->Release();
-        delete clock;
         failure = Failure{Err::kDeviceOpenFailed, "wasapi: GetMixFormat failed"};
         return nullptr;
     }
@@ -58,8 +57,6 @@ std::unique_ptr<WasapiClock> WasapiClock::create(IAudioCallback* cb,
                               {0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}});
     if (!is_float || mix->wBitsPerSample != 32 || mix->nChannels < 1) {
         CoTaskMemFree(mix);
-        client->Release();
-        delete clock;
         failure = Failure{Err::kDeviceOpenFailed, "wasapi: device mix format not f32"};
         return nullptr;
     }
@@ -72,8 +69,6 @@ std::unique_ptr<WasapiClock> WasapiClock::create(IAudioCallback* cb,
                       "WASAPI shared mode runs at the device mix rate (%u Hz)",
                       clock->mix_rate_);
         CoTaskMemFree(mix);
-        client->Release();
-        delete clock;
         failure = Failure{Err::kDeviceOpenFailed, msg};
         return nullptr;
     }
@@ -82,44 +77,32 @@ std::unique_ptr<WasapiClock> WasapiClock::create(IAudioCallback* cb,
                                      200000, 0, mix, nullptr);
     CoTaskMemFree(mix);
     if (FAILED(ihr)) {
-        client->Release();
-        delete clock;
         failure = Failure{Err::kDeviceOpenFailed, "wasapi: Initialize failed"};
         return nullptr;
     }
     HANDLE ev = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    clock->event_ = ev;
     if (ev == nullptr || FAILED(client->SetEventHandle(ev))) {
-        if (ev != nullptr) CloseHandle(ev);
-        client->Release();
-        delete clock;
         failure = Failure{Err::kDeviceOpenFailed, "wasapi: SetEventHandle failed"};
         return nullptr;
     }
     if (FAILED(client->GetService(__uuidof(IAudioRenderClient),
                                   reinterpret_cast<void**>(&clock->render_client_))) ||
         clock->render_client_ == nullptr) {
-        CloseHandle(ev);
-        client->Release();
-        delete clock;
         failure = Failure{Err::kDeviceOpenFailed, "wasapi: GetService(IAudioRenderClient) failed"};
         return nullptr;
     }
     std::uint32_t buffer_frames = 0;
     if (FAILED(client->GetBufferSize(&buffer_frames)) || buffer_frames == 0) {
-        CloseHandle(ev);
-        client->Release();
-        delete clock;
         failure = Failure{Err::kDeviceOpenFailed, "wasapi: GetBufferSize failed"};
         return nullptr;
     }
-    clock->audio_client_ = client;  // 以下無失敗路徑:所有權移交 clock
-    clock->event_ = ev;
     clock->buffer_frames_ = buffer_frames;
     REFERENCE_TIME latency_hns = 0;
     if (SUCCEEDED(client->GetStreamLatency(&latency_hns)) && latency_hns > 0)
         clock->output_latency_ = static_cast<std::uint32_t>(
             latency_hns * clock->mix_rate_ / 10'000'000);
-    return std::unique_ptr<WasapiClock>(clock);
+    return clock;
 }
 
 WasapiClock::~WasapiClock() {
@@ -127,25 +110,35 @@ WasapiClock::~WasapiClock() {
 }
 
 bool WasapiClock::start(std::string& err) {
-    (void)err;
     auto* client = static_cast<IAudioClient*>(audio_client_);
     // callbacks_ 單調遞增(engine start 以 delta 驗 liveness,不可歸零)
-    if (client == nullptr) return false;
-    if (FAILED(client->Start())) return false;
+    if (client == nullptr) { err = "audio client unavailable"; return false; }
+    if (FAILED(client->Start())) { err = "audio device could not start"; return false; }
     running_.store(true, std::memory_order_release);
     pump_thread_ = std::thread([c = this] { c->pump(); });
     return true;
 }
 
 void WasapiClock::stop() noexcept {
-    if (!running_.exchange(false, std::memory_order_acq_rel)) return;
+    running_.store(false, std::memory_order_release);
+    if (event_ != nullptr) SetEvent(static_cast<HANDLE>(event_));
     if (pump_thread_.joinable()) pump_thread_.join();
+    if (render_client_ != nullptr) static_cast<IAudioRenderClient*>(render_client_)->Release();
+    if (audio_client_ != nullptr) {
+        auto* client = static_cast<IAudioClient*>(audio_client_);
+        client->Stop();  // also covers a thread-construction failure after Start
+        client->Release();
+    }
+    if (event_ != nullptr) CloseHandle(static_cast<HANDLE>(event_));
+    render_client_ = nullptr;
+    audio_client_ = nullptr;
+    event_ = nullptr;
 }
 
 // pump thread:事件驅動,padding 補幀;chunk ≤ kMaxBlockFrames 驅動 engine
 // callback(plugin block hint = GetBufferSize,實際 need 可變 — 呼叫端必須分塊,
-// 否則 GetBuffer 區域尾段沒人填)。COM 物件 main thread 建、本執行緒用與釋
-// (MTA;WASAPI 物件 free-threaded,跨 thread 持有安全 — RenderSink 慣例)。
+// 否則 GetBuffer 區域尾段沒人填)。COM 物件 main thread 建與釋放，pump 使用後
+// 由 stop() join，確保控制面釋放之前沒有仍在執行的 WASAPI 呼叫。
 void WasapiClock::pump() {
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     rt::boost(true);  // 本 thread 驅動 engine process,等同 RT callback
@@ -158,9 +151,12 @@ void WasapiClock::pump() {
     bool device_error = false;
 
     while (running_.load(std::memory_order_acquire)) {
-        if (WaitForSingleObject(ev, 500) != WAIT_OBJECT_0) continue;
+        const auto wait = WaitForSingleObject(ev, 500);
+        if (!running_.load(std::memory_order_acquire)) break;
+        if (wait != WAIT_OBJECT_0 && wait != WAIT_TIMEOUT) { device_error = true; break; }
         std::uint32_t padding = 0;
         if (FAILED(client->GetCurrentPadding(&padding))) { device_error = true; break; }
+        if (wait == WAIT_TIMEOUT) continue;  // invalidated devices may stop signalling events
         const std::uint32_t need = buffer_frames_ - padding;
         if (need == 0) continue;
         BYTE* dst = nullptr;
@@ -195,15 +191,13 @@ void WasapiClock::pump() {
     }
 
     client->Stop();
-    render->Release();
-    client->Release();
-    CloseHandle(ev);
-    audio_client_ = nullptr;
-    render_client_ = nullptr;
-    event_ = nullptr;
     CoUninitialize();
 
-    if (device_error) xruns_.fetch_add(1, std::memory_order_relaxed);
+    if (device_error && running_.exchange(false, std::memory_order_acq_rel)) {
+        xruns_.fetch_add(1, std::memory_order_relaxed);
+        failed_.store(true, std::memory_order_release);
+        if (on_fail_) on_fail_();
+    }
 }
 
 }  // namespace rmx

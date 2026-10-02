@@ -181,6 +181,7 @@ AudioEngine::AudioEngine() {
 AudioEngine::~AudioEngine() {
     exiting_.store(true, std::memory_order_release);
     if (publish_thread_.joinable()) publish_thread_.join();
+    stop();  // WASAPI callbacks must also finish before graphs and track members are freed
     device_.close();
     // thread 已收完(publish join、RT 隨 close 停)→ reader 必為 0,reap 全清
     delete rt_graph_.load(std::memory_order_relaxed);
@@ -452,6 +453,14 @@ std::vector<AudioEngine::CaptureDeviceInfo> AudioEngine::list_capture_devices() 
 
 // M5b/M5c:pump 失敗(main thread 經 callback 轉入 Router 臨界區)
 void AudioEngine::handle_track_failed(std::uint32_t track_id) {
+    // Track IDs start at 1; 0 carries master-clock failure through the same UI event path.
+    if (track_id == 0) {
+        if (clock_ != nullptr && clock_->failed()) {
+            stop();
+            stream_error_ = "WASAPI output device lost; reconnect the device and press Start";
+        }
+        return;
+    }
     TrackNode* t = find_track_mut(track_id);
     if (t == nullptr) return;
     if (t->capture != nullptr) {
@@ -477,6 +486,7 @@ std::optional<Failure> AudioEngine::start(const std::string& device_key,
                                           std::optional<std::uint32_t> buffer_size) {
     if (device_.running() || (clock_ != nullptr && clock_->running()))
         return failure(Err::kAlreadyRunning, "already running");
+    if (clock_ != nullptr) stop();  // join a failed pump before preparing another stream
     // 面板開著時 driver 不能重開(controlPanel 多為 modal,detach thread 還在裡面)
     if (panel_open_.load(std::memory_order_acquire) > 0)
         return failure(Err::kDeviceOpenFailed, "hardware panel is open; close it first");
@@ -490,7 +500,8 @@ std::optional<Failure> AudioEngine::start(const std::string& device_key,
         // M6:WASAPI master — 系統預設輸出當時脈 + 監聽。create 不 Start
         // (要先拿 block_size 初始化 plugin)
         Failure clock_failure{};
-        new_clock = WasapiClock::create(this, sample_rate, clock_failure);
+        new_clock = WasapiClock::create(this, sample_rate, clock_failure,
+            [notify = capture_failed_cb_] { if (notify) notify(0); });
         if (new_clock == nullptr)
             return failure(clock_failure.code, std::move(clock_failure.message));
         rate = new_clock->rate();
@@ -525,24 +536,17 @@ std::optional<Failure> AudioEngine::start(const std::string& device_key,
     // (不留背景 pump、不留 initialized 殘態、不留半開的 device/clock)
     struct StartRollback {
         AudioEngine* e;
-        std::unique_ptr<WasapiClock> clock;  // WASAPI master:成功才交出
         bool armed{true};
         ~StartRollback() {
             if (!armed) return;
-            e->stop_captures();
-            e->stop_mics();
-            e->stop_renders();
-            for (auto& t : e->tracks_)
-                for (auto& s : t.chain)
-                    if (s.plugin) {
-                        s.plugin->terminate();
-                        if (s.monitor_shadow) s.monitor_shadow->terminate();
-                    }
+            e->stop();  // join callbacks before terminating plugins and captures
             e->device_.close();
-            // clock 隨 guard 解構 = stop + join pump(未成功交出)
         }
     } rollback{this};
-    rollback.clock = std::move(new_clock);
+    {
+        std::lock_guard lock(clock_mutex_);
+        clock_ = std::move(new_clock);  // backend identity precedes the first graph
+    }
 
     // M5b/M5c/M6:app capture + mic capture + wasapi render 啟動(失敗 = 該軌
     // track_error,不擋 start;其他軌照跑)
@@ -597,20 +601,19 @@ std::optional<Failure> AudioEngine::start(const std::string& device_key,
 
     if (wasapi_master) {
         // liveness 同 ASIO 慣例:short 等待 + callback 必須前進(死流 = 明確失敗)
-        const std::uint64_t callbacks_before = rollback.clock->callbacks();
-        if (!rollback.clock->start(err))
+        const std::uint64_t callbacks_before = clock_->callbacks();
+        if (!clock_->start(err))
             return failure(Err::kDeviceOpenFailed,
                            std::string("wasapi start failed: ") + err);
         // liveness 輪詢:callback 一前進即過(20ms 步進,600ms 預算)。
         // Start 體感 600ms → ~1-2 個 buffer 週期;死流(600ms 內零 callback)
         // 維持原判失敗與錯誤訊息。
-        for (int i = 0; i < 30 && rollback.clock->callbacks() == callbacks_before; ++i)
+        for (int i = 0; i < 30 && clock_->callbacks() == callbacks_before; ++i)
             Sleep(20);
-        if (rollback.clock->callbacks() == callbacks_before)
+        if (clock_->callbacks() == callbacks_before || !clock_->running())
             return failure(Err::kDeviceOpenFailed,
                            "wasapi render stream did not deliver callbacks at " +
                                std::to_string(rate) + " Hz");
-        clock_ = std::move(rollback.clock);
     } else {
         const std::uint64_t callbacks_before = device_.callbacks();
         if (!device_.start(err))
@@ -627,6 +630,7 @@ std::optional<Failure> AudioEngine::start(const std::string& device_key,
                                " Hz; open hardware panel, set rate there, then Start again");
     }
     rollback.armed = false;
+    stream_error_.clear();
 
     rt_sample_rate_.store(rate, std::memory_order_relaxed);
     last_device_key_ = device_key;  // session 用:stop 後存檔仍記得裝置
@@ -698,6 +702,7 @@ std::optional<Failure> AudioEngine::start(const std::string& device_key,
                         ? g->strip_plan.table.data()
                         : nullptr;
                 const auto strip_count = g != nullptr ? g->strip_plan.table.size() : 0;
+                std::lock_guard lock(clock_mutex_);
                 meters_.publish(*shm_, stream_xruns(), strip_table, strip_count,
                                 plugin_ids, plugin_variants, plugin_count,
                                 stream_running());
@@ -708,9 +713,12 @@ std::optional<Failure> AudioEngine::start(const std::string& device_key,
 }
 
 void AudioEngine::stop() noexcept {
-    if (clock_ != nullptr) {
-        clock_->stop();  // join pump 在 retire_graph 之前(同 ASIO 順序)
-        clock_.reset();
+    {
+        std::lock_guard lock(clock_mutex_);
+        if (clock_ != nullptr) {
+            clock_->stop();  // join pump 在 retire_graph 之前(同 ASIO 順序)
+            clock_.reset();
+        }
     }
     device_.stop();
     // RT 停 callback 後退 graph、卸 plugin(下次 start 依新 rate 重建)
@@ -1407,10 +1415,11 @@ std::optional<Failure> AudioEngine::track_set_source(std::uint32_t track_id,
         stop_capture(*t);
         t->track_error.clear();
         // running 中即時啟動;失敗 = 命令失敗 + 回滾(未啟動 = start 時再試,軟失敗)
-        if (device_.running()) {
+        if (stream_running()) {
             const auto rate = rt_sample_rate_.load(std::memory_order_relaxed);
             if (auto fail = ensure_capture(*t, rate)) {
                 t->source = TrackSource{};
+                swap_graph();
                 return fail;  // 分類由產生失敗的層帶上(pump = unsupported_windows)
             }
         }
@@ -1435,10 +1444,11 @@ std::optional<Failure> AudioEngine::track_set_source(std::uint32_t track_id,
         stop_mic(*t);
         t->track_error.clear();
         // running 中即時啟動;失敗 = 命令失敗 + 回滾(未啟動 = start 時再試,軟失敗)
-        if (device_.running()) {
+        if (stream_running()) {
             const auto rate = rt_sample_rate_.load(std::memory_order_relaxed);
             if (auto fail = ensure_mic(*t, rate)) {
                 t->source = TrackSource{};
+                swap_graph();
                 return fail;  // 分類由產生失敗的層帶上(device_busy)
             }
         }
@@ -1465,6 +1475,7 @@ std::optional<Failure> AudioEngine::track_set_source(std::uint32_t track_id,
     t->source = source;
     t->track_error.clear();
     if (source.type != TrackSource::kApp) stop_capture(*t);
+    if (source.type != TrackSource::kWasapiIn) stop_mic(*t);
     // 跑著時新選的 ASIO pair 要重建裝置 buffer,否則 resolve 不到 = 靜音 + 死錶
     if (source.type == TrackSource::kAsioIn) {
         std::string rerr;
@@ -1682,10 +1693,11 @@ std::optional<Failure> AudioEngine::track_set_output(std::uint32_t track_id,
         t->output = output;
         t->track_error.clear();
         stop_render(*t);
-        if (device_.running()) {
+        if (stream_running()) {
             const auto rate = rt_sample_rate_.load(std::memory_order_relaxed);
             if (auto fail = ensure_render(*t, rate)) {
                 t->output = TrackOutput{};
+                swap_graph();
                 return fail;  // sink 已回報分類(device_busy)
             }
         }
@@ -1879,9 +1891,9 @@ std::optional<Failure> AudioEngine::add_plugin(std::uint32_t track_id, const std
     slot.plugin = std::make_shared<Vst3Plugin>(module_path, class_id);
     if (!slot.plugin->loaded())
         return failure(Err::kPluginLoadFailed, slot.plugin->last_error());
-    if (device_.running() &&
+    if (stream_running() &&
         !slot.plugin->initialize(static_cast<double>(rt_sample_rate_.load(std::memory_order_relaxed)),
-                                 device_.block_size()))
+                                 stream_block()))
         return failure(Err::kPluginLoadFailed, slot.plugin->last_error());
     slot.instance_id = next_instance_id_++;
     slot.module_path = module_path;
@@ -1946,9 +1958,9 @@ std::optional<Failure> AudioEngine::load_placeholder(std::uint32_t instance_id,
     auto plugin = std::make_shared<Vst3Plugin>(module_path, class_id);
     if (!plugin->loaded())
         return failure(Err::kPluginLoadFailed, plugin->last_error());
-    if (device_.running() &&
+    if (stream_running() &&
         !plugin->initialize(static_cast<double>(rt_sample_rate_.load(std::memory_order_relaxed)),
-                            device_.block_size()))
+                            stream_block()))
         return failure(Err::kPluginLoadFailed, plugin->last_error());
     s->plugin = std::move(plugin);
     s->module_path = module_path;
@@ -2173,10 +2185,10 @@ std::optional<Failure> AudioEngine::load_preset(std::uint32_t instance_id,
             s->monitor_state = RackSlot::RuntimeState::kActive;
             for (const auto& [id, value] : s->param_values)
                 s->monitor_shadow->set_param_normalized(id, value);
-            if (device_.running() &&
+            if (stream_running() &&
                 !pre_roll_shadow(*s->monitor_shadow, s->param_values,
                                  rt_sample_rate_.load(std::memory_order_relaxed),
-                                 device_.block_size(), shadow_err)) {
+                                 stream_block(), shadow_err)) {
                 err = "monitor shadow preset pre-roll failed: " + shadow_err;
                 ok = false;
             }
@@ -2304,6 +2316,8 @@ EngineStatusInfo AudioEngine::status() const {
     s.xruns = stream_xruns();
     s.track_count = static_cast<std::uint32_t>(tracks_.size());
     s.plugin_fails = rt_plugin_fails_.load(std::memory_order_relaxed);
+    s.error = clock_ != nullptr && clock_->failed()
+        ? "WASAPI output device lost; reconnect the device and press Start" : stream_error_;
     return s;
 }
 

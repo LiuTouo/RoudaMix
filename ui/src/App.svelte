@@ -379,6 +379,9 @@
       { scanRunning, devicesLoaded: devices.length > 0 },
     );
 
+    if (applied.deviceAccepted && applied.state.status?.error &&
+        applied.state.status.error !== status?.error)
+      addNotice("error", "音訊已停止，請確認輸出裝置後按 Start", applied.state.status.error, 0, true);
     status = applied.state.status;
     latencyEnabled = applied.state.pluginLatencyPdcSupported;
     scanModules = applied.state.scanModules;
@@ -1340,12 +1343,13 @@
     confirmRevisionBaseline(r.revision); // 載成功才清 dirty
     missing = (r.missing as MissingPlugin[]) ?? [];
     const dk = r.deviceKey as string | null;
-    if (dk && devices.some((d) => d.deviceKey === dk)) {
+    if (dk && (dk === WASAPI_DEVICE_KEY || devices.some((d) => d.deviceKey === dk))) {
       selected = dk;
       // session 的 buffer:合法值才套,否則 driver preferred
       const sb = r.bufferSize as number | null;
       const dev = devices.find((d) => d.deviceKey === dk);
-      if (sb && dev?.bufferSizes?.includes(sb)) bufSize = sb;
+      if (dk === WASAPI_DEVICE_KEY) bufSize = null;
+      else if (sb && dev?.bufferSizes?.includes(sb)) bufSize = sb;
       else if (dev) applyDeviceDefaults(dev);
       if (status?.running) queueRestart(dk);
       else start(dk);

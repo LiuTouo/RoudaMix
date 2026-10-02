@@ -346,6 +346,15 @@ if(MSVC)
 endif()
 add_test(NAME plugin_copy COMMAND plugin_copy_test $<TARGET_FILE:rmx_latency_fixture>)
 
+# Real engine/Router/pumps, deterministic Windows audio endpoints, no physical devices.
+add_executable(wasapi_runtime_test tests/wasapi_runtime_test.cpp tests/fake_wasapi.cpp ${RMX_COPY_TEST_SOURCES})
+target_include_directories(wasapi_runtime_test PRIVATE src tests "${CMAKE_CURRENT_BINARY_DIR}/generated")
+target_include_directories(wasapi_runtime_test SYSTEM PRIVATE third_party)
+target_link_libraries(wasapi_runtime_test PRIVATE asio_sdk vst3_sdk user32 ole32 gdi32 gdiplus dwmapi mmdevapi psapi)
+target_compile_options(wasapi_runtime_test PRIVATE /W4 /utf-8 /FI"${CMAKE_CURRENT_SOURCE_DIR}/tests/fake_wasapi.hpp")
+add_dependencies(wasapi_runtime_test rmx_latency_fixture roudamix-worker)
+add_test(NAME wasapi_runtime COMMAND wasapi_runtime_test $<TARGET_FILE:rmx_latency_fixture>)
+
 add_test(NAME worker_error_ui COMMAND powershell -NoProfile -ExecutionPolicy Bypass
     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/worker-error-ui.test.ps1"
     -WorkerPath $<TARGET_FILE:roudamix-worker>)

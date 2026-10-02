@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstring>
 #include <vector>
+#include <windows.h>
 
 namespace {
 
@@ -52,6 +53,8 @@ public:
     }
 
     tresult PLUGIN_API setupProcessing(ProcessSetup& setup) override {
+        if (GetEnvironmentVariableW(L"ROUDAMIX_TEST_REJECT_SETUP", nullptr, 0) != 0)
+            return kResultFalse;
         if (AudioEffect::setupProcessing(setup) != kResultOk || setup.maxSamplesPerBlock <= 0)
             return kResultFalse;
         const auto capacity = static_cast<std::size_t>(kMaxLatency) +

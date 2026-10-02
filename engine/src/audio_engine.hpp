@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
@@ -225,6 +226,8 @@ private:
 
     AsioDevice device_;
     std::unique_ptr<WasapiClock> clock_{nullptr};  // 非 null = WASAPI master mode
+    std::mutex clock_mutex_;  // control-plane lifetime changes vs telemetry reads; never RT
+    std::string stream_error_;
     MeterAccumulator meters_;
     TelemetryBlockShm* shm_{};
     HANDLE shm_mapping_{};

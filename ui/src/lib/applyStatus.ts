@@ -1,6 +1,7 @@
 import {
   initialDeviceStream,
   transitionDeviceStream,
+  WASAPI_DEVICE_KEY,
   type DeviceStreamConfig,
   type DeviceStreamState,
 } from "./deviceStream.ts";
@@ -63,7 +64,7 @@ export function applyStatus(
     payload.status.running && payload.status.deviceKey
       ? {
           deviceKey: payload.status.deviceKey,
-          bufferSize: payload.status.bufferSize,
+          bufferSize: payload.status.deviceKey === WASAPI_DEVICE_KEY ? null : payload.status.bufferSize,
         }
       : null;
   const stream = transitionDeviceStream(state.deviceStream, {

@@ -888,7 +888,6 @@
             : ""}
         onchange={(e) => setSource(e.currentTarget.value)}
         onfocus={loadCaptureDevices}
-        disabled={!dev && captureDevices.length === 0}
         data-tooltip="ASIO 輸入 pair 或系統麥克風(WASAPI capture);清單在點開時載入。"
       >
         <option value="">(無)</option>

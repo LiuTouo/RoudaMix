@@ -6,12 +6,13 @@
 // 監聽輸出 = 全部 kAsioOut 軌 bus_add 進本 clock 的 scratch(engine 側把
 // kAsioOut 解析到 {0,1},見 audio_engine.cpp commit_graph_candidate)。
 // ponytail: 不掛 IMMNotificationClient — 預設裝置被拔 = GetCurrentPadding/
-// GetBuffer 報錯,pump 錯誤路徑已覆蓋;xruns 只計 pump error(OS mixer 擁有
-// glitch,儀表恆 0 屬預期),要更細再說。
+// GetBuffer 報錯，事件停止時也會定期檢查 padding；失效通知控制面停止。
+// xruns 只計 pump error，OS mixer 的一般 glitch 不在此統計。
 #pragma once
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <thread>
 
@@ -28,11 +29,13 @@ public:
     // 失敗回 nullptr,failure = kDeviceOpenFailed + 原因
     static std::unique_ptr<WasapiClock> create(IAudioCallback* cb,
                                                std::optional<std::uint32_t> rate_hint,
-                                               Failure& failure);
+                                               Failure& failure,
+                                               std::function<void()> on_fail = {});
     ~WasapiClock();
     // Start + 起 pump thread;回 false = Start 失敗(err 帶原因)
     bool start(std::string& err);
-    void stop() noexcept;  // 停 pump(join);COM 於 pump thread 釋放
+    void stop() noexcept;  // always join, then release even if preparation/start failed
+    [[nodiscard]] bool failed() const noexcept { return failed_.load(std::memory_order_acquire); }
 
     [[nodiscard]] std::uint32_t block_size() const noexcept { return buffer_frames_; }
     [[nodiscard]] std::uint32_t rate() const noexcept { return mix_rate_; }
@@ -40,7 +43,7 @@ public:
     [[nodiscard]] std::uint64_t callbacks() const noexcept {
         return callbacks_.load(std::memory_order_relaxed);
     }
-    // ponytail: shared mode 下 OS mixer 擁有 glitch,此數只計 pump 錯誤 = 恆 0
+    // shared mode 下 OS mixer 擁有 glitch，此數只計 pump 錯誤。
     [[nodiscard]] std::uint64_t xruns() const noexcept {
         return xruns_.load(std::memory_order_relaxed);
     }
@@ -61,8 +64,10 @@ private:
     std::atomic<std::uint64_t> callbacks_{0};
     std::atomic<std::uint64_t> xruns_{0};
     std::atomic<bool> running_{false};
+    std::atomic<bool> failed_{false};
+    std::function<void()> on_fail_;  // posts to control thread; must not destroy this clock inline
     std::thread pump_thread_;
-    // pump thread 專屬(create 建好後移交,quit 時 pump 自己收;RenderSink 慣例)
+    // Prepared on control thread, used by pump, released by stop() after join.
     void* audio_client_{nullptr};   // IAudioClient*
     void* render_client_{nullptr};  // IAudioRenderClient*
     void* event_{nullptr};          // HANDLE
