@@ -1498,6 +1498,8 @@
   }
 
   const running = $derived(status?.running ?? false);
+  /** WASAPI master 模式沒有 ASIO 驅動面板 → 硬體面板按鈕停用 */
+  const wasapiMaster = $derived(running && status?.deviceKey === WASAPI_DEVICE_KEY);
   /** P1-L:連線顯示模型(細分 phase + tone;connPhase.ts 純函式) */
   const cv = $derived(connView(conn, connProbeErr));
   const connTip = $derived(cv.detail ? `連線診斷：${cv.detail}` : `引擎連線狀態：${cv.label}`);
@@ -1824,8 +1826,10 @@
     <div class="formrow">
       <button
         onclick={openDevicePanel}
-        disabled={!running}
-        data-tooltip="開啟 ASIO 驅動程式控制面板以調整硬體取樣率。Buffer 大小請使用 RoudaMix 的 Buffer 選單；面板關閉後會自動同步並重建音訊引擎。"
+        disabled={!running || wasapiMaster}
+        data-tooltip={wasapiMaster
+          ? "系統音訊（WASAPI）模式沒有 ASIO 驅動程式控制面板。"
+          : "開啟 ASIO 驅動程式控制面板以調整硬體取樣率。Buffer 大小請使用 RoudaMix 的 Buffer 選單；面板關閉後會自動同步並重建音訊引擎。"}
         >硬體面板</button
       >
       {#if panelOpen}
