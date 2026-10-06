@@ -54,6 +54,11 @@
     type ScanJobState,
   } from "./lib/scanJob";
   import {
+    register as registerShortcut,
+    unregister as unregisterShortcut,
+  } from "@tauri-apps/plugin-global-shortcut";
+  import { eventToShortcut } from "./lib/hotkey";
+  import {
     connectStatus,
     onConnection,
     onSnapshot,
@@ -622,7 +627,9 @@
     } catch (e) {
       connProbeErr = toCommandError(e); // version mismatch 等分類顯示(connView)
     }
-      settingsReady();
+      await settingsReady();
+      // 啟動:回復已綁定的監聽全域快捷鍵(註冊失敗只通知,不回改設定)
+      if (appSettings?.monitorHotkey) void applyMonitorHotkey(appSettings.monitorHotkey, null);
     })();
 
     // teardown:解除所有 Tauri listener(HMR/重掛不重複事件)
@@ -678,6 +685,7 @@
   type SettingsMutationTag =
     | "check-updates"
     | "close-behavior"
+    | "monitor-hotkey"
     | "preferences"
     | "last-session"
     | "last-working"
@@ -1451,6 +1459,83 @@
     startMinimizedBusy = false;
   }
 
+  // ---------- 監聽全域快捷鍵(設定 → 通用;切換監聽輸出軌靜音) ----------
+
+  let capturingHotkey = $state(false); // 設定頁擷取模式中
+
+  /** 捷徑觸發:切換監聽系統輸出軌靜音(與 M 按鈕同路徑;engine 權威 status 廣播回同步) */
+  function toggleMonitorMute() {
+    const monitor = status?.tracks.find((t) => t.systemRole === "monitor");
+    if (!monitor) {
+      addNotice("info", "監聽快捷鍵無效:音訊未啟動,沒有監聽輸出軌", undefined, 4000);
+      return;
+    }
+    mutations.run(mutKey.track(monitor.trackId), "mute", () =>
+      engineCommand("track_set", { trackId: monitor.trackId, mute: !monitor.mute }),
+    );
+  }
+
+  const monitorHotkeyHandler = (e: { state: "Pressed" | "Released" }) => {
+    if (e.state === "Pressed") toggleMonitorMute();
+  };
+
+  /** 註冊/更換/解除全域快捷鍵。回傳是否成功;失敗時嘗試回復舊鍵並通知。 */
+  async function applyMonitorHotkey(next: string | null, previous: string | null): Promise<boolean> {
+    try {
+      if (previous && previous !== next) await unregisterShortcut(previous).catch(() => {});
+      if (next) await registerShortcut(next, monitorHotkeyHandler);
+      return true;
+    } catch (err) {
+      if (previous && previous !== next) {
+        await registerShortcut(previous, monitorHotkeyHandler).catch(() => {});
+      }
+      addNotice("error", "全域快捷鍵註冊失敗(可能與其他程式的快捷鍵衝突)", errorText(err));
+      return false;
+    }
+  }
+
+  async function setMonitorHotkey(next: string | null) {
+    if (!appSettings) return;
+    const previous = appSettings.monitorHotkey ?? null;
+    if (previous === next) return;
+    appSettings.monitorHotkey = next;
+    const patch = { monitorHotkey: next };
+    const result = await writeSettings("monitor-hotkey", patch);
+    if (result.status !== "completed") {
+      appSettings.monitorHotkey = previous; // 存檔失敗:persisted 未變,只回復本地
+      if (result.status === "failed")
+        addNotice("error", "快捷鍵偏好儲存失敗", errorText(result.error));
+      return;
+    }
+    acceptSettingsReply(patch, result.value);
+    if (await applyMonitorHotkey(next, previous)) return;
+    // 註冊失敗(衝突):設定回復前值,避免「顯示已綁定但實際無效」
+    appSettings.monitorHotkey = previous;
+    const revert = { monitorHotkey: previous };
+    const r2 = await writeSettings("monitor-hotkey", revert);
+    if (r2.status === "completed") acceptSettingsReply(revert, r2.value);
+  }
+
+  // 擷取模式:capture phase 攔 keydown(擋住 Ctrl+S 等既有快捷鍵與瀏覽器預設行為)
+  $effect(() => {
+    if (!capturingHotkey) return;
+    const onKey = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === "Escape") {
+        capturingHotkey = false;
+        return;
+      }
+      const shortcut = eventToShortcut(e);
+      if (shortcut) {
+        capturingHotkey = false;
+        void setMonitorHotkey(shortcut);
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  });
+
   function openGeneral() {
     tab = "general";
     refreshFolderFiles().catch(() => {});
@@ -1908,6 +1993,24 @@
         <option value="tray">縮小到系統匣</option>
         <option value="exit">關閉程式</option>
       </select>
+    </div>
+    <h2>快捷鍵</h2>
+    <div class="formrow">
+      <span class="formlabel">監聽靜音(全域)</span>
+      {#if capturingHotkey}
+        <button class="primary" onclick={() => (capturingHotkey = false)}>按下快捷鍵…(點此或 Esc 取消)</button>
+      {:else}
+        <button
+          onclick={() => (capturingHotkey = true)}
+          data-tooltip="點擊後按下要綁定的組合鍵(需含 Ctrl/Alt/Win 修飾鍵,或為 F1–F24)。全域快捷鍵:RoudaMix 在背景時也能切換監聽靜音。"
+        >{appSettings?.monitorHotkey ?? "未設定"}</button>
+        {#if appSettings?.monitorHotkey}
+          <button
+            onclick={() => void setMonitorHotkey(null)}
+            data-tooltip="解除監聽靜音的全域快捷鍵綁定。"
+          >清除</button>
+        {/if}
+      {/if}
     </div>
     <h2>場景</h2>
     <div class="formrow">

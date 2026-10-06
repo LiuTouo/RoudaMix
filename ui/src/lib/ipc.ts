@@ -50,6 +50,8 @@ export type AppSettings = {
   /** 僅由 Windows 登入自動啟動時，讓主視窗保持在系統匣。 */
   startMinimizedOnAutostart: boolean;
   checkUpdatesOnStartup?: boolean;
+  /** 監聽系統輸出軌靜音的全域快捷鍵(Tauri Shortcut 字串,如 "Ctrl+Shift+M");null = 未綁定 */
+  monitorHotkey?: string | null;
 };
 
 /** get/set 的回覆:typed settings + 載入時的 normalize 警告(可呈現) */

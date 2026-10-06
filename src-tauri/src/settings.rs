@@ -51,6 +51,9 @@ pub struct Settings {
     /// 僅由 Windows 登入自動啟動時，讓主視窗保持隱藏並常駐系統匣。
     pub start_minimized_on_autostart: bool,
     pub check_updates_on_startup: bool,
+    /// 監聽系統輸出軌靜音的全域快捷鍵(Tauri Shortcut 字串,如 "Ctrl+Shift+M");
+    /// None = 未綁定。註冊與觸發由前端 global-shortcut plugin 處理。
+    pub monitor_hotkey: Option<String>,
 }
 
 impl Default for Settings {
@@ -66,6 +69,7 @@ impl Default for Settings {
             close_behavior: None,
             start_minimized_on_autostart: false,
             check_updates_on_startup: true,
+            monitor_hotkey: None,
         }
     }
 }
@@ -173,6 +177,12 @@ pub fn normalize(raw: Value) -> (Settings, Vec<String>) {
             "checkUpdatesOnStartup" => match v.as_bool() {
                 Some(value) => s.check_updates_on_startup = value,
                 None => warnings.push("settings.checkUpdatesOnStartup 型別錯誤,已回復預設 true".into()),
+            },
+            "monitorHotkey" => match opt_str(v) {
+                Ok(v) => s.monitor_hotkey = v,
+                Err(()) => {
+                    warnings.push("settings.monitorHotkey 型別錯誤,已回復預設(未綁定)".into())
+                }
             },
             _ => {} // 未知鍵:保留策略(merge 寫回)
         }
@@ -382,6 +392,23 @@ mod tests {
         assert_eq!(s.last_working_buffer, Some(256));
         assert!(s.start_minimized_on_autostart);
         assert!(w.is_empty());
+    }
+
+    #[test]
+    fn normalize_monitor_hotkey() {
+        let (s, w) = normalize(json!({"monitorHotkey": "Ctrl+Shift+M"}));
+        assert_eq!(s.monitor_hotkey.as_deref(), Some("Ctrl+Shift+M"));
+        assert!(w.is_empty());
+
+        // 未綁定(null)合法
+        let (s, w) = normalize(json!({"monitorHotkey": null}));
+        assert_eq!(s.monitor_hotkey, None);
+        assert!(w.is_empty());
+
+        // 型別錯 → 回預設 None + warning
+        let (s, w) = normalize(json!({"monitorHotkey": 42}));
+        assert_eq!(s.monitor_hotkey, None);
+        assert_eq!(w.len(), 1);
     }
 
     #[test]
