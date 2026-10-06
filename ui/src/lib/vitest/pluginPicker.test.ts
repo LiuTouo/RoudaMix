@@ -73,14 +73,20 @@ function grouping(value: string) {
   flushSync();
 }
 const rows = () => [...document.querySelectorAll<HTMLButtonElement>('[aria-label="插件搜尋結果"] li button')];
-const groupNames = () => [...document.querySelectorAll("section")].map((group) => group.getAttribute("aria-label"));
+const groupNames = () => [...document.querySelectorAll("section")].map((group) => group.getAttribute("aria-label")).filter(Boolean);
 const button = (text: string) => [...document.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.trim() === text)!;
 const status = () => document.querySelector('[role="status"]')?.textContent;
 
 describe("插件選擇器", () => {
-  it("開啟預設廠牌並聚焦搜尋，可切換功能分類且跨組只計一次", () => {
+  it("開啟預設依名稱排序不分組，切換廠牌與功能分類且跨組只計一次", () => {
     show();
-    expect(document.querySelector("select")?.value).toBe("vendor");
+    expect(document.querySelector("select")?.value).toBe("name");
+    expect(groupNames()).toEqual([]);
+    expect(status()).toBe("5 / 5 個插件");
+    expect(rows().map((row) => row.querySelector("strong")?.textContent)).toEqual(["Keys", "Mystery", "Room", "Tone 10", "Tone 10"]);
+    grouping("vendor");
+    expect(document.activeElement).toBe(document.querySelector('input[type="search"]'));
+    expect(document.querySelector("dialog")?.getAttribute("aria-label")).toContain("Stream");
     expect(groupNames()).toEqual(["Acme", "Echo", "未知廠牌"]);
     expect(rows()).toHaveLength(5);
     grouping("type");
@@ -272,7 +278,7 @@ it.each(["audio", "app", "fx", "output"] as const)("%s 軌道接線：正確目�
   flushSync();
   expect(document.querySelector('input[type="search"]')?.getAttribute("placeholder")).toContain("名稱");
   expect((document.querySelector('input[type="search"]') as HTMLInputElement).value).toBe("");
-  expect((document.querySelector("dialog.plugin-picker select") as HTMLSelectElement).value).toBe("vendor");
+  expect((document.querySelector("dialog.plugin-picker select") as HTMLSelectElement).value).toBe("name");
   document.querySelector<HTMLButtonElement>('[aria-label="關閉插件選擇器"]')!.click();
   flushSync();
   expect(document.activeElement).toBe(opener);

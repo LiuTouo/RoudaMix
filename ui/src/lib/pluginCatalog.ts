@@ -1,6 +1,6 @@
 import type { ScanModule } from "./types";
 
-export type PluginGrouping = "type" | "vendor";
+export type PluginGrouping = "name" | "type" | "vendor";
 export interface CatalogPlugin {
   key: string;
   path: string;
@@ -80,10 +80,11 @@ export function buildPluginCatalog(modules: ScanModule[]): CatalogPlugin[] {
   return catalog;
 }
 
-/** 對外結果以唯一 class 計數；多分類只增加組內呈現，不增加插件數。 */
+/** 對外結果以唯一 class 計數；多分類只增加組內呈現，不增加插件數。名稱模式不分組。 */
 export function browsePlugins(catalog: CatalogPlugin[], query: string, grouping: PluginGrouping) {
   const terms = normalize(query.trim()).split(/\s+/).filter(Boolean);
   const matches = catalog.filter((plugin) => terms.every((term) => plugin.searchText.includes(term)));
+  if (grouping === "name") return { count: matches.length, groups: [{ name: "", plugins: matches }] };
   const groups = new Map<string, PluginGroup>();
   for (const plugin of matches) {
     for (const name of grouping === "vendor" ? [plugin.vendor] : plugin.categories) {

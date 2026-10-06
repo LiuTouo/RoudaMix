@@ -24,7 +24,7 @@
   let dialog: HTMLDialogElement;
   let search: HTMLInputElement;
   let query = $state("");
-  let grouping = $state<PluginGrouping>("vendor");
+  let grouping = $state<PluginGrouping>("name");
   let pending = $state(false);
   let error = $state<FriendlyError | null>(null);
   let disposed = false;
@@ -73,6 +73,7 @@
     <label class="grouping-field">
       <span>分類方式</span>
       <select bind:value={grouping}>
+        <option value="name">名稱</option>
         <option value="vendor">廠牌</option>
         <option value="type">效果類型</option>
       </select>
@@ -106,8 +107,8 @@
       <p class="empty">找不到符合條件的插件，請更換關鍵字或清除搜尋。</p>
     {:else}
       {#each result.groups as group (group.name)}
-        <section aria-label={group.name}>
-          <h2>{group.name}<span>{group.plugins.length}</span></h2>
+        <section aria-label={group.name || undefined}>
+          {#if group.name}<h2>{group.name}<span>{group.plugins.length}</span></h2>{/if}
           <ul>
             {#each group.plugins as plugin (plugin.key)}
               <li>
@@ -167,12 +168,13 @@
   section + section { margin-top: 20px; }
   h2 { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 13px; color: var(--accent); }
   h2 span { color: var(--text-dim); font-size: 11px; font-weight: normal; }
-  ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
-  .plugin-row { width: 100%; display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1.2fr) auto; align-items: center; gap: 14px; text-align: left; padding: 11px 12px; }
-  .plugin-row > * { min-width: 0; overflow-wrap: anywhere; }
-  .identity { display: flex; flex-direction: column; gap: 4px; }
+  ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+  .plugin-row { width: 100%; display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1.2fr) auto; align-items: center; gap: 10px; text-align: left; padding: 5px 12px; }
+  .plugin-row > * { min-width: 0; }
+  .identity { display: flex; align-items: baseline; gap: 8px; white-space: nowrap; }
+  .identity strong, .identity .source { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   strong { font-size: 14px; font-weight: 600; }
-  .source { font-size: 11px; color: var(--text-dim); }
+  .source { flex: 0 1 auto; font-size: 11px; color: var(--text-dim); }
   .vendor { font-size: 12px; }
   .categories { display: flex; flex-wrap: wrap; gap: 4px; }
   .categories span { font-size: 11px; padding: 2px 6px; border: 1px solid var(--border); border-radius: 4px; }
