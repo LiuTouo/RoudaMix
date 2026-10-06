@@ -4,7 +4,7 @@ export class Resource {}
 export class Channel {}
 import type { MetersFrame, Snapshot, Track } from '../lib/types';
 import type { AppSettings } from '../lib/ipc';
-import { CATALOG_SIZES, currentCatalog, devices, initialStatus, setCatalogSize, slot } from './fixtures';
+import { CATALOG_SIZES, currentCatalog, DEFAULT_SIZE, devices, initialStatus, setCatalogSize, slot } from './fixtures';
 
 const handlers = new Map<string, Set<(event: { payload: any }) => void>>();
 const status = structuredClone(initialStatus);
@@ -16,7 +16,7 @@ let scanTimer: ReturnType<typeof setTimeout> | undefined;
 let nextTrack = 6;
 let nextPlugin = 106;
 let lastAction = '固定範例已載入；所有操作僅供預覽';
-let catalogSize = 200;
+let catalogSize = DEFAULT_SIZE;
 
 function emit(name: string, payload: unknown) {
   for (const handler of handlers.get(name) ?? []) handler({ payload: structuredClone(payload) });

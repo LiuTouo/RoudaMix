@@ -12,8 +12,7 @@ export default defineConfig(({ command, mode }) => {
     cacheDir: 'node_modules/.vite-prototype',
     server: { host: '127.0.0.1', port: 5188, strictPort: true },
     resolve: { alias: [
-      ...['api/core', 'api/event', 'api/window', 'api/app', 'plugin-dialog', 'plugin-autostart',
-        'plugin-updater', 'plugin-global-shortcut']
+      ...['api/core', 'api/event', 'api/window', 'plugin-dialog', 'plugin-autostart']
         .map((name) => ({ find: `@tauri-apps/${name}`, replacement: mock })),
     ] },
     plugins: [{

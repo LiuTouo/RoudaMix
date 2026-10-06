@@ -3,6 +3,7 @@
 import type { DeviceInfo, EngineStatus, RackSlot, ScanModule, Track } from '../lib/types';
 
 export const CATALOG_SIZES = [50, 200, 500] as const;
+export const DEFAULT_SIZE = 200;
 
 // mulberry32：小型可重現 PRNG，seed 相同 → 目錄相同。
 function prng(seed: number) {
@@ -58,17 +59,15 @@ function generateCatalog(): ScanModule[] {
       version: version ?? `${1 + Math.floor(random() * 3)}.${Math.floor(random() * 9)}.${Math.floor(random() * 5)}` }],
   });
 
-  // 邊界案例固定在最前面，任何規模都看得到：
-  modules.push(
-    entry('超長名稱的插件 — Studio Channel Strip Professional Edition', 'Studio', 'Fx|Channel Strip|EQ|Dynamics'),
-    entry('Utility', '', ''),                                            // 空廠牌＋未分類
-    entry('同名壓縮器', 'Signal Works', 'Fx|Dynamics'),                    // 同名＋同來源 → 顯示完整路徑
-    entry('同名壓縮器', 'Signal Works', 'Fx|Dynamics'),
-    entry('環繞寬化器', 'Orbital FX', 'Fx|Surround'),                     // SDK 類別 → Surround
-    entry('厅堂等化器 7.1', 'Nimbus Works', 'Fx|Surround|EQ'),            // 末端 Surround 僅描述聲道 → EQ
-    entry('No Version Reverb', 'Camel Valley', 'Fx|Reverb', ''),          // 版本未提供
-    entry('Analog Kitchen Drum Engine', 'Analog Kitchen', 'Instrument|Generator|Fx'),
-  );
+  // 邊界案例固定在最前面，任何規模都看得到（逐一 push：entry 以當下 length 編路徑與 uid）。
+  modules.push(entry('超長名稱的插件 — Studio Channel Strip Professional Edition', 'Studio', 'Fx|Channel Strip|EQ|Dynamics'));
+  modules.push(entry('Utility', '', ''));                                            // 空廠牌＋未分類
+  modules.push(entry('同名壓縮器', 'Signal Works', 'Fx|Dynamics'));                    // 同名＋同來源 → 顯示完整路徑
+  modules.push(entry('同名壓縮器', 'Signal Works', 'Fx|Dynamics'));
+  modules.push(entry('環繞寬化器', 'Orbital FX', 'Fx|Surround'));                     // SDK 類別 → Surround
+  modules.push(entry('厅堂等化器 7.1', 'Nimbus Works', 'Fx|Surround|EQ'));            // 末端 Surround 僅描述聲道 → EQ
+  modules.push(entry('No Version Reverb', 'Camel Valley', 'Fx|Reverb', ''));          // 版本未提供
+  modules.push(entry('Analog Kitchen Drum Engine', 'Analog Kitchen', 'Instrument|Generator|Fx'));
   // 同一 module 提供多個同名 class → 來源顯示「路徑 · classId」。
   const twin = modules.length + 1;
   modules.push({
@@ -89,7 +88,7 @@ function generateCatalog(): ScanModule[] {
 }
 
 const fullCatalog = generateCatalog();
-let catalogCache = fullCatalog;
+let catalogCache = fullCatalog.slice(0, DEFAULT_SIZE);
 
 /** 目前規模的模擬目錄（50/200/500 共用同一產生順序的前綴）。 */
 export function currentCatalog(): ScanModule[] {
