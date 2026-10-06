@@ -66,57 +66,54 @@ function search(text: string) {
   input.dispatchEvent(new Event("input", { bubbles: true }));
   flushSync();
 }
-function grouping(value: string) {
-  const select = document.querySelector<HTMLSelectElement>('[aria-label^="VST 插件列表"] select')!;
-  select.value = value;
-  select.dispatchEvent(new Event("change", { bubbles: true }));
-  flushSync();
-}
+const groups = () => [...document.querySelectorAll<HTMLDetailsElement>("details.plugin-group")];
+const groupNames = () => groups().map((group) => group.getAttribute("aria-label"));
 const rows = () => [...document.querySelectorAll<HTMLButtonElement>('[aria-label="插件搜尋結果"] li button')];
-const groupNames = () => [...document.querySelectorAll("section")].map((group) => group.getAttribute("aria-label")).filter(Boolean);
+const sortButton = (label: string) =>
+  [...document.querySelectorAll<HTMLButtonElement>(".plugin-thead button")]
+    .find((item) => item.getAttribute("aria-label")?.startsWith(label))!;
 const button = (text: string) => [...document.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.trim() === text)!;
 const status = () => document.querySelector('[role="status"]')?.textContent;
 
 describe("插件選擇器", () => {
-  it("開啟預設依名稱排序不分組，切換廠牌與功能分類且跨組只計一次", () => {
+  it("預設廠牌分組全收合，展開可見表格，類型排序套用於組內", () => {
     show();
-    expect(document.querySelector("select")?.value).toBe("name");
-    expect(groupNames()).toEqual([]);
-    expect(status()).toBe("5 / 5 個插件");
-    expect(rows().map((row) => row.querySelector("strong")?.textContent)).toEqual(["Keys", "Mystery", "Room", "Tone 10", "Tone 10"]);
-    grouping("vendor");
-    expect(document.activeElement).toBe(document.querySelector('input[type="search"]'));
-    expect(document.querySelector("dialog")?.getAttribute("aria-label")).toContain("Stream");
+    expect(document.querySelector("select")).toBeNull();
     expect(groupNames()).toEqual(["Acme", "Echo", "未知廠牌"]);
-    expect(rows()).toHaveLength(5);
-    grouping("type");
-    expect(document.activeElement).toBe(document.querySelector('input[type="search"]'));
-    expect(document.querySelector("dialog")?.getAttribute("aria-label")).toContain("Stream");
-    expect(groupNames()).toEqual(expect.arrayContaining(["EQ", "Dynamics", "Reverb", "樂器", "未分類"]));
-    expect(groupNames().at(-1)).toBe("未分類");
-    expect(groupNames()).not.toEqual(expect.arrayContaining(["Fx", "Stereo", "OnlyRT"]));
+    expect(groups().every((group) => !group.open)).toBe(true);
     expect(status()).toBe("5 / 5 個插件");
-    expect(rows()).toHaveLength(6);
-    expect(document.querySelector('section[aria-label="EQ"]')?.textContent).toContain("C:\\Other\\Studio.vst3");
-    expect(document.querySelector('section[aria-label="EQ"]')?.textContent).toContain("C:\\VST\\Studio.vst3");
+    groups()[0]!.open = true;
+    const acme = [...groups()[0]!.querySelectorAll("li button")];
+    expect(acme).toHaveLength(2);
+    // 同名衝突以完整路徑呈現來源
+    expect(acme.map((row) => row.querySelector(".source")?.textContent)).toEqual(["C:\\Other\\Studio.vst3", "C:\\VST\\Studio.vst3"]);
+    groups()[1]!.open = true;
+    const echoRows = () => [...groups()[1]!.querySelectorAll("li button")];
+    sortButton("依類型")!.click();
+    flushSync();
+    expect(sortButton("依類型")!.getAttribute("aria-label")).not.toContain("遞減");
+    const ascending = echoRows().map((row) => row.querySelector("strong")?.textContent);
+    sortButton("依類型")!.click();
+    flushSync();
+    expect(sortButton("依類型")!.getAttribute("aria-label")).toContain("遞減");
+    expect(echoRows().map((row) => row.querySelector("strong")?.textContent)).toEqual([...ascending].reverse());
     expect(document.querySelector("[title]")).toBeNull();
     expect(rows()[0].getAttribute("data-tooltip")).toContain("1.0");
   });
 
-  it("跨欄位、不分大小寫、多詞搜尋，切換廠牌保留查詢並清除", () => {
+  it("跨欄位、不分大小寫、多詞搜尋自動展開，清除後回到全收合", () => {
     show();
-    grouping("type");
     search("  tOnE   acME  eq  ");
     expect(status()).toBe("2 / 5 個插件");
-    expect(groupNames()).toEqual(["Dynamics", "EQ"]);
-    grouping("vendor");
     expect(groupNames()).toEqual(["Acme"]);
+    expect(groups()[0]!.open).toBe(true);
     expect(rows()).toHaveLength(2);
     expect(document.querySelector("input")?.value).toBe("  tOnE   acME  eq  ");
     button("清除搜尋").click();
     flushSync();
     expect(status()).toBe("5 / 5 個插件");
     expect(groupNames().at(-1)).toBe("未知廠牌");
+    expect(groups().every((group) => !group.open)).toBe(true);
     expect(document.activeElement).toBe(document.querySelector("input"));
     search("   ");
     expect(status()).toBe("5 / 5 個插件");
@@ -134,11 +131,9 @@ describe("插件選擇器", () => {
       plugin("a", "EQ 2", "Acme", "Fx"),
     ] }];
     show({ modules: [...list, ...list] });
-    grouping("type");
     expect(status()).toBe("2 / 2 個插件");
-    expect(groupNames()).toEqual(["未分類"]);
-    grouping("vendor");
     expect(groupNames()).toEqual(["Acme"]);
+    groups()[0]!.open = true;
     expect(rows().map((row) => row.querySelector("strong")?.textContent)).toEqual(["EQ 2", "EQ 10"]);
   });
 
@@ -208,11 +203,10 @@ describe("插件選擇器", () => {
     expect(document.querySelector("dialog")?.open).toBe(false);
   });
 
-  it("加入錯誤在視窗內顯示，保留搜尋及分類並可重試", async () => {
+  it("加入錯誤在視窗內顯示，保留搜尋及分組並可重試", async () => {
     const onPick = vi.fn().mockRejectedValueOnce({ code: "plugin_load_failed", message: "測試載入失敗" }).mockResolvedValueOnce({});
     const { props } = show({ onPick });
     search("room");
-    grouping("vendor");
     rows()[0].click();
     await tick();
     await vi.waitFor(() => expect(document.querySelector('[role="alert"]')?.textContent).toContain("測試載入失敗"));
@@ -265,7 +259,6 @@ it.each(["audio", "app", "fx", "output"] as const)("%s 軌道接線：正確目�
   opener.click();
   flushSync();
   search("room");
-  grouping("type");
   expect(command).not.toHaveBeenCalled();
   rows()[0].click();
   await tick();
@@ -278,7 +271,8 @@ it.each(["audio", "app", "fx", "output"] as const)("%s 軌道接線：正確目�
   flushSync();
   expect(document.querySelector('input[type="search"]')?.getAttribute("placeholder")).toContain("名稱");
   expect((document.querySelector('input[type="search"]') as HTMLInputElement).value).toBe("");
-  expect((document.querySelector("dialog.plugin-picker select") as HTMLSelectElement).value).toBe("name");
+  expect(groups().length).toBeGreaterThan(0);
+  expect(groups().every((group) => !group.open)).toBe(true);
   document.querySelector<HTMLButtonElement>('[aria-label="關閉插件選擇器"]')!.click();
   flushSync();
   expect(document.activeElement).toBe(opener);

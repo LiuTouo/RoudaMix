@@ -1,6 +1,5 @@
 import type { ScanModule } from "./types";
 
-export type PluginGrouping = "name" | "type" | "vendor";
 export interface CatalogPlugin {
   key: string;
   path: string;
@@ -80,22 +79,18 @@ export function buildPluginCatalog(modules: ScanModule[]): CatalogPlugin[] {
   return catalog;
 }
 
-/** 對外結果以唯一 class 計數；多分類只增加組內呈現，不增加插件數。名稱模式不分組。 */
-export function browsePlugins(catalog: CatalogPlugin[], query: string, grouping: PluginGrouping) {
+/** 對外結果以唯一 class 計數；固定以廠牌分組，未知廠牌墊底。 */
+export function browsePlugins(catalog: CatalogPlugin[], query: string) {
   const terms = normalize(query.trim()).split(/\s+/).filter(Boolean);
   const matches = catalog.filter((plugin) => terms.every((term) => plugin.searchText.includes(term)));
-  if (grouping === "name") return { count: matches.length, groups: [{ name: "", plugins: matches }] };
   const groups = new Map<string, PluginGroup>();
   for (const plugin of matches) {
-    for (const name of grouping === "vendor" ? [plugin.vendor] : plugin.categories) {
-      const key = normalize(name);
-      const group = groups.get(key) ?? { name, plugins: [] };
-      if (compare(name, group.name) < 0) group.name = name;
-      group.plugins.push(plugin);
-      groups.set(key, group);
-    }
+    const key = normalize(plugin.vendor);
+    const group = groups.get(key) ?? { name: plugin.vendor, plugins: [] };
+    group.plugins.push(plugin);
+    groups.set(key, group);
   }
-  const fallback = grouping === "vendor" ? "未知廠牌" : "未分類";
+  const fallback = "未知廠牌";
   return {
     count: matches.length,
     groups: [...groups.values()].sort((a, b) =>
