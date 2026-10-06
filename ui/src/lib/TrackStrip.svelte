@@ -701,6 +701,33 @@
   }
   let boxH = $state<number | null>(readH());
 
+  // 機架盒可拉上限 = 欄高扣掉標題列/把手等其他子元素與 flex gap(實測,不寫死)。
+  // 舊版只扣 -12(把手+間隙)漏了移到盒外的 .vsthead,拖到最底會溢出被 colorbar 蓋住。
+  function maxBoxH(col: HTMLElement, box: HTMLElement): number {
+    let others = 0;
+    let n = 0;
+    for (const el of col.children) {
+      n++;
+      if (el !== box) others += (el as HTMLElement).offsetHeight;
+    }
+    const gap = parseFloat(getComputedStyle(col).rowGap) || 0;
+    return col.clientHeight - others - gap * (n - 1);
+  }
+
+  // 舊 session 可能存過超過上限的高度:掛載量測後夾回,避免蓋住底部 colorbar。
+  $effect(() => {
+    const box = vstBox;
+    const col = box?.parentElement;
+    if (!box || !col || boxH === null) return;
+    const max = maxBoxH(col, box);
+    if (boxH > max) {
+      boxH = max;
+      try {
+        localStorage.setItem(hKey, String(max));
+      } catch {}
+    }
+  });
+
   function onGripDown(e: PointerEvent) {
     const box = vstBox;
     const col = box?.parentElement;
@@ -708,8 +735,8 @@
     e.preventDefault();
     const startY = e.clientY;
     const startH = box.offsetHeight;
+    const max = maxBoxH(col, box); // 拖曳期間欄高由 flex 固定,pointerdown 時取一次即可
     const move = (ev: PointerEvent) => {
-      const max = col.clientHeight - 12; // 扣把手 + 間隙
       boxH = Math.max(72, Math.min(startH + ev.clientY - startY, max));
     };
     const up = () => {
