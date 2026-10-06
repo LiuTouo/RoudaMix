@@ -126,6 +126,9 @@ public:
     // remove/析構前必呼
     void close_editor() noexcept;
     bool editor_open() const noexcept;               // view attached?
+    // attach 時 canResize():false = 固定版面插件,EditorHost 對它不餵 onSize、
+    // 視窗鎖定貼合原生尺寸(onSize 只會把插件背景拉開 = 死空間)
+    bool editor_can_resize() const noexcept;
     void editor_resize_view(int w, int h) noexcept;  // host WM_SIZE → view->onSize
 
 private:

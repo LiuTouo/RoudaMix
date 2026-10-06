@@ -340,6 +340,9 @@ struct Vst3Plugin::Impl {
     // 視窗本體由 EditorHost 持有(editor_host.cpp),這裡只管 view。
     EditComponentHandler* edit_handler{};  // 生命週期歸 handler(IPtr)持有
     IPtr<IPlugView> view;
+    // attach 時 canResize() 的快取:false = 固定版面插件 —— host 對它餵 onSize
+    // 只會把插件視窗/背景拉開(控制項留在原位),EditorHost 改鎖視窗貼合原生尺寸
+    bool can_resize{};
 
     ~Impl() {
         close_editor();
@@ -430,6 +433,7 @@ struct Vst3Plugin::Impl {
         }
         out_w = w;
         out_h = h;
+        can_resize = view->canResize() == kResultOk;
         view->setFrame(plug_frame);
         if (view->attached(parent, kPlatformTypeHWND) != kResultOk) {
             // 從未 attached:removed 不該呼叫
@@ -1074,6 +1078,10 @@ void Vst3Plugin::close_editor() noexcept {
 
 bool Vst3Plugin::editor_open() const noexcept {
     return impl_ && impl_->view != nullptr;
+}
+
+bool Vst3Plugin::editor_can_resize() const noexcept {
+    return impl_ && impl_->view != nullptr && impl_->can_resize;
 }
 
 void Vst3Plugin::editor_resize_view(int w, int h) noexcept {

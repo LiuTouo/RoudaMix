@@ -378,6 +378,7 @@ struct EditorHost::Impl {
     bool active = false;         // 視窗是否前景(標題文字亮度)
     std::wstring title;          // 自繪 caption 文字快取
     int last_view_w = -1, last_view_h = -1;  // 上次餵給 view 的 client 尺寸(擋回聲)
+    int fit_w = 0, fit_h = 0;    // active 插件 attach 回報的原生尺寸(固定版面 = 視窗貼合尺寸)
 
     ~Impl() {
         if (wnd != nullptr) DestroyWindow(wnd);  // WM_DESTROY 內 detach + 清欄位
@@ -474,12 +475,19 @@ struct EditorHost::Impl {
                    TRUE);  // CLIPCHILDREN:擦不到 plugin 區
         if (const auto* slot = find_slot(active_id); slot != nullptr && slot->plugin->editor_open()) {
             const int vh = ch - kCaptionH - sh;
-            // 只在 client 尺寸真的變了才餵 onSize:plugin 收 onSize 回 resizeView
-            // → host WM_SIZE → 又 onSize 的回聲迴圈(閃爍/暴衝)從這裡斷掉
-            if (cw != last_view_w || vh != last_view_h) {
-                last_view_w = cw;
-                last_view_h = vh;
-                slot->plugin->editor_resize_view(cw, vh);
+            if (slot->plugin->editor_can_resize()) {
+                // 只在 client 尺寸真的變了才餵 onSize:plugin 收 onSize 回 resizeView
+                // → host WM_SIZE → 又 onSize 的回聲迴圈(閃爍/暴衝)從這裡斷掉
+                if (cw != last_view_w || vh != last_view_h) {
+                    last_view_w = cw;
+                    last_view_h = vh;
+                    slot->plugin->editor_resize_view(cw, vh);
+                }
+            } else if (cw != fit_w || vh != fit_h) {
+                // 固定版面插件(canResize=false):onSize 只會把插件視窗背景拉開、
+                // 控制項留在原位 = 右側死空間。不餵,直接把窗貼回原生尺寸;
+                // SetWindowPos 同步觸發的 WM_SIZE 重入時尺寸已符 → 收斂無迴圈
+                resize_to_client(fit_w, fit_h);
             }
             center_editor_child();
         }
@@ -549,12 +557,16 @@ struct EditorHost::Impl {
         // 跨進程 owner 會接合兩邊 input queue,已移除,見檔頭註解)。
         // 去掉 WS_MAXIMIZEBOX:自繪 caption 不做最大化(NCCALCSIZE 移框後
         // 最大化要另處理工作區內縮,編輯器浮窗用不到)。
+        // 去掉 WS_SYSMENU:NCCALCSIZE 回 0 自繪 caption 後,DWM 對帶此樣式的
+        // 視窗**仍會**在右上角畫自己的最小化/關閉鈕,且 WM_SIZE 不重繪 caption
+        // 帶時舊位置的按鈕像素殘留累積 = 截圖中標題列一整排幽靈關閉鈕;從
+        // 樣式移除 = DWM 根本不畫。自繪關閉鈕/拖曳/邊緣縮放(THICKFRAME)不受影響。
         // WS_CLIPCHILDREN:parent 擦底/重繪剪掉子視窗範圍 = 不閃子視窗內容
         // (anti-flicker 標配)。**不帶 WS_VISIBLE**:建好→定尺寸→attach→
         // activate 一次顯示;開窗途中每步都是一次可見的組合變化 = 開窗閃爍。
         wnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, kHostClassName,
                               L"RoudaMix",
-                              (WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX) | WS_CLIPCHILDREN,
+                              (WS_OVERLAPPEDWINDOW & ~(WS_MAXIMIZEBOX | WS_SYSMENU)) | WS_CLIPCHILDREN,
                               CW_USEDEFAULT, CW_USEDEFAULT, 480, 360, nullptr,
                               nullptr, GetModuleHandleW(nullptr), this);
         if (wnd == nullptr) return false;
@@ -617,6 +629,8 @@ struct EditorHost::Impl {
         }
         active_id = id;
         last_view_w = last_view_h = -1;  // 新 view:強制首次 layout 餵 onSize
+        fit_w = w;
+        fit_h = h;
         if (std::find(opened_ids.begin(), opened_ids.end(), id) == opened_ids.end())
             opened_ids.push_back(id);
         resize_to_client(w, h);
@@ -906,7 +920,15 @@ LRESULT CALLBACK host_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
         break;
     }
     case WM_SIZE:
-        if (self != nullptr && wp != SIZE_MINIMIZED) self->layout_children();
+        if (self != nullptr && wp != SIZE_MINIMIZED) {
+            self->layout_children();
+            // resize 後重繪整條 caption:帶上任何殘留像素(如歷史遺跡)立即被
+            // WM_PAINT 的單趟 BitBlt 蓋掉,不隨尺寸變動累積
+            RECT rc{};
+            GetClientRect(h, &rc);
+            const RECT cap{0, 0, rc.right, kCaptionH};
+            InvalidateRect(h, &cap, FALSE);
+        }
         return 0;
     case WM_GETMINMAXINFO: {
         auto* mmi = reinterpret_cast<MINMAXINFO*>(lp);
@@ -916,6 +938,22 @@ LRESULT CALLBACK host_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
         AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
         mmi->ptMinTrackSize.x = rc.right - rc.left;
         mmi->ptMinTrackSize.y = rc.bottom - rc.top;
+        // 固定版面插件(canResize=false):上限 = 原生尺寸 + 現行帶高 → 使用者
+        // 拉不動,不出現死空間/被拉開的插件背景(可縮放插件不受限,照舊跟隨)。
+        // 上限不低於下限(max<min 時拖曳行為未定義)。建立途中 self 尚為 null → 略過
+        if (self != nullptr && self->wnd != nullptr) {
+            if (const auto* slot = self->find_slot(self->active_id);
+                slot != nullptr && slot->plugin->editor_open() &&
+                !slot->plugin->editor_can_resize()) {
+                self->layout_tabs(self->fit_w);
+                RECT fx{0, 0, self->fit_w, self->fit_h + kCaptionH + self->strip_h()};
+                AdjustWindowRect(&fx, WS_OVERLAPPEDWINDOW, FALSE);
+                mmi->ptMaxTrackSize.x = (std::max)(mmi->ptMinTrackSize.x,
+                                                   fx.right - fx.left);
+                mmi->ptMaxTrackSize.y = (std::max)(mmi->ptMinTrackSize.y,
+                                                   fx.bottom - fx.top);
+            }
+        }
         return 0;
     }
     case WM_ERASEBKGND:
