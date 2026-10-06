@@ -52,7 +52,8 @@ afterEach(async () => {
 function show(overrides: Partial<ComponentProps<typeof PluginPicker>> = {}) {
   const props = {
     trackName: "Stream", modules, onPick: vi.fn(async () => {}),
-    onClose: vi.fn(), onCancelScan: vi.fn(), ...overrides,
+    onClose: vi.fn(), onStartScan: vi.fn(async () => true),
+    onCancelScan: vi.fn(), ...overrides,
   };
   const component = mount(PluginPickerHarness, { target: document.body, props: { initial: props } });
   mounted.push(component);
@@ -153,6 +154,26 @@ describe("插件選擇器", () => {
     expect(document.querySelector("input")?.value).toBe("room");
   });
 
+  it("掃描按鈕在工具列：未連線停用、可掃描時開新掃描，掃描中永遠可取消", async () => {
+    const idle = show({ scanReady: true });
+    expect(button("掃描 VST").disabled).toBe(false);
+    button("掃描 VST").click();
+    expect(idle.props.onStartScan).toHaveBeenCalledOnce();
+    expect(idle.props.onCancelScan).not.toHaveBeenCalled();
+    await unmount(mounted.pop()!);
+
+    const offline = show({ scanReady: false });
+    expect(button("掃描 VST").disabled).toBe(true);
+    await unmount(mounted.pop()!);
+
+    const running = show({ scanReady: false, scanRunning: true, scanProgress: { done: 2, total: 9 } });
+    const cancel = button("取消掃描");
+    expect(cancel.disabled).toBe(false);
+    cancel.click();
+    expect(running.props.onCancelScan).toHaveBeenCalledOnce();
+    expect(running.props.onStartScan).not.toHaveBeenCalled();
+  });
+
   it("空清單與掃描中有不同提示，僅失敗項目也可查看隔離原因", () => {
     const { component } = show({ modules: [], failures: [{ path: "Broken.vst3", error: "bad module" }] });
     expect(document.body.textContent).toContain("尚無 VST 清單");
@@ -229,7 +250,7 @@ it.each(["audio", "app", "fx", "output"] as const)("%s 軌道接線：正確目�
   };
   const component = mount(TrackStrip, { target: document.body, props: {
     track, tracks: [track], devices: [], selectedDeviceKey: "", meterView: {},
-    scanModules: modules, onCancelScan: vi.fn(), openMenu: vi.fn(),
+    scanModules: modules, onStartScan: async () => true, onCancelScan: vi.fn(), openMenu: vi.fn(),
   } });
   mounted.push(component);
   flushSync();

@@ -11,7 +11,7 @@
 </script>
 {#each tracks as track (track.trackId)}
   <TrackStrip {track} {tracks} devices={[]} selectedDeviceKey="" metered={false}
-    pluginCopyEnabled={enabled} onCancelScan={() => {}}
+    pluginCopyEnabled={enabled} onStartScan={() => Promise.resolve(true)} onCancelScan={() => {}}
     openMenu={(x, y, label, items) => { menu = { x, y, label, items }; }} />
 {/each}
 <ContextMenu {menu} onClose={() => { menu = null; }} />

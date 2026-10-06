@@ -47,14 +47,18 @@ const stripProps = (latencyEnabled: boolean) => ({
   selectedDeviceKey: "",
   meterView: {},
   latencyEnabled,
+  onStartScan: async () => true,
   onCancelScan: () => {},
   openMenu: () => {},
 });
 
-test("App 對外渲染的掃描入口位於頂欄", () => {
+test("App 頂欄不再有掃描入口", () => {
   const body = render(App).body;
+  const headerEnd = body.indexOf("</header>");
 
-  assert.match(body, /<header[\s\S]*?<button[^>]*>掃描 VST<\/button>/);
+  assert.ok(headerEnd > 0, "App 應渲染頂欄");
+  assert.doesNotMatch(body.slice(0, headerEnd), />掃描 VST<\/button>/);
+  assert.doesNotMatch(body.slice(0, headerEnd), />取消掃描/);
 });
 
 test("膠囊通知層獨立於頂欄之外，警示不再擠在頂欄", () => {

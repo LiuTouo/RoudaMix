@@ -1537,17 +1537,6 @@
     >
   {/if}
   <button class="settings" onclick={() => (settingsOpen = true)}>設定</button>
-  <button
-    class="settings"
-    disabled={!conn.connected && !scanRunning}
-    onclick={() => (scanRunning ? void cancelScan() : void startScan())}
-    data-tooltip={scanRunning
-      ? "取消目前的背景 VST 掃描；取消後會保留掃描前的 plugin 清單。"
-      : "在背景掃描預設 VST3 目錄；未變更的 plugin 會沿用持久快取，不重新載入。"}
-    >{scanRunning
-      ? `取消掃描${scanProgress ? ` ${scanProgress.done}/${scanProgress.total}` : ""}`
-      : "掃描 VST"}</button
-  >
   {#if dirty}
     <span class="dim" data-tooltip="目前 Session 有尚未儲存的變更。">● 未儲存</span>
   {/if}
@@ -1659,6 +1648,8 @@
             scanRunning={scanRunning}
             scanProgress={scanProgress}
             scanNotice={scanNotice}
+            onStartScan={startScan}
+            scanReady={conn.connected}
             onCancelScan={cancelScan}
             {openMenu}
             dropBefore={dropAt?.group === "input" && dropAt.pos === i}
@@ -1729,6 +1720,8 @@
             scanRunning={scanRunning}
             scanProgress={scanProgress}
             scanNotice={scanNotice}
+            onStartScan={startScan}
+            scanReady={conn.connected}
             onCancelScan={cancelScan}
             {openMenu}
             dropBefore={dropAt?.group === "output" && dropAt.pos === i}

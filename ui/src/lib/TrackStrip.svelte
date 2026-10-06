@@ -61,6 +61,8 @@
     scanRunning = false,
     scanProgress = null,
     scanNotice = "",
+    onStartScan,
+    scanReady = false,
     onCancelScan,
     openMenu,
     dropBefore = false,
@@ -80,6 +82,8 @@
     scanRunning?: boolean;
     scanProgress?: { done: number; total: number } | null;
     scanNotice?: string;
+    onStartScan: () => Promise<boolean>;
+    scanReady?: boolean;
     onCancelScan: () => void;
     /** P2-M:請求右鍵選單(App 持有全域 ContextMenu;{x,y} + items) */
     openMenu: (x: number, y: number, label: string, items: Array<{ label: string; disabled?: boolean; run: () => void }>) => void;
@@ -1213,6 +1217,8 @@
       {scanRunning}
       {scanProgress}
       {scanNotice}
+      {onStartScan}
+      {scanReady}
       onPick={addPlugin}
       {onCancelScan}
       onClose={() => { pluginPickerOpen = false; }}

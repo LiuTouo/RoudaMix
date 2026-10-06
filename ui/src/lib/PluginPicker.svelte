@@ -6,7 +6,7 @@
 
   let {
     trackName, modules, failures = [], scanRunning = false, scanProgress = null,
-    scanNotice = "", onPick, onCancelScan, onClose,
+    scanNotice = "", onStartScan, scanReady = false, onPick, onCancelScan, onClose,
   }: {
     trackName: string;
     modules: ScanModule[];
@@ -14,6 +14,8 @@
     scanRunning?: boolean;
     scanProgress?: { done: number; total: number } | null;
     scanNotice?: string;
+    onStartScan: () => Promise<boolean>;
+    scanReady?: boolean;
     onPick: (path: string, classId: string) => Promise<unknown>;
     onCancelScan: () => void;
     onClose: () => void;
@@ -75,13 +77,19 @@
         <option value="type">效果類型</option>
       </select>
     </label>
+    {#if scanRunning}
+      <button class="scan" type="button" onclick={onCancelScan}
+        data-tooltip="取消目前的背景 VST 掃描；取消後會保留掃描前的 plugin 清單。">取消掃描</button>
+    {:else}
+      <button class="scan" type="button" disabled={!scanReady} onclick={() => void onStartScan()}
+        data-tooltip="在背景掃描預設 VST3 目錄；未變更的 plugin 會沿用持久快取，不重新載入。">掃描 VST</button>
+    {/if}
   </div>
   <div class="statusline">
     <span role="status">{result.count} / {catalog.length} 個插件</span>
     {#if pending}<span>正在加入插件…</span>{/if}
     {#if scanRunning}
       <span>背景掃描中{scanProgress ? ` ${scanProgress.done}/${scanProgress.total}` : "…"}</span>
-      <button type="button" onclick={onCancelScan}>取消掃描</button>
     {/if}
   </div>
   {#if error}
@@ -93,7 +101,7 @@
   {#if scanNotice}<p class="notice">{scanNotice}</p>{/if}
   <div class="results" aria-label="插件搜尋結果" aria-busy={pending}>
     {#if catalog.length === 0}
-      <p class="empty">{scanRunning ? "正在掃描 VST，完成後會顯示可加入的插件。" : "尚無 VST 清單 — 請按頂欄「掃描 VST」"}</p>
+      <p class="empty">{scanRunning ? "正在掃描 VST，完成後會顯示可加入的插件。" : "尚無 VST 清單 — 請按上方「掃描 VST」"}</p>
     {:else if result.count === 0}
       <p class="empty">找不到符合條件的插件，請更換關鍵字或清除搜尋。</p>
     {:else}
@@ -152,6 +160,7 @@
   .grouping-field { flex: 0 1 150px; min-width: 0; }
   input, select { box-sizing: border-box; min-width: 0; width: 100%; height: 36px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
   .clear { height: 36px; }
+  .scan { height: 36px; }
   .statusline { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-size: 12px; color: var(--text-dim); }
   .statusline > :first-child { margin-right: auto; }
   .results { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; }
