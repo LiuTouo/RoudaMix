@@ -78,6 +78,25 @@ it.each(["empty", "error"])("列舉結果為 %s 後仍可重新聚焦載入裝�
   expect([...input.options].map((option) => option.value)).toContain("mic:usb-mic");
 });
 
+it("無 ASIO 驅動時 asioIn 來源顯示說明選項而非空白", () => {
+  const track: Track = {
+    trackId: 42, kind: "audio", name: "ASIO", color: 0,
+    source: { type: "asioIn", channel: 1, mono: true },
+    dests: [], output: null, gain: 1, mute: false, plugins: [],
+  };
+  mounted.push(mount(TrackStrip, { target: document.body, props: {
+    track, tracks: [track], devices: [], selectedDeviceKey: "wasapi",
+    metered: false, onCancelScan: vi.fn(), openMenu: vi.fn(),
+  } }));
+  flushSync();
+  const input = document.querySelector<HTMLSelectElement>("select")!;
+  expect(input.value).toBe("m1");
+  const opt = [...input.options].find((option) => option.value === "m1");
+  expect(opt?.disabled).toBe(true);
+  expect(opt?.textContent).toContain("單聲");
+  expect(opt?.textContent).toContain("無 ASIO 驅動");
+});
+
 it("ASIO 輸入保留立體聲與單聲道選項，並可同時載入 WASAPI 麥克風", async () => {
   const input = show([{
     deviceKey: "asio:test", name: "ASIO", maxIn: 2, maxOut: 2,

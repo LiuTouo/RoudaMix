@@ -99,7 +99,7 @@ render 裝置,`list_render_devices` 列 endpoints)。每軌一條 VST 鏈
 | `get_snapshot` | — |
 | `get_latency_report` | 按需取得 output totals、PDC edge delay、buffer bytes 與完整 track/plugin latency 狀態；drawer 依 `latencyGeneration` 變更重取 |
 | `list_devices` | DeviceInfo 含 `inputNames`/`outputNames`(per-channel 名,UI 下拉用) |
-| `start` | sampleRate null/缺 = driver 現行率(硬體面板才是權威,UI 一律傳 null);帶值時換率 = driver 整個重開。bufferSize null/缺 = driver preferred;**ASIO 緩衝是 host 權威**。engine 從所有軌的 source/output 收集 ASIO channel 聯集建 buffer;完全沒有 ASIO out 軌時 fallback ch 0/1。面板開啟中 start 回 `bad_command`("hardware panel is open") |
+| `start` | `deviceKey "wasapi"` = **WASAPI master**(M6):系統預設 render endpoint(eRender/eMultimedia)當 RT 時脈+監聽;sampleRate 恆 null(鎖系統 mix rate,帶值且≠mix rate = `device_open_failed`);bufferSize 由 engine 決定(status 帶實際 block,status.deviceKey 回 `"wasapi"`、inputLatency 0);全部 `asioOut` sink 塔縮到 master 立體聲;`asioIn` 來源無硬體 = 靜音(status 該軌 error 帶提示);無 driver 面板(`open_device_panel` 回 `not_running`)。ASIO 後端:sampleRate null/缺 = driver 現行率(硬體面板才是權威,UI 一律傳 null);帶值時換率 = driver 整個重開。bufferSize null/缺 = driver preferred;**ASIO 緩衝是 host 權威**。engine 從所有軌的 source/output 收集 ASIO channel 聯集建 buffer;完全沒有 ASIO out 軌時 fallback ch 0/1。面板開啟中 start 回 `bad_command`("hardware panel is open") |
 | `stop` | — |
 | `open_device_panel` | 開 driver 自帶硬體控制面板(取樣率/緩衝的最終權威);須 running,否則 `not_running`。reply 立即回(非同步):engine 在 detach thread 開面板並等其關閉(driver modal 返回或 vendor 面板 exe 結束),關閉後推 `devices_changed`;面板期間 start 被拒 |
 | `track_add` | name 缺 = 自動命名;color = 0xRRGGBB,缺 = 調色盤輪替 |

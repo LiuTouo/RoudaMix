@@ -895,6 +895,19 @@
         data-tooltip="ASIO 輸入 pair 或系統麥克風(WASAPI capture);清單在點開時載入。"
       >
         <option value="">(無)</option>
+        {#if devices.length === 0 && track.source?.type === "asioIn"}
+          <!-- M6:純 WASAPI 機器載入 ASIO 來源 session:來源保留但靜音，
+               value 對齊現值才不會顯示空白 -->
+          <option
+            value={track.source.mono ? `m${track.source.channel}`
+              : String(track.source.channel)}
+            disabled
+          >
+            ASIO {(track.source.channel ?? 0) + 1}{track.source.mono
+              ? "（單聲）"
+              : `/${(track.source.channel ?? 0) + 2}`}（此機器無 ASIO 驅動）
+          </option>
+        {/if}
         {#if dev}
           {#each pairOptions(dev?.inputNames ?? [], "in") as o (o.value)}
             <option value={String(o.value)}>{o.label}</option>

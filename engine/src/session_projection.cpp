@@ -94,6 +94,13 @@ static nlohmann::json tracks_json_with_strips(const AudioEngine& engine,
             }
             std::sort(sidechain_sources.begin(), sidechain_sources.end());
         }
+        // M6:asioIn 來源在 WASAPI master(無 ASIO 裝置)下沒有硬體 = 靜音。計算式
+        // 警告(非黏性狀態):切回有硬體的後端即消失;session 檔不寫 error,跨機器
+        // 往返只保留來源設定本身
+        std::string track_error = track.track_error;
+        if (track_error.empty() && track.source.type == TrackSource::kAsioIn &&
+            engine.in_wasapi_master())
+            track_error = "ASIO input unavailable (no ASIO device); track is silent";
         tracks.push_back({
             {"trackId", track.track_id},
             {"kind", track_kind_str(track.kind)},
@@ -109,8 +116,8 @@ static nlohmann::json tracks_json_with_strips(const AudioEngine& engine,
             {"mute", track.mute},
             {"plugins", std::move(plugins)},
             {"metered", metered},
-            {"error", track.track_error.empty() ? nlohmann::json(nullptr)
-                                                  : nlohmann::json(track.track_error)},
+            {"error", track_error.empty() ? nlohmann::json(nullptr)
+                                          : nlohmann::json(track_error)},
         });
         ++track_index;
     }

@@ -204,6 +204,10 @@ public:
     std::vector<PluginTabInfo> plugin_tabs() const;
     const RackSlot* find_slot(std::uint32_t instance_id) const noexcept;
     bool primary_route_processes(std::uint32_t instance_id) const noexcept;
+    // M6:WASAPI master 是否為目前後端(clock_ 存續期 = start 到 stop;stop() 會
+    // reset)。session projection 用:asioIn 來源在此模式下無硬體 = 靜音,狀態帶
+    // 計算式警告(非黏性,切回 ASIO 後端即消失)。control thread 專屬讀取,同 status()
+    [[nodiscard]] bool in_wasapi_master() const noexcept { return clock_ != nullptr; }
     // 最近一次成功 start 的裝置/取樣率/緩衝(session serialize 用;stop 後仍保留)
     const std::string& last_device_key() const noexcept { return last_device_key_; }
     std::uint32_t last_sample_rate() const noexcept { return last_sample_rate_; }

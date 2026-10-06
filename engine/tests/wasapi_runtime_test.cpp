@@ -66,6 +66,27 @@ static void steady_peak(const wchar_t* endpoint, float lo, float hi,
         where.line(), endpoint, fake_wasapi::peak(endpoint), lo, hi);
     std::exit(1);
 }
+static json track_error(Session& s, const json& track_id) {
+    const auto tracks = s.status()["tracks"];  // 具名複製:range-for 不可掛在暫時物件上
+    for (const auto& t : tracks)
+        if (t["trackId"] == track_id) return t["error"];
+    CHECK(false);
+    return {};
+}
+static void asio_in_warning() {
+    // M6:asioIn 來源在 WASAPI master(無 ASIO 裝置)下靜音;狀態帶計算式警告
+    //(非黏性:未啟動不誤報、換來源/stop 後消失)
+    Session s;
+    const auto input = s.ok("track_add", {{"kind", "audio"}, {"name", "AsioIn"}})["trackId"];
+    s.ok("track_set_source", {{"trackId", input}, {"source", {{"type", "asioIn"}, {"channel", 0u}}}});
+    CHECK(track_error(s, input).is_null());
+    s.start();
+    CHECK(track_error(s, input) == "ASIO input unavailable (no ASIO device); track is silent");
+    s.ok("track_set_source", {{"trackId", input}, {"source", {{"type", "wasapiIn"}, {"deviceId", "mic"}}}});
+    CHECK(track_error(s, input).is_null());
+    s.ok("stop");
+    CHECK(track_error(s, input).is_null());
+}
 static void restore_and_retry(const std::string& module) {
     Session s;
     const auto defaults = s.ok("ensure_system_outputs");
@@ -281,6 +302,7 @@ int main(int argc, char** argv) {
         s.ok("stop"); CHECK(failures == 1); CHECK(fake_wasapi::clients == 0);
     }
     restore_and_retry(argv[1]);
+    asio_in_warning();
     rejected_initialization(argv[1]);
     {
         Session failed;
