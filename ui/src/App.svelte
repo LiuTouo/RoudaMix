@@ -2382,6 +2382,8 @@
   /* P1-O→膠囊:iPhone 式頂端滑入通知(容器不攔點擊,膠囊本體攔) */
   .capsules {
     position: fixed;
+    /* 視窗自適應:泡泡整體比例的單一縮放旋鈕(600px 以下 11px;800px 時 12px 同現況;1400px 以上 15px) */
+    font-size: clamp(11px, 0.5vw + 8px, 15px);
     top: 10px;
     left: 50%;
     transform: translateX(-50%);
@@ -2397,8 +2399,8 @@
     display: flex;
     align-items: center;
     gap: 4px;
-    max-width: min(480px, 90vw);
-    padding: 5px 14px;
+    max-width: min(40em, 90vw); /* 40em ≈ 舊 480px,隨容器字級等比縮放 */
+    padding: 0.42em 1.17em;
     border-radius: 999px;
     background: var(--bg-panel);
     border: 1px solid var(--border);
@@ -2413,7 +2415,7 @@
     background: none;
     border: none;
     padding: 0;
-    font-size: 12px;
+    font-size: 1em;
     color: var(--text);
     cursor: pointer;
     overflow: hidden;
@@ -2427,8 +2429,8 @@
     flex: none;
     background: none;
     border: none;
-    padding: 2px 6px;
-    font-size: 12px;
+    padding: 0.17em 0.5em;
+    font-size: 1em;
     color: var(--text-dim);
     cursor: pointer;
   }
