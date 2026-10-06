@@ -13,6 +13,7 @@
   import { resetPluginTransfer } from "./lib/pluginTransfer";
   import LatencyDrawer from "./lib/LatencyDrawer.svelte";
   import ContextMenu from "./lib/ContextMenu.svelte";
+  import { backdropClose } from "./lib/backdropClose";
   import { mountDragGhost, removeDragGhost } from "./lib/ghost";
   import {
     initialRevisionDirty,
@@ -1837,6 +1838,7 @@
 <dialog
   bind:this={settingsDlg}
   class="settingsdlg"
+  use:backdropClose={() => settingsDlg?.close()}
   onclose={() => (settingsOpen = false)}
 >
   <div class="dialog-head">
@@ -2092,6 +2094,7 @@
 <dialog
   bind:this={closeBehaviorDlg}
   class="dirtydlg"
+  use:backdropClose={() => answerCloseBehavior(null)}
   oncancel={(e) => {
     e.preventDefault();
     answerCloseBehavior(null);
@@ -2106,7 +2109,7 @@
 </dialog>
 
 <!-- B:未儲存變更三分支。取消 = 不關窗/不載入;儲存失敗 = 視同取消(不得覆蓋) -->
-<dialog bind:this={dirtyDlg} class="dirtydlg">
+<dialog bind:this={dirtyDlg} class="dirtydlg" use:backdropClose={() => answerDirty("cancel")}>
   <p class="dirtyq">有未儲存的變更 — 要先儲存嗎?</p>
   <div class="dirtyrow">
     <button class="primary" onclick={() => answerDirty("save")}>儲存</button>
@@ -2135,6 +2138,7 @@
     border-radius: 8px;
     padding: 14px 16px;
     width: min(560px, 90vw);
+    box-shadow: 0 8px 24px rgb(0 0 0 / 0.55);
   }
   /* 只在 open 慢套:display:flex 若無條件寫,會蓋掉 UA 的 dialog:not([open])
      { display:none } → dialog 載入即常駐顯示、close() 因無 open attr throw 關不掉 */
@@ -2162,6 +2166,7 @@
     border-radius: 8px;
     padding: 16px 18px;
     width: min(360px, 90vw);
+    box-shadow: 0 8px 24px rgb(0 0 0 / 0.55);
   }
   .dirtydlg[open] {
     display: flex;

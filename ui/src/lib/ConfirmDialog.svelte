@@ -1,6 +1,7 @@
 <script lang="ts">
   // P2-N:破壞操作確認。不做事後 Undo(plugin instance state 無法安全還原 ——
   // 刪前確認列影響 + 刪除快照留在 caller,未來 Undo 以此為基礎)。
+  import { backdropClose } from "./backdropClose";
   let {
     confirm,
     onAnswer,
@@ -12,6 +13,7 @@
     } | null;
     onAnswer: (yes: boolean) => void;
   } = $props();
+
 
   let dlg = $state<HTMLDialogElement | null>(null);
   $effect(() => {
@@ -26,7 +28,7 @@
 <svelte:window onkeydown={(e) => e.key === "Escape" && confirm && onAnswer(false)} />
 
 {#if confirm}
-  <dialog bind:this={dlg} class="confirmdlg" onclose={() => onAnswer(false)}>
+  <dialog bind:this={dlg} class="confirmdlg" use:backdropClose={() => dlg?.close()} onclose={() => onAnswer(false)}>
     <p class="q">{confirm.title}</p>
     {#if confirm.impact.length > 0}
       <ul class="impact">
@@ -51,6 +53,7 @@
     border-radius: 8px;
     padding: 16px 18px;
     width: min(400px, 90vw);
+    box-shadow: 0 8px 24px rgb(0 0 0 / 0.55);
   }
   .confirmdlg[open] {
     display: flex;

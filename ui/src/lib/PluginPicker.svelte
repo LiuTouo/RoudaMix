@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { friendlyError, type FriendlyError } from "./errors";
+  import { backdropClose } from "./backdropClose";
   import { buildPluginCatalog, browsePlugins, type PluginGrouping, type CatalogPlugin } from "./pluginCatalog";
   import type { ScanModule, ScanFailure } from "./types";
 
@@ -57,7 +58,7 @@
   }
 </script>
 
-<dialog bind:this={dialog} class="plugin-picker" aria-label={`VST 插件列表 — 加入「${trackName}」`} onclose={() => { if (!disposed) onClose(); }}>
+<dialog bind:this={dialog} class="plugin-picker" use:backdropClose={() => dialog.close()} aria-label={`VST 插件列表 — 加入「${trackName}」`} onclose={() => { if (!disposed) onClose(); }}>
   <div class="dialog-head">
     <span class="dialog-title">VST 插件列表 — 加入「{trackName}」</span>
     <button class="dialog-close" type="button" aria-label="關閉插件選擇器"
@@ -150,6 +151,7 @@
     background: var(--bg-panel);
     color: var(--text);
     overflow: hidden;
+    box-shadow: 0 8px 24px rgb(0 0 0 / 0.55);
   }
   .plugin-picker[open] { display: flex; flex-direction: column; gap: 14px; }
   .plugin-picker::backdrop { background: rgb(0 0 0 / 0.5); }

@@ -4,6 +4,7 @@
   // 完整路徑);同名程序可辨識。重新整理 + 搜尋;空清單說明原因。
   import { engineCommand } from "./protocol-commands.generated";
   import { friendlyError } from "./errors";
+  import { backdropClose } from "./backdropClose";
   import type { AudioApp } from "./types";
 
   let {
@@ -67,6 +68,7 @@
 <dialog
   bind:this={dlg}
   class="pickerdlg"
+  use:backdropClose={() => dlg?.close()}
   onclose={onClose}
   aria-label="選擇要捕捉的程式"
 >
@@ -127,6 +129,7 @@
     border-radius: 8px;
     padding: 14px 16px;
     width: min(520px, 92vw);
+    box-shadow: 0 8px 24px rgb(0 0 0 / 0.55);
   }
   /* P1-K:dialog 內容上限 85vh,超出垂直捲動;關閉鈕不被裁 */
   .pickerdlg[open] {
