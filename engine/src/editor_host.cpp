@@ -1,6 +1,6 @@
 // Studio Pro 式 editor host 實作。單一 top-level 視窗,自繪 caption(無 DWM
 // 標題列)+ 兩個子視窗:
-//   caption(視窗自己畫)= 頂部 32px:視窗標題 + 關閉鈕,霜面語言與帶列一致
+//   caption(視窗自己畫)= 頂部 32px:視窗標題 + 關閉鈕,平面細框與主程式一致
 //   tabs(RmxEditorTabs)= 帶1 plugin tabs、帶2 bypass 電源鈕 +
 //                        載入 Preset 鈕 + preset 檔名
 //   client(RmxEditorClient)= 深色底,plugin 原生 editor attach 在這
@@ -56,31 +56,38 @@ constexpr wchar_t kClientClassName[] = L"RmxEditorClient";
 
 // (跨進程 owner 已移除,不再需要 GWL_HWNDPARENT)
 
-// 深色主題(zinc 系,貼 app 風格)
-// 對齊主程式 ui/app.css 色票(去網頁感第一步 = 同一個深色系)
-constexpr COLORREF kStripBg = RGB(0x1c, 0x1f, 0x24);     // = --bg-panel
-constexpr COLORREF kTabActiveBg = RGB(0x24, 0x28, 0x2e); // = --bg-raised
-constexpr COLORREF kAccent = RGB(0x4d, 0xa3, 0xff);      // = --accent
-constexpr COLORREF kTextActive = RGB(0xd8, 0xdc, 0xe2);  // = --text
-constexpr COLORREF kTextIdle = RGB(0x8a, 0x91, 0x9b);    // = --text-dim
+// 深色主題:對齊主程式 ui/src/console.css(Approved C 極簡控制台)色票。
+// 全平面:視窗/caption/帶列/client 同一塊 --flat-0,分隔只靠 1px --border
+// 髮絲線。舊版自繪霜面(漸層+噪點,當年為取代會閃爍的 OS blur 而做)已隨
+// 主程式改版一併移除;純 FillRect 單趟繪製,同樣結構上不可能閃。
+constexpr COLORREF kStripBg = RGB(0x0d, 0x0f, 0x10);     // = --flat-0
+constexpr COLORREF kTabActiveBg = RGB(0x20, 0x24, 0x28); // = --flat-4:淡底(hover/active 分頁)
+constexpr COLORREF kTabHoverBg = RGB(0x18, 0x1b, 0x1e);  // = --flat-2:分頁 hover
+constexpr COLORREF kAccent = RGB(0x6e, 0xa8, 0xfe);      // = --accent
+constexpr COLORREF kTextActive = RGB(0xe2, 0xe5, 0xe8);  // = --text
+constexpr COLORREF kTextIdle = RGB(0x9c, 0xa5, 0xae);    // = --text-dim
 constexpr COLORREF kTextDim = RGB(0x56, 0x5b, 0x64);
-constexpr COLORREF kOnGreen = RGB(0x3d, 0xdc, 0x84);     // = --ok
-constexpr COLORREF kBtnBorder = RGB(0x33, 0x38, 0x3f);   // = --border
-
-// ---- 霜面帶列（自繪毛玻璃感）----
-// 曾嘗試 OS 級 blur：WCA accent acrylic 在 24H2 每幀重套，帶列以 ~15Hz
-// 交替明滅 = 使用者看到的「瘋狂閃爍」；DWMWA_SYSTEMBACKDROP_TYPE（Mica／
-// Acrylic）在 26100 上 S_OK 卻永不渲染（最小視窗 + 訊息泵實測）。OS blur
-// 在本機不可用 → 改自繪霜面底紋：垂直漸層 + 固定種子細噪點，單次 BitBlt
-// 組合，結構上不可能閃，且任何機器（含 Win10 portable）外觀一致。
-
-// 霜面用色（zinc 系，帶1 頂微亮 → 帶2 底微深）
-constexpr COLORREF kFrostTop = RGB(0x2a, 0x2e, 0x35);
-constexpr COLORREF kFrostBottom = RGB(0x19, 0x1c, 0x20);
+constexpr COLORREF kOk = RGB(0x55, 0xc2, 0xa3);          // = --ok(電源 on,同機架圓點)
+constexpr COLORREF kWarn = RGB(0xd9, 0xa4, 0x41);        // = --warn(bypass,同機架 off 圓點)
+constexpr COLORREF kBtnBorder = RGB(0x29, 0x2d, 0x31);   // = --border(細框/髮絲線)
 
 HFONT strip_font() {
-    static HFONT f = CreateFontW(-13, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0,
+    static HFONT f = CreateFontW(-12, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0,
                                  CLEARTYPE_QUALITY, 0, L"Segoe UI");
+    return f;
+}
+
+// 主程式 label 同級 11px(帶2 按鈕文字)
+HFONT label_font() {
+    static HFONT f = CreateFontW(-11, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0,
+                                 CLEARTYPE_QUALITY, 0, L"Segoe UI");
+    return f;
+}
+
+// 主程式 meta 資訊同款等寬字(--mono: Cascadia Mono/Consolas 系)
+HFONT mono_font() {
+    static HFONT f = CreateFontW(-11, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0,
+                                 CLEARTYPE_QUALITY, 0, L"Consolas");
     return f;
 }
 
@@ -186,83 +193,15 @@ HBRUSH dark_brush() noexcept {
     return b;
 }
 
-COLORREF lerp_rgb(COLORREF a, COLORREF b, int num, int den) noexcept {
-    return RGB(GetRValue(a) + (GetRValue(b) - GetRValue(a)) * num / den,
-               GetGValue(a) + (GetGValue(b) - GetGValue(a)) * num / den,
-               GetBValue(a) + (GetBValue(b) - GetBValue(a)) * num / den);
+// caption/帶列 分隔的 1px 髮絲線(同主程式 --border)
+HBRUSH hairline_brush() noexcept {
+    static const HBRUSH b = CreateSolidBrush(kBtnBorder);
+    return b;
 }
 
-// 帶列霜面底紋：垂直漸層（帶1 頂亮 → 帶2 底深）+ 固定種子細噪點（霜的
-// 顆粒感；固定種子 = 每次重繪同一張圖，不會因重建而 shimmer）。以寬度快取，
-// 重繪只剩一次 BitBlt。寬度變了才重建（resize 中 ~64 行 FillRect + 數千
-// SetPixel，一次性 <1ms）。
-// 霜面底紋本體：垂直漸層（kFrostTop 經 kStripBg 折點下探 kFrostBottom）+
-// 固定種子細噪點（霜的顆粒感；固定種子 = 每次重繪同一張圖，不會因重建而
-// shimmer）。以寬度快取，重繪只剩一次 BitBlt。mid_y = kStripBg 折點；
-// top_highlight = 面板頂緣 1px 高光（只有視窗最頂 = 標題列要）。
-void paint_frost(HDC mem, int w, int h, int mid_y, bool top_highlight) noexcept {
-    for (int y = 0; y < h; ++y) {
-        const COLORREF c = y < mid_y ? lerp_rgb(kFrostTop, kStripBg, y, mid_y)
-                                     : lerp_rgb(kStripBg, kFrostBottom, y - mid_y,
-                                                h - mid_y);
-        const RECT row{0, y, w, y + 1};
-        const HBRUSH b = CreateSolidBrush(c);
-        FillRect(mem, &row, b);
-        DeleteObject(b);
-    }
-    if (top_highlight) {
-        const RECT hl{0, 0, w, 1};
-        const HBRUSH hi = CreateSolidBrush(lerp_rgb(kFrostTop, kTextActive, 1, 8));
-        FillRect(mem, &hl, hi);
-        DeleteObject(hi);
-    }
-    const RECT lo{0, h - 1, w, h};
-    const HBRUSH shade = CreateSolidBrush(kFrostBottom);
-    FillRect(mem, &lo, shade);
-    DeleteObject(shade);
-    // 霜噪：LCG 固定種子，±3 灑在 2x2 格
-    unsigned seed = 0x1234abcdu;
-    const auto next = [&seed] { seed = seed * 1664525u + 1013904223u; return (seed >> 16) & 0xffu; };
-    for (int y = 1; y < h - 1; y += 2) {
-        for (int x = 0; x < w; x += 2) {
-            const int d = static_cast<int>(next() % 7u) - 3;
-            if (d == 0) continue;
-            const COLORREF c = GetPixel(mem, x, y);
-            const int r = GetRValue(c) + d, g = GetGValue(c) + d, bl = GetBValue(c) + d;
-            SetPixel(mem, x, y, RGB(static_cast<COLORREF>(r < 0 ? 0 : r > 255 ? 255 : r),
-                                    static_cast<COLORREF>(g < 0 ? 0 : g > 255 ? 255 : g),
-                                    static_cast<COLORREF>(bl < 0 ? 0 : bl > 255 ? 255 : bl)));
-        }
-    }
-}
-
-HBITMAP frost_cached(int w, int h, int mid_y, bool top_highlight,
-                     HBITMAP& bmp, int& cached_w, int& cached_h) noexcept {
-    if (bmp != nullptr && w == cached_w && h == cached_h) return bmp;
-    if (bmp != nullptr) DeleteObject(bmp);
-    cached_w = w;
-    cached_h = h;
-    const HDC screen = GetDC(nullptr);
-    bmp = CreateCompatibleBitmap(screen, w, h);
-    const HDC mem = CreateCompatibleDC(screen);
-    ReleaseDC(nullptr, screen);
-    const HGDIOBJ old = SelectObject(mem, bmp);
-    paint_frost(mem, w, h, mid_y, top_highlight);
-    SelectObject(mem, old);
-    DeleteDC(mem);
-    return bmp;
-}
-
-HBITMAP frost_strip_bg(int w, int h) noexcept {
-    static HBITMAP bmp = nullptr;
-    static int cached_w = -1, cached_h = -1;
-    return frost_cached(w, h, h - kBand2H, false, bmp, cached_w, cached_h);
-}
-
-HBITMAP frost_caption_bg(int w) noexcept {
-    static HBITMAP bmp = nullptr;
-    static int cached_w = -1, cached_h = -1;
-    return frost_cached(w, kCaptionH, kCaptionH / 2, true, bmp, cached_w, cached_h);
+HBRUSH tab_hover_brush() noexcept {
+    static const HBRUSH b = CreateSolidBrush(kTabHoverBg);
+    return b;
 }
 
 HBRUSH tab_active_brush() noexcept {
@@ -790,7 +729,7 @@ RECT close_btn_rect(int cw) noexcept { return {cw - kCaptionH, 0, cw, kCaptionH}
 void draw_close_glyph(HDC dc, int cw, bool hover, bool pressed) noexcept {
     const RECT r = close_btn_rect(cw);
     if (hover) {
-        const HBRUSH bg = CreateSolidBrush(pressed ? kFrostBottom : kTabActiveBg);
+        const HBRUSH bg = CreateSolidBrush(pressed ? kTabHoverBg : kTabActiveBg);
         FillRect(dc, &r, bg);
         DeleteObject(bg);
     }
@@ -871,20 +810,18 @@ LRESULT CALLBACK host_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
         }
         return 0;
     case WM_PAINT: {
-        // 自繪 caption：霜面底紋 + 標題 + 關閉鈕（單趟繪製，無 DWM 動畫）
+        // 自繪 caption：平面底 + 標題 + 關閉鈕（單趟繪製，無 DWM 動畫）
         PAINTSTRUCT ps;
         HDC dc = BeginPaint(h, &ps);
         RECT rc{};
         GetClientRect(h, &rc);
         const int cw = rc.right - rc.left;
-        const HDC mem = CreateCompatibleDC(dc);
-        const HGDIOBJ old_bmp = SelectObject(mem, frost_caption_bg(cw));
-        BitBlt(dc, 0, 0, cw, kCaptionH, mem, 0, 0, SRCCOPY);
-        SelectObject(mem, old_bmp);
-        DeleteDC(mem);
+        // 平面底:整條 caption 填 --flat-0(單趟 FillRect,無漸層無快取)
+        const RECT capfill{0, 0, cw, kCaptionH};
+        FillRect(dc, &capfill, dark_brush());
         // caption/帶列 分隔線（同帶1/帶2 分隔線語彙）
         RECT div{0, kCaptionH - 1, cw, kCaptionH};
-        FillRect(dc, &div, tab_active_brush());
+        FillRect(dc, &div, hairline_brush());
         // 標題：前景亮、失焦暗（WM_ACTIVATE 重繪一次，無動畫）
         if (self != nullptr && !self->title.empty()) {
             SetBkMode(dc, TRANSPARENT);
@@ -1012,13 +949,16 @@ LRESULT CALLBACK host_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
 // ---- 頂部列:帶1 tabs + 帶2 bypass/preset(全部自繪 + hit-test,單一 HWND)----
 
 void draw_power_icon(HDC dc, int cx, int cy, double rad, bool bypassed) {
-    // 電源鍵(比照 UI 端使用者提供 SVG):開 = 綠 #16A34A、bypass = 暗灰
-    // (原畫黑 = 深色底上隱形,改 kTextIdle 暗但可辨識)。
+    // 電源鍵:同主程式機架圓點語彙 —— on = --ok #55C2A3、bypass = --warn
+    // #D9A441(機架 off 圓點同色)。
     // GDI 筆無反鋸齒 + 折線頂點取整數 = 線條抖;改 GDI+(AA + 浮點座標)。
     // 圓(頂部 90° 開口)+ 豎線從頂穿到圓心;筆寬 = SVG 40/236 比例。
     ensure_gdiplus();
-    const Gdiplus::Color color = bypassed ? Gdiplus::Color(255, 0x8a, 0x91, 0x9b)
-                                          : Gdiplus::Color(255, 0x16, 0xA3, 0x4A);
+    // 色值照抄上方 kOk/kWarn(Gdiplus::Color 吃 BYTE,經 Get?Value 取 constexpr
+    // 會被 MSVC C4310 噪,字面值最平事)
+    const Gdiplus::Color on_color(255, 0x55, 0xc2, 0xa3);   // kOk
+    const Gdiplus::Color off_color(255, 0xd9, 0xa4, 0x41);  // kWarn
+    const Gdiplus::Color color = bypassed ? off_color : on_color;
     const float penw = (std::max)(2.0f, static_cast<float>(rad * 40.0 / 236.0));
     Gdiplus::Graphics g(dc);
     g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
@@ -1038,19 +978,16 @@ HPEN btn_border_pen() noexcept {
     return p;
 }
 
-HPEN accent_pen() noexcept {
-    static const HPEN p = CreatePen(PS_SOLID, 1, kAccent);
-    return p;
-}
-
-// 平面按鈕:無填色(= 與帶同底)+ 1px 邊框 + 暗文字;hover 邊框/文字轉亮 ——
-// 同主程式 button:hover 只換 border-color 的靜音語彙,不再是厚實實體按鈕
+// 平面按鈕:無填色(= 與帶同底)+ 1px --border 細框 + 11px 暗文字;hover =
+// #202428 淡底亮字(同主程式 button:hover 語彙,框不變);圓角同 --flat-radius 3px
 void draw_preset_button(HDC dc, RECT r, const wchar_t* text, bool hover) {
-    const HGDIOBJ old_pen = SelectObject(dc, hover ? accent_pen() : btn_border_pen());
+    if (hover) FillRect(dc, &r, tab_active_brush());
+    const HGDIOBJ old_pen = SelectObject(dc, btn_border_pen());
     const HGDIOBJ old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
-    RoundRect(dc, r.left, r.top, r.right, r.bottom, 6, 6);
+    RoundRect(dc, r.left, r.top, r.right, r.bottom, 3, 3);
     SelectObject(dc, old_pen);
     SelectObject(dc, old_brush);
+    SelectObject(dc, label_font());
     SetTextColor(dc, hover ? kTextActive : kTextIdle);
     DrawTextW(dc, text, -1, &r,
               DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
@@ -1074,37 +1011,38 @@ LRESULT CALLBACK tabs_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
         RECT rc{};
         GetClientRect(h, &rc);
         const int cw = rc.right - rc.left;
-        // 換行版面(列數隨寬度);霜面底紋 cache 依 (寬,高)
+        // 換行版面(列數隨寬度);整條帶列平面填 --flat-0
         const int rows = self->layout_tabs(cw);
         const int ty = kTabH * rows;  // 帶1/帶2 分界
         const int sh = ty + kBand2H;
-        const HDC mem = CreateCompatibleDC(dc);
-        const HGDIOBJ old_bmp = SelectObject(mem, frost_strip_bg(cw, sh));
-        BitBlt(dc, 0, 0, cw, sh, mem, 0, 0, SRCCOPY);
-        SelectObject(mem, old_bmp);
-        DeleteDC(mem);
+        const RECT bandfill{0, 0, cw, sh};
+        FillRect(dc, &bandfill, dark_brush());
         SetBkMode(dc, TRANSPARENT);
         SelectObject(dc, strip_font());
         const auto& tabs = self->tabs_data;
         int active_idx = -1;
-        // 文字即分頁:無框無底(方框 = 表單感);active/hover 亮文字,
-        // active 另有 accent 底線(在分隔線之後蓋上 = 連續直線,
-        // 同主程式 tabs 的 2px border-bottom 語彙)。
-        // 名稱完整不截斷:寬度不足時換行延伸下一列,不出現省略號。
+        // 文字即分頁:無框;active = 主程式 .tabs button.on 語彙(#202428 底 +
+        // accent 文字 + 2px 底線),hover = flat-2 淡底亮字,dim = 最暗灰
+        // (無編輯器)。名稱完整不截斷:寬度不足時換行延伸下一列,不出現省略號。
         for (int i = 0; i < static_cast<int>(tabs.size()); ++i) {
             const auto& t = tabs[static_cast<size_t>(i)];
             if (t.id == self->active_id) active_idx = i;
             RECT tr{t.x, t.y, t.x + t.w, t.y + kTabH};
-            SetTextColor(dc, t.dim ? kTextDim
-                                   : (active_idx == i || self->hover_tab == i)
-                                         ? kTextActive
-                                         : kTextIdle);
+            if (active_idx == i) {
+                FillRect(dc, &tr, tab_active_brush());
+                SetTextColor(dc, kAccent);
+            } else if (self->hover_tab == i) {
+                FillRect(dc, &tr, tab_hover_brush());
+                SetTextColor(dc, kTextActive);
+            } else {
+                SetTextColor(dc, t.dim ? kTextDim : kTextIdle);
+            }
             DrawTextW(dc, t.name.c_str(), -1, &tr,
                       DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         }
         // 帶1/帶2 分隔線
         RECT div{0, ty - 1, cw, ty};
-        FillRect(dc, &div, tab_active_brush());
+        FillRect(dc, &div, hairline_brush());
         if (active_idx >= 0) {
             const auto& t = tabs[static_cast<size_t>(active_idx)];
             RECT line{t.x, t.y + kTabH - 2, t.x + t.w, t.y + kTabH};
@@ -1124,6 +1062,7 @@ LRESULT CALLBACK tabs_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
             if (load_btn_rect(by).right < cw)
                 draw_preset_button(dc, load_btn_rect(by), L"載入 Preset", self->hover_btn == 3);
             RECT nr = preset_name_rect(by, cw);
+            SelectObject(dc, mono_font());
             SetTextColor(dc, kTextIdle);
             DrawTextW(dc, self->preset_name.c_str(), -1, &nr,
                       DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
