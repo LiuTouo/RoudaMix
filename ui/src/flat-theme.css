@@ -1,17 +1,21 @@
-/* B 細框幾何：定案自 prototype/geometric-flat-ui。由暗至亮表示畫布、面板、區塊、浮層及控制項。 */
+/* D 墨黑留白：中性灰階保留細框幾何；灰藍僅用於啟用狀態，暖色留給警告。 */
 :root {
-  --flat-0: #111418;
-  --flat-1: #1d232b;
-  --flat-2: #28313c;
-  --flat-3: #354151;
-  --flat-4: #424f60;
+  --flat-0: #121212;
+  --flat-1: #1b1b1b;
+  --flat-2: #232323;
+  --flat-3: #2b2b2b;
+  --flat-4: #353535;
   --bg: var(--flat-0);
   --bg-panel: var(--flat-1);
   --bg-raised: var(--flat-2);
-  --text: #edf2f7;
-  --text-dim: #c1cad6;
-  --accent: #9acaff;
-  --border: #465365;
+  --text: #e5e4e1;
+  --text-dim: #b2b1ae;
+  --accent: #cdc5b5;
+  --active: #9fafbd;
+  --ok: #9fafbd;
+  --warn: #d0b58d;
+  --err: #d89b97;
+  --border: #3f3f3f;
   --flat-radius: 2px;
   --flat-edge: var(--border);
   --surface: var(--flat-1);
@@ -63,22 +67,33 @@
 #app button.primary {
   background: var(--accent); border-color: var(--accent); color: var(--flat-0);
 }
-#app :is(button.on:not(.tabs button, .monitor-bypass), button.danger:not(.plugicon)) {
-  background: var(--warn); border-color: var(--warn); color: var(--flat-0);
+/* .on 是切換狀態（靜音／Bypass 等），不是警告或危險操作。 */
+#app button.on:not(.tabs button) {
+  background: color-mix(in srgb, var(--active) 12%, var(--control));
+  border-color: var(--active); color: var(--active);
 }
-#app .monitor-bypass.on { color: var(--accent); border-color: var(--accent); }
-#app button.primary:enabled:hover { background: #a6d0ff; }
-#app :is(button.on:not(.tabs button, .monitor-bypass), button.danger:not(.plugicon)):enabled:hover {
-  background: #ffd095;
+#app button.on:not(.tabs button):enabled:hover {
+  background: color-mix(in srgb, var(--active) 20%, var(--control));
 }
+#app button.danger:not(.plugicon) {
+  background: var(--control); border-color: var(--err); color: var(--err);
+}
+#app button.danger:not(.plugicon):enabled:hover {
+  background: color-mix(in srgb, var(--err) 12%, var(--control));
+}
+#app button.primary:enabled:hover { background: var(--text); }
 #app :is(.destination-trigger[aria-expanded="true"], .rebind) { border-color: var(--accent); }
 #app .rebind { border-color: var(--warn); }
 #app input[type="range"]::-webkit-slider-runnable-track {
   background: var(--section); border-color: var(--border); border-radius: var(--flat-radius); box-shadow: none;
 }
 #app input[type="range"]::-webkit-slider-thumb {
-  background: var(--accent); border-color: var(--accent); border-radius: var(--flat-radius); box-shadow: none;
+  background: var(--text-dim); border-color: var(--text-dim); border-radius: var(--flat-radius); box-shadow: none;
 }
+#app input[type="range"]:focus-visible::-webkit-slider-thumb {
+  background: var(--active); border-color: var(--active);
+}
+#app input[type="checkbox"] { accent-color: var(--active); }
 /* 浮層本體較面板亮；其內容與操作再向上取色，不從 DOM 深度推算。 */
 #app :is(dialog:not(.ctxdlg), .latency-drawer, .destination-popup, .ctx, .capsule, .gaintip) {
   --surface: var(--flat-3);
@@ -90,7 +105,7 @@
 #app :is(.dialog-head, .drawer-head, .tabs) { background: transparent; }
 #app :is(.tabs, .plugin-thead, .latency-row) { border-color: var(--border); }
 #app .tabs button { background: transparent; border-color: transparent; }
-#app .tabs button.on { background: var(--control); border-bottom-color: var(--accent); }
+#app .tabs button.on { background: var(--control); color: var(--active); border-bottom-color: var(--active); }
 #app :is(.formrow, .update-status, .latency-output, .latency-table, .plugin-thead, .plugin-group summary) {
   background: var(--section); border-color: var(--flat-edge);
 }
