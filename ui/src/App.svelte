@@ -1610,6 +1610,7 @@
   // ASIO / plugin latency 單位 = samples;統一走 lib/format.samplesToMs(2 位小數)
 </script>
 
+<div class="audio-console">
 <header class="bar">
   <!-- P1-L:連線細分狀態(spawning/connected/spawn_failed/version mismatch…)+ retry -->
   <span class="dot" class:ok={cv.tone === "ok"} class:err={cv.tone === "err"} data-tooltip={connTip}></span>
@@ -1661,15 +1662,15 @@
       class="mono"
       class:err={overloadOn}
       data-tooltip="音訊 callback 的即時運算負載；持續達 100% 以上表示處理逾時，可能產生 xrun 或爆音。"
-      >load {Math.round((meters?.callbackLoad ?? 0) * 100)}%</span
+      >LOAD {Math.round((meters?.callbackLoad ?? 0) * 100)}%</span
     >
-    <span class="mono"
-      >{status!.sampleRate} Hz · buf {status!.bufferSize} · lat input/output
-      {samplesToMs(status!.inputLatency, status!.sampleRate)}ms/{samplesToMs(
-        status!.outputLatency,
-        status!.sampleRate,
-      )}ms · xrun {status!.xruns}</span
-    >
+      <span class="console-telemetry mono">
+        <span>{(status!.sampleRate / 1000).toFixed(1)} kHz</span>
+        <span><span class="dim">BUF</span> {status!.bufferSize}</span>
+        <span><span class="dim">IN</span> {samplesToMs(status!.inputLatency, status!.sampleRate)} ms</span>
+        <span><span class="dim">OUT</span> {samplesToMs(status!.outputLatency, status!.sampleRate)} ms</span>
+        <span class:err={status!.xruns > 0}><span class="dim">XRUN</span> {status!.xruns}</span>
+      </span>
   {:else if selDev?.currentSampleRate}
     <span
       class="dim mono"
@@ -1684,7 +1685,7 @@
       aria-expanded={latencyDrawerOpen}
       aria-label="開啟 Plugin 延遲與 Process Load 明細"
       data-tooltip="Monitor／Stream 的最大有效 Plugin Path Latency；點擊開啟逐 instance 與 PDC 明細。"
-      >plug M {samplesToMs(status?.pluginDelay?.monitorSamples ?? null, status?.sampleRate ?? 0)} / S {samplesToMs(status?.pluginDelay?.streamSamples ?? null, status?.sampleRate ?? 0)} ms</button
+      >PDC M {samplesToMs(status?.pluginDelay?.monitorSamples ?? null, status?.sampleRate ?? 0)} / S {samplesToMs(status?.pluginDelay?.streamSamples ?? null, status?.sampleRate ?? 0)} ms</button
     >
   {/if}
   {#if status?.pluginFails}
@@ -1726,7 +1727,6 @@
     <!-- 輸入群組:audio / app / fx -->
     <section class="group">
       <div class="colhead">
-        <span class="coltitle">輸入</span>
         <button class="mini" onclick={() => addTrack("audio")}>＋ Audio</button>
         <button class="mini" onclick={() => addTrack("app")}>＋ App</button>
         <button class="mini" onclick={() => addTrack("fx")}>＋ FX</button>
@@ -1800,7 +1800,6 @@
     <!-- 輸出群組 -->
     <section class="group">
       <div class="colhead">
-        <span class="coltitle">輸出</span>
         <button class="mini" onclick={() => addTrack("output")}>＋ 輸出軌</button>
       </div>
       <div
@@ -2149,6 +2148,7 @@
     <button onclick={() => answerDirty("cancel")}>取消</button>
   </div>
 </dialog>
+</div>
 
 <style>
   .bar {
@@ -2385,14 +2385,6 @@
     display: flex;
     align-items: center;
     gap: 6px;
-  }
-  .coltitle {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-dim);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    margin-right: 4px;
   }
   .colhead .mini {
     padding: 2px 8px;

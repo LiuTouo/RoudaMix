@@ -1,0 +1,18 @@
+/* DEV harness only. All application appearance is owned by console.css. */
+#app .console-prototype {
+  background: var(--flat-0); color: var(--text);
+  font-family: "Segoe UI", system-ui, sans-serif; font-size: 12px;
+  & .project-app { display: flex; flex-direction: column; height: calc(100dvh - 28px); min-height: 640px; }
+  & .study-rail { min-height: 28px; display: flex; align-items: center; gap: 12px; padding: 2px 12px; border-top: 1px solid var(--border); background: var(--flat-0); color: var(--text-dim); font-size: 10px; }
+  & .study-identity { font: 9px var(--mono); letter-spacing: .08em; flex: none; }
+  & .study-notice { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  & .study-rail > button { margin-left: auto; min-width: 72px; flex: none; font-size: 10px; min-height: 22px; }
+  & .study-details { padding: 12px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-dim); }
+  & .study-details pre { max-height: 300px; overflow: auto; font: 11px/1.6 var(--mono); }
+  & .preview-loading { padding: 24px; }
+}
+#app .console-preview-gate { padding: 24px; color: var(--text); line-height: 1.8; }
+#app .console-preview-gate a { color: var(--accent); }
+@media (max-width: 600px) {
+  #app .console-prototype .study-identity { display: none; }
+}

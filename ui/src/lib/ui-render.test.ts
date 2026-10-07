@@ -86,9 +86,30 @@ test("VST 機架以可操作名稱呈現 GUI 入口，加入按鈕不承擔重�
   const body = render(TrackStrip, { props: stripProps(true) }).body;
 
   assert.match(body, /<span[^>]*role="button"[^>]*tabindex="0"[^>]*>Synth<\/span>/);
-  assert.match(body, /<button[^>]*>＋ 加入<\/button>/);
+  assert.match(body, /<button[^>]*>\+ INSERT<\/button>/);
   assert.doesNotMatch(body, />GUI<\/button>/);
   assert.doesNotMatch(body, />重新掃描<\/button>/);
+});
+
+test("the production App renders C with real labels, one name rail and all audio controls", () => {
+  const appBody = render(App).body;
+  assert.match(appBody, /class="audio-console/);
+  assert.doesNotMatch(appBody, /ROUDAMIX \/ CONSOLE|MASTER \/ BUS|coltitle/);
+  const consoleBody = render(TrackStrip, { props: stripProps(true) }).body;
+  assert.doesNotMatch(consoleBody, /console-zone|console-channel-heading|STEREO|LOW LATENCY|>DEVICE</);
+  assert.match(consoleBody, />裝置</);
+  assert.match(consoleBody, />送至</);
+  assert.match(consoleBody, />低延遲</);
+  assert.equal([...consoleBody.matchAll(/>Stream<\/button>/g)].length, 1);
+  assert.match(consoleBody, /INSERTS \(1\)/);
+  assert.match(consoleBody, />\+ INSERT</);
+  assert.match(consoleBody, /console-gain[^>]*>100%/);
+  assert.match(consoleBody, /data-console-kind="output"/);
+  assert.doesNotMatch(consoleBody, /\stitle="/);
+  assert.equal([...consoleBody.matchAll(/aria-label="靜音 Stream"/g)].length, 1);
+  assert.equal([...consoleBody.matchAll(/aria-label="Bypass Stream 全部 plugin"/g)].length, 1);
+  assert.equal([...consoleBody.matchAll(/type="range"/g)].length, 1);
+  assert.equal([...consoleBody.matchAll(/<canvas\b/g)].length, 1);
 });
 
 test("渲染輸出的提示一律走 data-tooltip，不出現原生 title 屬性", () => {

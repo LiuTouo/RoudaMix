@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prototype:console": "vite --mode console-prototype --host 127.0.0.1 --port 5190 --open /?prototype=console",
     "build": "vite build",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "test": "npm run test:node && npm run test:modules",

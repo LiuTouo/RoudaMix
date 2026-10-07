@@ -1,0 +1,141 @@
+/* Approved C / minimal console. Shared by the real App and the isolated DEV preview.
+   Keep the 250px strip / 8px lane pitch: virtualization and drag hit-testing use it. */
+:root {
+  --flat-0: #0D0F10; --flat-1: #121416; --flat-2: #181B1E; --flat-3: #181B1E; --flat-4: #202428;
+  --border: #292D31; --divider: #1E2225; --text: #E2E5E8; --text-dim: #9CA5AE;
+  --accent: #6EA8FE; --active: #55C2A3; --ok: #55C2A3; --warn: #D9A441; --err: #DD5A5A;
+  --flat-radius: 3px; color-scheme: dark;
+}
+body { background: var(--flat-0); }
+#app .audio-console {
+  display: flex; flex-direction: column; height: 100%; min-height: 640px; flex-shrink: 0;
+  background: var(--flat-0); color: var(--text);
+  font-family: "Segoe UI", system-ui, sans-serif; font-size: 12px;
+  & * { border-radius: 0; }
+  & .bar { min-height: 32px; padding: 4px 12px; gap: 12px; background: var(--flat-0); border-bottom: 1px solid var(--border); font-size: 11px; }
+  & .bar .mono { font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  & .bar > .dot.ok:not(:first-child) { display: none; }
+  & .bar .gear { width: 26px; height: 26px; padding: 4px; }
+  & .console-telemetry { display: inline-flex; gap: 16px; }
+  & .console-telemetry .dim { font-size: inherit; }
+  & main { padding: 0; gap: 0; }
+  & .board { gap: 0; padding: 0; background: var(--flat-1); }
+  & .group { gap: 0; }
+  & .group + .group { padding-left: 8px; border-left: 1px solid var(--border); }
+  & .colhead { height: 32px; flex: none; padding: 4px 12px; gap: 8px; background: var(--flat-0); border-bottom: 1px solid var(--border); }
+  & .colhead .mini { font-size: 11px; padding: 3px 6px; }
+  & .lanes { background: var(--flat-1); }
+  & .strip { position: relative; padding: 4px 12px 0; gap: 4px; border: 0; border-right: 1px solid var(--divider); background: transparent; }
+  & .head { position: absolute; top: 4px; right: 12px; width: 28px; height: 28px; min-height: 28px; border: 0; background: transparent; padding: 0; }
+  & .sysbadge { background: none; border: 0; padding: 0; color: var(--text-dim); font: 10px var(--mono); }
+  & .head .del { width: 28px; height: 26px; color: var(--text-dim); }
+  & .row { gap: 6px; }
+  & .row.source-row { display: flex; flex-wrap: nowrap; align-content: center; gap: 4px; min-height: 28px; flex-basis: 28px; margin-right: 32px; }
+  & .source-row > .lbl, & .destination-row:not(.routing-row) > .lbl { flex: 0 0 26px; }
+  & .source-row > select { flex: 1 1 0; width: 0; }
+  & .source-row .boundname { line-height: 24px; }
+  & .source-row .mini { padding: 2px 4px; font-size: 11px; white-space: nowrap; }
+  & .source-row .unboundtxt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+  & .source-fx { color: var(--text-dim); font: 11px var(--mono); }
+  & .lbl { color: var(--text-dim); font: 11px "Segoe UI", system-ui, sans-serif; letter-spacing: 0; }
+  & .destination-row:not(.routing-row) { min-height: 28px; flex-basis: 28px; }
+  & .routing-row { padding-right: 72px; min-height: 28px; flex-basis: 28px; }
+  & :is(.row select, .destination-trigger) { border: 0; border-bottom: 1px solid transparent; background: transparent; color: var(--text); min-height: 24px; padding: 3px 4px; font: 12px "Segoe UI", system-ui, sans-serif; }
+  & .row select { appearance: none; padding-right: 18px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='m3 4 3 3 3-3' stroke='%239ca5ae' fill='none'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 3px center; }
+  & .row select option { background: var(--flat-2); color: var(--text); }
+  & :is(.row select, .destination-trigger):hover { background-color: var(--flat-4); border-color: transparent; }
+  & :is(.row select, .destination-trigger):focus-visible { outline: none; border-bottom-color: var(--accent); background-color: var(--flat-2); }
+  & .destination-trigger[aria-expanded="true"] { background: var(--flat-2); border-bottom-color: var(--accent); }
+  & .destination-count { background: none; color: var(--text-dim); font: 10px var(--mono); }
+  & .sys-dest { background: transparent; border: 0; padding: 2px 4px; gap: 6px; min-height: 24px; font: 10px var(--mono); }
+  & .sys-dest:hover { background: var(--flat-4); }
+  & .sys-dest > span:last-child { order: -1; }
+  & .sys-dot { display: none; }
+  & .sys-dest input { appearance: none; width: 7px; height: 7px; border: 1px solid var(--text-dim); border-radius: 50%; background: transparent; }
+  & .sys-dest input:checked { border-color: var(--ok); background: var(--ok); }
+  & .sys-dest:has(input:focus-visible) { outline: 1px solid var(--accent); outline-offset: -1px; }
+  & .latency-toggle { font: 11px "Segoe UI", system-ui, sans-serif; color: var(--text-dim); }
+  & .latency-toggle input { width: 12px; height: 12px; accent-color: var(--ok); }
+  /* Three 28px control rows, 4px gaps/padding; M/B shares the last row. */
+  & .console-switches { position: absolute; right: 12px; top: 68px; display: flex; align-items: center; gap: 6px; width: 62px; height: 28px; padding: 0; border: 0; }
+  & button { border: 0; border-radius: 3px; background: transparent; color: var(--text); }
+  & button:enabled:hover { background: var(--flat-4); border-color: transparent; }
+  & .console-switches .mute { flex: none; width: 28px; min-width: 28px; height: 26px; min-height: 26px; padding: 0; background: var(--flat-0); color: var(--text-dim); font: 11px var(--mono); border: 1px solid var(--border); }
+  & .console-switches .mute:hover { background: var(--flat-4); }
+  & .console-switches .mute.on { background: #382022; color: #F0ABAB; border-color: var(--err); }
+  & .console-switches .rack-b.on { background: #332A1B; color: var(--warn); border-color: var(--warn); }
+  & button:disabled { opacity: .4; }
+  & .lower { display: flex; flex-direction: row; gap: 8px; min-height: 327px; }
+  & .vstcol { order: 2; flex: 1; min-height: 0; gap: 0; }
+  & .vsthead { height: 18px; padding: 2px 0; background: transparent; border: 0; color: var(--text-dim); font: 9px var(--mono); letter-spacing: .08em; }
+  & .vst { height: auto; min-height: 72px; max-height: 100%; flex: 1 1 0; border: 0; background: transparent; }
+  & .vstlist { padding: 0; gap: 0; background: transparent; counter-reset: insert; }
+  & .plug { display: grid; grid-template-columns: 14px 18px minmax(0, 1fr) 18px 18px; align-items: center; gap: 2px; min-height: 28px; flex: none; padding: 1px 0; border: 0; background: transparent; counter-increment: insert; }
+  & .plug::before { content: counter(insert, decimal-leading-zero); grid-column: 1; grid-row: 1; color: var(--text-dim); font: 9px var(--mono); }
+  & .plug:not(.placeholder) > .plugname { grid-column: 3; grid-row: 1; font-size: 11px; padding: 0; line-height: 24px; }
+  & .plug:not(.placeholder) .plugactions { display: contents; }
+  & .plug .power { grid-column: 2; grid-row: 1; }
+  & .plug .monitor-bypass { grid-column: 4; grid-row: 1; color: var(--text-dim); font: 10px var(--mono); }
+  & .plug:not(.placeholder) .del { grid-column: 5; grid-row: 1; color: var(--text-dim); }
+  & .plug .power .picon { display: none; }
+  & .plug .power::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+  & .plug .power.off { opacity: 1; }
+  & .plug .power.off::before { background: var(--warn); }
+  & .plug:has(.power.off) .plugname { color: var(--text-dim); }
+  & .plug:has(.power.off)::before { color: var(--warn); }
+  & .plug:hover { background: var(--flat-2); }
+  & .plug:focus-within { background: var(--flat-4); }
+  & .plug .plugicon { width: 18px; min-width: 18px; height: 24px; border: 0; border-radius: 3px; }
+  & .plug .plugicon:hover { background: var(--flat-4); opacity: 1; }
+  & .plug .monitor-bypass.on { color: var(--warn); background: #332A1B; border: 0; }
+  & .plug.placeholder { opacity: 1; border-left: 2px solid var(--warn); grid-template-columns: 18px minmax(0, 1fr); }
+  & .plug.placeholder .plugtitle { grid-column: 2; }
+  & .plug.placeholder .plugactions { grid-column: 2; height: auto; }
+  & .vstfoot { border: 0; border-top: 1px solid var(--divider); background: transparent; padding: 2px 0; }
+  & .vstfoot .add { min-height: 24px; width: 100%; text-align: left; padding: 2px 0; font: 10px var(--mono); color: var(--text-dim); letter-spacing: .05em; }
+  & .empty-slot { justify-content: flex-start; min-height: 28px; padding: 4px 0; border: 0; font-size: 11px; color: var(--text-dim); }
+  & .vstgrip { height: 6px; background: transparent; border: 0; }
+  & .vstgrip::after { height: 1px; width: 24px; background: var(--text-dim); opacity: .4; }
+  & .vstgrip:hover::after { background: var(--accent); opacity: 1; }
+  & .fader { order: 1; flex: 0 0 auto; min-height: 327px; justify-content: center; gap: 6px; padding: 4px 0 2px; border-top: 1px solid var(--divider); }
+  & .fctl { gap: 0; width: 20px; }
+  & .slotwrap { width: 20px; }
+  & .slotwrap input[type="range"] { width: 20px; min-width: 20px; min-height: 320px; }
+  & .slotwrap input[type="range"]::-webkit-slider-runnable-track { width: 4px; border: 0; border-radius: 0; background: var(--flat-0); box-shadow: none; }
+  & .slotwrap input[type="range"]::-webkit-slider-thumb { width: 20px; height: 30px; margin-left: -8px; border: 1px solid #A9B1B8; border-radius: 3px; box-shadow: none; background: linear-gradient(180deg, #89929B 0 calc(50% - 1px), #252A2F calc(50% - 1px) calc(50% + 1px), #89929B calc(50% + 1px)); }
+  & .slotwrap input[type="range"]:focus-visible::-webkit-slider-thumb { border-color: var(--accent); }
+  & .slotwrap::before { left: -7px; top: 15px; bottom: 15px; width: 7px; background: repeating-linear-gradient(180deg, #525B63 0 1px, transparent 1px calc(100% / 12)); }
+  /* 30px thumb, borderless rail: unity is 2/3 of the H−30px centre travel. */
+  & .slotwrap::after { background: var(--text-dim); left: -10px; bottom: calc(15px + (100% - 30px) * 2 / 3 - 1px); }
+  & .meterwrap { flex: 0 0 46px; background: transparent; border: 0; }
+  /* Keep TrackStrip's inline matteColor across the entire name rail, not a narrow mark. */
+  & .colorbar { flex: none; justify-content: flex-start; height: 32px; margin: 0 -12px; padding: 0 12px; border: 0; border-top: 1px solid var(--divider); box-shadow: none; }
+  & .colorbar .name { padding: 4px 0; border: 0; background: transparent; text-align: left; color: var(--text); font-weight: 500; font-size: 12px; max-width: calc(100% - 48px); }
+  & .colorbar .name:hover { background: rgb(0 0 0 / 15%); color: var(--text); }
+  & .colorbar .barpick:focus-visible { opacity: 1; background: transparent; clip-path: inset(0 calc(100% - 4px) 0 0); }
+  & .console-gain { margin-left: auto; font-size: 11px; color: var(--text); pointer-events: none; position: relative; }
+  & .nameedit { background: var(--flat-2); text-align: left; border: 0; border-bottom: 1px solid var(--accent); }
+  & button.danger:enabled:hover { background: #382022; color: #F0ABAB; }
+  & button.primary { background: var(--accent); color: var(--flat-0); }
+  & button.primary:enabled:hover { background: var(--text); }
+  & :focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+  & :is(dialog:not(.ctxdlg), .latency-drawer, .destination-popup, .ctx, .capsule, .gaintip) { --surface: var(--flat-2); --section: var(--flat-2); --control: var(--flat-2); --hover: var(--flat-4); background: var(--surface); border: 1px solid var(--border); border-radius: 3px; box-shadow: none; }
+  & :is(.dialog-head, .drawer-head, .tabs, .formrow, .update-status, .latency-output, .plugin-thead, .plugin-group summary) { background: transparent; border-color: var(--border); }
+  & :is(.plugin-row, .app) { background: transparent; border: 0; border-bottom: 1px solid var(--divider); border-radius: 0; }
+  & :is(.plugin-row, .app):enabled:hover { background: var(--flat-4); }
+  & .tabs button { border: 0; border-bottom: 1px solid transparent; background: transparent; border-radius: 0; }
+  & .tabs button.on { color: var(--accent); background: var(--flat-4); border-bottom-color: var(--accent); }
+  & :is(.destination-option, .ctxitem):hover { background: var(--flat-4); }
+  & .capsule.iserr { border-color: var(--err); }
+  & .capsule.iserr .capsule-body { color: #F0ABAB; }
+  & .ctxdlg { background: transparent; }
+  & .ctxdlg:focus-visible { outline: none; }
+  & .startcard { border: 0; background: transparent; }
+}
+@media (max-width: 1000px) {
+  #app .audio-console .bar { flex-wrap: wrap; gap: 6px 12px; }
+  #app .audio-console .console-telemetry { flex-wrap: wrap; gap: 6px 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #app .audio-console * { transition: none !important; animation: none !important; }
+}

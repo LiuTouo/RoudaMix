@@ -1,7 +1,6 @@
 <script lang="ts">
-  // 軌條:輸入/輸出軌共用。由上而下 = 名稱列 → 來源/輸出裝置 → 目的地多選 →
-  // VST 機架(電源=bypass、單擊名稱開 editor、上→下=訊號序)→ 推桿+靜音 →
-  // 錶 → 底部顏色條。engine 溝通自含(ipc 直呼),App 只餵狀態。
+  // 軌條:輸入/輸出軌共用。上方為來源、路由與 M/B；下方左錶右 VST 機架，
+  // 名稱只顯示於底部識別色帶。engine 溝通自含(ipc 直呼),App 只餵狀態。
   import MeterCanvas from "./MeterCanvas.svelte";
   import { powerOff, powerOn } from "./icons";
   import { mountDragGhost, removeDragGhost } from "./ghost";
@@ -691,7 +690,9 @@
   // trackId 在此元件生命週期不變(App 以 trackId 為 key each),取初始值即可
   // svelte-ignore state_referenced_locally
   const hKey = `rmix.vsth.${track.trackId}`;
+  const persistRackHeight = !(import.meta.env.DEV && import.meta.env.VITE_CONSOLE_PREVIEW);
   function readH(): number | null {
+    if (!persistRackHeight) return null; // Only the isolated preview skips persistence.
     try {
       const v = Number(localStorage.getItem(hKey));
       return Number.isFinite(v) && v >= 72 ? v : null;
@@ -723,7 +724,7 @@
     if (boxH > max) {
       boxH = max;
       try {
-        localStorage.setItem(hKey, String(max));
+        if (persistRackHeight) localStorage.setItem(hKey, String(max));
       } catch {}
     }
   });
@@ -743,7 +744,7 @@
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       try {
-        if (boxH !== null) localStorage.setItem(hKey, String(boxH));
+        if (persistRackHeight && boxH !== null) localStorage.setItem(hKey, String(boxH));
       } catch {} // 隱私模式等存不了就算了,下次自適應
     };
     window.addEventListener("pointermove", move);
@@ -752,7 +753,7 @@
   function onGripDbl() {
     boxH = null;
     try {
-      localStorage.removeItem(hKey);
+      if (persistRackHeight) localStorage.removeItem(hKey);
     } catch {}
   }
 
@@ -869,6 +870,7 @@
   class:unbound={needsRebind}
   draggable="true"
   data-track-id={track.trackId}
+  data-console-kind={track.kind}
   role="listitem"
   aria-label="軌道 {track.name}"
   data-tooltip="拖曳軌道空白區調整順序；點下方色塊的名稱可改名、點色塊其他處可換色；按右鍵開啟排序選單。"
@@ -879,21 +881,12 @@
   }}
 >
   <div class="head">
-    <span class="badge">{track.kind}</span>
-    {#if latencyEnabled && isOutput && track.latencyPolicy === "lowLatency"}
-      <span
-        class="badge latency-low"
-        data-tooltip="Low-Latency Output 不加入 Compensation Delay，因此不保證平行輸入路徑同步。"
-        >LL</span
-      >
-    {/if}
-    <span style="flex:1"></span>
     {#if track.systemRole}
       <!-- 系統輸出:每 session 恰好一條 monitor/stream,不可刪(engine 也擋) -->
       <span
         class="sysbadge"
         data-tooltip="系統{track.systemRole === "monitor" ? "監聽" : "串流"}輸出軌：可重新命名並調整裝置與路由；為維持固定輸出角色，無法刪除。"
-        >系統</span
+        >{track.systemRole === 'monitor' ? 'MON' : 'STR'}</span
       >
     {:else}
       <button
@@ -906,9 +899,9 @@
     {/if}
   </div>
 
-  <div class="row">
+  <div class="row source-row">
     {#if track.kind === "audio"}
-      <span class="lbl">輸入</span>
+      <span class="lbl">來源</span>
       <select
         value={track.source?.type === "asioIn"
           ? track.source.mono
@@ -919,6 +912,7 @@
             : ""}
         onchange={(e) => setSource(e.currentTarget.value)}
         onfocus={loadCaptureDevices}
+        aria-label="{track.name} 輸入來源"
         data-tooltip="ASIO 輸入 pair 或系統麥克風(WASAPI capture);清單在點開時載入。"
       >
         <option value="">(無)</option>
@@ -953,7 +947,7 @@
         {/if}
       </select>
     {:else if track.kind === "app"}
-      <span class="lbl">輸入</span>
+      <span class="lbl">來源</span>
       {#if needsRebind}
         <!-- P1-C:session 恢復後未綁定(engine 不猜 PID)→ 明確選擇程式 -->
         <span
@@ -985,12 +979,12 @@
       {/if}
     {:else if track.kind === "fx"}
       <span
-        class="lbl dim"
+        class="source-fx"
         data-tooltip="FX 軌不直接擷取應用程式；請將上游軌道的輸出路由至此軌，作為 insert 效果鏈。"
-        >insert · 無輸入</span
+        >FX</span
       >
     {:else}
-      <span class="lbl">輸出裝置</span>
+      <span class="lbl">裝置</span>
       <select
         value={track.output?.type === "asioOut"
           ? `asio:${track.output.channel}`
@@ -999,6 +993,7 @@
             : ""}
         onchange={(e) => setOutput(e.currentTarget.value)}
         onfocus={loadRenderDevices}
+        aria-label="{track.name} 輸出裝置"
         data-tooltip={track.systemRole === "monitor"
           ? "指定監聽輸出的 ASIO channel pair。"
           : "指定串流輸出的 WASAPI 裝置，例如 VB-CABLE 等虛擬音訊端點。"}
@@ -1026,7 +1021,7 @@
   </div>
 
   <div class="row destination-row">
-    <span class="lbl">輸出到</span>
+    <span class="lbl">送至</span>
     <DestinationSelect trackId={track.trackId} trackName={track.name}
       options={destCandidates(tracks, track.trackId)} selected={shownDests}
       pending={destsLocal !== null} onToggle={toggleDest}
@@ -1035,7 +1030,6 @@
 
   {#if sysOuts.length > 0}
     <div class="row destination-row routing-row">
-      <span class="lbl">系統輸出</span>
       {#each sysOuts as sys (sys.trackId)}
         <label class="sys-dest">
           <input type="checkbox" checked={shownDests.includes(sys.trackId)}
@@ -1043,13 +1037,13 @@
             aria-label="{track.name} 路由到{sysLabel(sys)}"
             data-tooltip="直接切換此輸入軌是否送往{sysLabel(sys)}輸出；與「輸出到」同步套用。" />
           <span class="sys-dot" style:background={matteColor(sys.color)} aria-hidden="true"></span>
-          <span>{sysLabel(sys)}</span>
+          <span>{sys.systemRole === 'monitor' ? 'MON' : 'STR'}</span>
         </label>
       {/each}
     </div>
   {:else if track.kind === "fx"}
     <div class="row destination-row routing-row" data-tooltip="側鏈:來源軌訊號只進此軌插件的 aux input,不進混音">
-      <span class="lbl">側鏈來源</span>
+      <span class="lbl">側鏈</span>
       <DestinationSelect trackId={track.trackId} trackName={track.name}
         options={sidechainCandidates(tracks)} selected={shownSidechain}
         pending={sidechainLocal !== null} onToggle={toggleSidechain}
@@ -1076,26 +1070,26 @@
     <div class="row routing-row" aria-hidden="true"></div>
   {/if}
 
+  {#snippet muteSwitch()}
+    <button class="mini mute" class:on={track.mute} aria-pressed={track.mute}
+      aria-label={track.mute ? `靜音中(點此取消)` : `靜音 ${track.name}`}
+      onclick={() => setMute(!track.mute)}
+      data-tooltip={track.mute ? "此軌目前已靜音；按下可取消靜音。" : "將此軌靜音。"}>M</button>
+  {/snippet}
+  {#snippet rackSwitch()}
+    <button class="mini mute rack-b" class:on={allBypassed} disabled={rackPlugins.length === 0}
+      aria-pressed={allBypassed}
+      aria-label={allBypassed ? `恢復 ${track.name} 全部 plugin(目前全軌 bypass 中)` : `Bypass ${track.name} 全部 plugin`}
+      onclick={bypassAll}
+      data-tooltip={allBypassed ? "此軌全部 plugin 目前皆為 bypass；按下可全部恢復處理。" : "將此軌所有 plugin 一次切為 bypass；再按一次全部恢復。"}>B</button>
+  {/snippet}
+  <div class="console-switches">{@render muteSwitch()}{@render rackSwitch()}</div>
   <div class="lower">
   <div class="vstcol">
   <!-- 標題列在機架盒子外(正上方);右鍵仍可開機架選單(button 已在 rackMenu 內過濾)。 -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="vsthead" oncontextmenu={rackMenu}>
-    <button
-      class="mini mute rack-b"
-      class:on={allBypassed}
-      disabled={rackPlugins.length === 0}
-      aria-pressed={allBypassed}
-      aria-label={allBypassed
-        ? `恢復 ${track.name} 全部 plugin(目前全軌 bypass 中)`
-        : `Bypass ${track.name} 全部 plugin`}
-      onclick={bypassAll}
-      data-tooltip={allBypassed
-        ? "此軌全部 plugin 目前皆為 bypass；按下可全部恢復處理。"
-        : "將此軌所有 plugin 一次切為 bypass；再按一次全部恢復。"}
-      >B</button
-    >
-    <span>VST 機架 ({track.plugins.length})</span>
+    <span>INSERTS ({track.plugins.length})</span>
     {#if $pluginTransfer.busy}<span class="dim" role="status">處理中…</span>{/if}
   </div>
   <!-- 機架是可聚焦的右鍵選單入口，保留 group 語意及內部控制項。 -->
@@ -1234,7 +1228,7 @@
         class="mini add"
         onclick={() => { pluginPickerOpen = true; }}
         data-tooltip="開啟共用的 VST plugin 清單；不會自動重新掃描。"
-        >＋ 加入</button
+        >+ INSERT</button
       >
     </div>
   </div>
@@ -1248,6 +1242,9 @@
       onGripDown(e);
     }}
     ondblclick={onGripDbl}
+    onkeydown={(e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onGripDbl(); }
+    }}
     data-tooltip="拖曳調整 plugin 區域高度；雙擊或按 Enter 還原預設高度。"
   ></button>
   </div>
@@ -1270,15 +1267,6 @@
 
   <div class="fader">
     <div class="fctl">
-      <button
-        class="mini mute"
-        class:on={track.mute}
-        aria-pressed={track.mute}
-        aria-label={track.mute ? `靜音中(點此取消)` : `靜音 ${track.name}`}
-        onclick={() => setMute(!track.mute)}
-        data-tooltip={track.mute ? "此軌目前已靜音；按下可取消靜音。" : "將此軌靜音。"}
-        >M</button
-      >
       <div class="slotwrap">
         <input
           type="range"
@@ -1298,7 +1286,6 @@
           data-tooltip="調整軌道音量；滾輪每格微調 2%；Ctrl + 按一下還原為 100%。目前為 {Math.round(shownGain * 100)}%。"
         />
       </div>
-      <span class="gain mono">{Math.round(shownGain * 100)}%</span>
     </div>
     <div class="meterwrap">
       {#if metered}
@@ -1349,6 +1336,7 @@
         >{track.name}</button
       >
     {/if}
+    <span class="console-gain mono">{Math.round(shownGain * 100)}%</span>
   </div>
 
   {#if err || track.error}
@@ -1476,13 +1464,6 @@
     border: 1px solid var(--accent);
     border-radius: 4px;
     background: rgb(0 0 0 / 0.35);
-  }
-  .badge {
-    font-size: 10px;
-    color: var(--text-dim);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 0 4px;
   }
   .row {
     /* 各類音軌共用 Audio 軌的列高，讓下方推桿與機架起點一致。 */
@@ -1918,10 +1899,6 @@
     flex: 0 0 46px;
     min-height: 0;
     display: flex;
-  }
-  .gain {
-    font-size: 11px;
-    color: var(--text-dim);
   }
   .add {
     align-self: flex-start;

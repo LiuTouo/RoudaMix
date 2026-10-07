@@ -10,7 +10,7 @@ vi.mock("../protocol-commands.generated", async (importOriginal) => ({
 }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
 let component: ReturnType<typeof mount>;
-const bBtn = () => document.querySelector<HTMLButtonElement>(".strip .vsthead .rack-b")!;
+const bBtn = () => document.querySelector<HTMLButtonElement>(".strip .console-switches .rack-b")!;
 const bypassCalls = () => command.mock.calls.filter(([kind]) => kind === "set_bypass");
 
 function makeTrack(plugins: Partial<Track["plugins"][number]>[]): Track {
@@ -64,11 +64,14 @@ describe("全軌 Bypass B 鈕", () => {
     await show(makeTrack([]));
     expect(bBtn().disabled).toBe(true);
   });
-  it("標題列在機架盒子外且保留右鍵機架選單", async () => {
+  it("M/B 控制區與標題在機架盒子外且保留右鍵機架選單", async () => {
     await show(makeTrack([{ instanceId: 1 }]));
     const rack = document.querySelector<HTMLElement>(".strip .vst")!;
     const head = document.querySelector<HTMLElement>(".strip .vsthead")!;
-    expect(head.querySelector(".rack-b")).not.toBeNull();
+    const switches = document.querySelector<HTMLElement>(".strip .console-switches")!;
+    expect(switches.querySelector(".rack-b")).not.toBeNull();
+    expect(switches.querySelector(".mute:not(.rack-b)")).not.toBeNull();
+    expect(rack.contains(switches)).toBe(false);
     expect(rack.contains(head)).toBe(false); // 盒子內不含標題列
   });
 });

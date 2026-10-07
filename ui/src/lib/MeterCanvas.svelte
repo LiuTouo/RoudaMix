@@ -10,9 +10,9 @@
 
   const FLOOR_DB = -60;
   const WARNING_DB = -6;
-  const NORMAL_COLOR = "#39c978";
-  const WARNING_COLOR = "#f0a33a";
-  const CLIP_COLOR = "#ef5350";
+  const NORMAL_COLOR = "#40c985";
+  const WARNING_COLOR = "#d9a441";
+  const CLIP_COLOR = "#dd5a5a";
   const TICK_COLOR = "#8a93a3";
 
   // prop → 非響應式槽(主 rAF effect 不依賴 strip,45Hz 更新不重啟 rAF 迴圈)
@@ -91,7 +91,7 @@
 
     // 軌底 + 淡格線(與舊版逐像素同布局)
     for (const b of [{ x: 0 }, { x: barW + 3 }]) {
-      s.fillStyle = "#171a1f";
+      s.fillStyle = "#181b1e";
       s.fillRect(b.x, top, barW, plotH);
     }
     s.fillStyle = "rgba(255, 255, 255, 0.06)";

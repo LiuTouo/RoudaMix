@@ -254,7 +254,7 @@ it.each(["audio", "app", "fx", "output"] as const)("%s 軌道接線：正確目�
   } });
   mounted.push(component);
   flushSync();
-  const opener = button("＋ 加入");
+  const opener = button("+ INSERT");
   opener.focus();
   opener.click();
   flushSync();

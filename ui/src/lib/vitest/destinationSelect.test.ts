@@ -169,7 +169,8 @@ describe("輸入軌系統輸出快速勾選", () => {
     show(systemFixtures());
     expect(quickBoxes()).toHaveLength(2);
     expect(quickBoxes().map((input) => input.checked)).toEqual([true, false]);
-    expect(document.querySelector(".sys-dest")?.textContent).toContain("監聽");
+    expect(document.querySelector(".sys-dest")?.textContent).toContain("MON");
+    expect(quickBoxes()[0].getAttribute("aria-label")).toContain("監聽");
     expect(checkboxes()).toHaveLength(1); // popup 只剩 fx 混響
     expect(trigger().textContent).toContain("監聽");
   });
