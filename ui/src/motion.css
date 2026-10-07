@@ -1,0 +1,132 @@
+/* ============================================================
+   RoudaMix 動畫系統 — 一律播放，不連動 OS「動畫效果」設定
+   ------------------------------------------------------------
+   WebView2 在 Windows 關閉視窗動畫時，只是把 CSS 的 reduced-motion
+   媒體查詢回報為 reduce；CSS 動畫/transition 與 rAF 本身不受 OS
+   影響。因此只要不以該媒體查詢閘門任何動畫，動畫就天然免疫 ——
+   全 UI 禁用該媒體查詢
+   （ui/src/lib/motion-policy.test.ts 靜態把關；決策見
+   docs/adr/0007-always-animate-regardless-of-os-motion-setting.md）。
+
+   鐵律：只動 transform/translate/scale/opacity 與顏色三態
+   （color / background-color / border-color），不觸發 layout。
+   匯入順序：app.css → flat-theme.css → console.css → 本檔（最後覆蓋）。
+   ============================================================ */
+
+:root {
+  /* 時長階梯：專業克制（90–180ms；離場一律比進場短） */
+  --motion-dur-1: 90ms; /* hover／按下／狀態色切換 */
+  --motion-dur-2: 140ms; /* tooltip、右鍵選單、小型浮層 */
+  --motion-dur-3: 180ms; /* 對話框、抽屜、capsule、軌道進場 */
+  --motion-dur-out: 120ms; /* 一律離場 */
+  /* 曲線：進場快到定位不彈跳；離場加速退場；狀態色走標準曲線 */
+  --motion-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --motion-ease-in: cubic-bezier(0.55, 0, 1, 0.45);
+  --motion-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* ---- 控制狀態微回饋：hover／啟用色 90ms 平滑，不再瞬間跳色 ---- */
+#app
+  :is(
+    button,
+    select,
+    input,
+    .plug,
+    .ctxitem,
+    .destination-option,
+    .sys-dest,
+    .capsule-body,
+    .capsule-btn
+  ) {
+  transition:
+    background-color var(--motion-dur-1) var(--motion-ease-standard),
+    border-color var(--motion-dur-1) var(--motion-ease-standard),
+    color var(--motion-dur-1) var(--motion-ease-standard);
+}
+#app .vstgrip::after {
+  transition:
+    background-color var(--motion-dur-1) var(--motion-ease-standard),
+    opacity var(--motion-dur-1) var(--motion-ease-standard);
+}
+
+/* ---- 原生 <dialog>：淡入＋微上浮（用獨立 translate/scale 屬性，
+   不干擾 scoped 的 translate(-50%, -50%) 置中 transform；Chromium
+   會以 translate→rotate→scale→transform 順序合成）。
+   @starting-style + transition-behavior: allow-discrete（WebView2
+   evergreen 支援；不支援時退化為瞬切，不破功能）。
+   右鍵選單透明外殼（.ctxdlg）不適用，其選單本體走 Svelte 過場。 ---- */
+#app dialog:not(.ctxdlg) {
+  opacity: 1;
+  translate: 0 0;
+  scale: 1;
+  transition:
+    opacity var(--motion-dur-3) var(--motion-ease-out),
+    translate var(--motion-dur-3) var(--motion-ease-out),
+    scale var(--motion-dur-3) var(--motion-ease-out),
+    display var(--motion-dur-3) allow-discrete,
+    overlay var(--motion-dur-3) allow-discrete;
+}
+#app dialog:not(.ctxdlg)[open] {
+  @starting-style {
+    opacity: 0;
+    translate: 0 6px;
+    scale: 0.98;
+  }
+}
+#app dialog:not(.ctxdlg):not([open]) {
+  opacity: 0;
+  translate: 0 4px;
+  scale: 0.98;
+  transition:
+    opacity var(--motion-dur-out) var(--motion-ease-in),
+    translate var(--motion-dur-out) var(--motion-ease-in),
+    scale var(--motion-dur-out) var(--motion-ease-in),
+    display var(--motion-dur-out) allow-discrete,
+    overlay var(--motion-dur-out) allow-discrete;
+}
+#app dialog:not(.ctxdlg)::backdrop {
+  opacity: 1;
+  transition:
+    opacity var(--motion-dur-3) var(--motion-ease-out),
+    display var(--motion-dur-3) allow-discrete,
+    overlay var(--motion-dur-3) allow-discrete;
+}
+#app dialog:not(.ctxdlg)[open]::backdrop {
+  @starting-style {
+    opacity: 0;
+  }
+}
+#app dialog:not(.ctxdlg):not([open])::backdrop {
+  opacity: 0;
+  transition:
+    opacity var(--motion-dur-out) var(--motion-ease-in),
+    display var(--motion-dur-out) allow-discrete,
+    overlay var(--motion-dur-out) allow-discrete;
+}
+
+/* ---- popover 浮層（目的地彈出選單）：同 dialog 手法，節奏較快。
+   tooltip 層掛在 body（#app 之外），不受本規則影響。 ---- */
+#app [popover] {
+  opacity: 1;
+  translate: 0 0;
+  transition:
+    opacity var(--motion-dur-2) var(--motion-ease-out),
+    translate var(--motion-dur-2) var(--motion-ease-out),
+    display var(--motion-dur-2) allow-discrete,
+    overlay var(--motion-dur-2) allow-discrete;
+}
+#app [popover]:popover-open {
+  @starting-style {
+    opacity: 0;
+    translate: 0 4px;
+  }
+}
+#app [popover]:not(:popover-open) {
+  opacity: 0;
+  translate: 0 2px;
+  transition:
+    opacity var(--motion-dur-out) var(--motion-ease-in),
+    translate var(--motion-dur-out) var(--motion-ease-in),
+    display var(--motion-dur-out) allow-discrete,
+    overlay var(--motion-dur-out) allow-discrete;
+}

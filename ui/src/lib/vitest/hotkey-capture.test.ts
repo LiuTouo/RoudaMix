@@ -11,6 +11,19 @@ beforeAll(() => {
   (globalThis as Record<string, unknown>).ResizeObserver = class {
     observe() {} unobserve() {} disconnect() {}
   };
+  // jsdom 沒有 WAAPI;Svelte transition(fly/fade)走 element.animate,給 noop stub
+  if (!Element.prototype.animate) {
+    (Element.prototype as unknown as Record<string, unknown>).animate = function (
+      this: Element,
+    ) {
+      return {
+        cancel() {},
+        finished: Promise.resolve(),
+        addEventListener() {},
+        removeEventListener() {},
+      } as unknown as Animation;
+    };
+  }
 });
 
 const mocks = vi.hoisted(() => ({

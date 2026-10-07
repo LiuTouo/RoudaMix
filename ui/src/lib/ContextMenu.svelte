@@ -1,6 +1,8 @@
 <script lang="ts">
   // P2-M:右鍵選單(移到最前/最後/上移/下移)。原生 contextmenu 不全域攔 —— 只在
   // 有選單項的元素上開;空白處/錯誤文字的右鍵照常(可複製)。
+  // 進場動畫用純 CSS @keyframes(.ctx 樣式),不用 Svelte transition —— 後者走 WAAPI,
+  // jsdom 測試環境沒有 element.animate。
   let {
     menu,
     onClose,
@@ -43,6 +45,8 @@
     onmousedown={(e) => e.target === dlg && onClose()}
   >
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+    <!-- 選單本體 140ms 微下上浮淡入(純 CSS,見 .ctx);離場瞬間(桌面選單慣例)。
+         一律播放,不連動 OS 動畫設定(ADR 0007) -->
     <div class="ctx" role="menu" aria-label={menu.label}>
       {#each menu.items as item, i (i)}
         <button
@@ -90,6 +94,14 @@
     border-radius: 6px;
     padding: 4px;
     box-shadow: 0 8px 24px rgb(0 0 0 / 0.55);
+    /* 進場:微下上浮淡入;離場瞬間。一律播放,不連動 OS 動畫設定(ADR 0007) */
+    animation: ctx-in var(--motion-dur-2) var(--motion-ease-out);
+  }
+  @keyframes ctx-in {
+    from {
+      opacity: 0;
+      translate: 0 4px;
+    }
   }
   .ctxitem {
     background: none;

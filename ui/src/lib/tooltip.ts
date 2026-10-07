@@ -55,6 +55,7 @@ export function installTooltip(root: Document = document): () => void {
     pendingTarget = null;
     removeDescription(activeTarget);
     activeTarget = null;
+    tooltip.classList.remove("show"); // 隱藏維持瞬間:不播離場動畫
     if (popoverSupported && tooltip.matches(":popover-open")) tooltip.hidePopover();
     tooltip.hidden = true;
     tooltip.textContent = "";
@@ -96,6 +97,9 @@ export function installTooltip(root: Document = document): () => void {
     tooltip.hidden = false;
     if (popoverSupported) tooltip.showPopover();
     position(anchor);
+    // position() 內的 getBoundingClientRect 已強制 reflow（初態 opacity:0 已計算），
+    // 此刻加 class 才會從初態淡入，而非直接以終態出現。
+    tooltip.classList.add("show");
   }
 
   function schedule(target: HTMLElement, anchor: Anchor, immediate = false) {

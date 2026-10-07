@@ -138,7 +138,5 @@ body { background: var(--flat-0); }
   #app .audio-console .bar { flex-wrap: wrap; gap: 6px 12px; }
   #app .audio-console .console-telemetry { flex-wrap: wrap; gap: 6px 12px; }
 }
-@media (prefers-reduced-motion: reduce) {
-  /* 落點指示(.dropbefore/.dropafter)是功能性回饋:依需求在 OS 動畫關閉時仍要播放 */
-  #app .audio-console *:not(.dropbefore, .dropafter) { transition: none !important; animation: none !important; }
-}
+/* 動畫政策：一律播放，不連動 OS「動畫效果」設定（ADR 0007；
+   motion-policy.test.ts 靜態把關，禁用 reduced-motion 媒體查詢）。 */

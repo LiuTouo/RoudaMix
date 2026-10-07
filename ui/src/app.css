@@ -196,6 +196,17 @@ button:disabled {
   letter-spacing: 0.01em;
   pointer-events: none;
   user-select: none;
+  /* 顯示過場:tooltip.ts 在定位（強制 reflow）後加 .show,由此處淡入;
+   * 隱藏維持瞬間（桌面工具慣例）。一律播放,不連動 OS 動畫設定。 */
+  opacity: 0;
+  transform: translateY(2px);
+  transition:
+    opacity var(--motion-dur-2) var(--motion-ease-out),
+    transform var(--motion-dur-2) var(--motion-ease-out);
+}
+.app-tooltip.show {
+  opacity: 1;
+  transform: none;
 }
 
 .app-tooltip[hidden] {
@@ -214,8 +225,8 @@ button:disabled {
   box-shadow:
     0 18px 36px rgba(0, 0, 0, 0.45),
     0 6px 12px rgba(0, 0, 0, 0.3);
-  /* 拿起瞬間:從原尺寸撐到懸浮尺寸,加強「剛離手」感;無 reduced-motion 防護,
-   * Win11 動畫關閉也要生效(使用者指定);陰影同步淡入避免彈跳 */
+  /* 拿起瞬間:從原尺寸撐到懸浮尺寸,加強「剛離手」感;陰影同步淡入避免彈跳。
+   * 動畫政策:一律播放,不連動 OS 動畫設定（ADR 0007） */
   animation: ghost-lift 150ms ease-out;
 }
 @keyframes ghost-lift {

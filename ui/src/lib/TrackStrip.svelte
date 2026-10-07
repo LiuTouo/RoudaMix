@@ -2,6 +2,7 @@
   // 軌條:輸入/輸出軌共用。上方為來源、路由與 M/B；下方左錶右 VST 機架，
   // 名稱只顯示於底部識別色帶。engine 溝通自含(ipc 直呼),App 只餵狀態。
   import MeterCanvas from "./MeterCanvas.svelte";
+  import { fade } from "svelte/transition";
   import { powerOff, powerOn } from "./icons";
   import { mountDragGhost, removeDragGhost } from "./ghost";
   import { open as openFile } from "@tauri-apps/plugin-dialog";
@@ -67,6 +68,8 @@
     dropBefore = false,
     dropAfter = false,
     dragging = false,
+    /** 新增軌淡入時長(ms);0 = 不播。由 App 的 justAddedIds 閘門控制,虛擬化捲動重建不誤觸發 */
+    introMs = 0,
   }: {
     track: Track;
     tracks: Track[];
@@ -89,6 +92,7 @@
     dropBefore?: boolean;
     dropAfter?: boolean;
     dragging?: boolean;
+    introMs?: number;
   } = $props();
 
   let err = $state("");
@@ -897,6 +901,7 @@
 
 <div
   class="strip"
+  in:fade={{ duration: introMs }}
   class:out={isOutput}
   class:dropbefore={dropBefore}
   class:dropafter={dropAfter}
@@ -1447,25 +1452,33 @@
     border-style: dashed;
     border-color: var(--accent);
   }
-  /* 暫態落點「對焦」:落點整卡亮框+淡藍染色,呼吸式明暗。
-   * 功能性回饋:console.css 的 reduced-motion 防護已豁免本指示,OS 動畫關閉仍播放。
-   * !important 優先於任何主題的面板陰影;inset 999px 全卡染色不被 overflow 裁切。 */
+  /* 暫態落點「對焦」:落點整卡亮框＋淡藍染色,呼吸式明暗。
+   * 呼吸改由 ::before 染色層動 opacity（合成器）,不再逐幀重繪
+   * box-shadow/outline。功能性回饋:一律播放,不連動 OS 動畫設定（ADR 0007）。 */
   .strip.dropbefore,
   .strip.dropafter {
-    box-shadow: inset 0 0 0 999px color-mix(in srgb, var(--accent) 10%, transparent) !important;
     outline: 2px solid var(--accent);
     outline-offset: -2px;
+  }
+  .strip.dropbefore::before,
+  .strip.dropafter::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 2; /* 蓋過內容（含 absolute .head）;不攔事件 */
+    border-radius: inherit;
+    background: var(--accent);
+    opacity: 0.1;
+    pointer-events: none;
     animation: drop-focus 1.2s ease-in-out infinite;
   }
   @keyframes drop-focus {
     0%,
     100% {
-      box-shadow: inset 0 0 0 999px color-mix(in srgb, var(--accent) 7%, transparent);
-      outline-color: color-mix(in srgb, var(--accent) 40%, transparent);
+      opacity: 0.07;
     }
     50% {
-      box-shadow: inset 0 0 0 999px color-mix(in srgb, var(--accent) 17%, transparent);
-      outline-color: var(--accent);
+      opacity: 0.17;
     }
   }
   .head {

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { fly } from "svelte/transition";
+  import { fade, fly } from "svelte/transition";
+  import { cubicIn, cubicOut } from "svelte/easing";
   import { open, save } from "@tauri-apps/plugin-dialog";
   import {
     disable as disableAutostart,
@@ -14,7 +15,7 @@
   import LatencyDrawer from "./lib/LatencyDrawer.svelte";
   import ContextMenu from "./lib/ContextMenu.svelte";
   import { backdropClose } from "./lib/backdropClose";
-  import { mountDragGhost, removeDragGhost } from "./lib/ghost";
+  import { mountDragGhost, removeDragGhost, settleDragGhost } from "./lib/ghost";
   import {
     initialRevisionDirty,
     isRevisionDirty,
@@ -1160,9 +1161,34 @@
     }
   }
 
+  // ---- 軌道新增淡入:只在使用者新增的 2s 內、新出現的 track id 才播 160ms 淡入。
+  // 啟動/恢復 session 帶入的整批 tracks 不淡入;虛擬化視窗捲動重建元素時
+  // duration 為 0 不誤觸發。一律播放,不連動 OS 動畫設定(ADR 0007)。 ----
+  let addTrackAt = 0; // 非反應式:addTrack 送出時間戳
+  let knownTrackIds = new Set<number>(); // 非反應式:已見過的軌 id
+  let justAddedIds = $state<ReadonlySet<number>>(new Set());
+  $effect(() => {
+    const arr = status?.tracks;
+    if (!arr) return;
+    const fresh = arr.filter((t) => !knownTrackIds.has(t.trackId));
+    if (fresh.length === 0) return;
+    for (const t of fresh) knownTrackIds.add(t.trackId);
+    if (Date.now() - addTrackAt > 2000) return;
+    const ids = fresh.map((t) => t.trackId);
+    const next = new Set(justAddedIds);
+    for (const id of ids) next.add(id);
+    justAddedIds = next;
+    setTimeout(() => {
+      const rest = new Set(justAddedIds);
+      for (const id of ids) rest.delete(id);
+      justAddedIds = rest;
+    }, 400);
+  });
+
   // ---------- 軌道新增 ----------
 
   async function addTrack(kind: "audio" | "app" | "fx" | "output") {
+    addTrackAt = Date.now();
     try {
       await engineCommand("track_add", { kind });
     } catch (e) {
@@ -1281,6 +1307,11 @@
         const target = reordered.indexOf(drag.id);
         if (target !== tracks.findIndex((track) => track.trackId === drag!.id))
           engineCommand("track_move", { trackId: drag.id, newIndex: target }).catch(() => {});
+        // 幽靈落定:滑向最終槽位(虛擬化視窗外/原位則滑回原處);排序由狀態更新瞬間完成
+        const slot = pos <= dragIdx ? pos : pos - 1;
+        const els = (e.currentTarget as HTMLElement).querySelectorAll<HTMLElement>("[data-track-id]");
+        const start = group === "input" ? inputWin.start : outputWin.start;
+        settleDragGhost(els[slot - start] ?? null);
       }
       onDragEnd();
     };
@@ -1701,7 +1732,12 @@
 <!-- P1-O→膠囊:iPhone 式頂端滑入通知;警示在前、通知在後,點擊本體執行動作 -->
 <div class="capsules">
   {#each capsuleList as c (c.key)}
-    <div class="capsule" class:iserr={c.kind === "error"} transition:fly={{ y: -64, duration: 280 }}>
+    <div
+      class="capsule"
+      class:iserr={c.kind === "error"}
+      in:fly={{ y: -12, duration: 180, easing: cubicOut }}
+      out:fly={{ y: -8, duration: 120, easing: cubicIn }}
+    >
       <button class="capsule-body" data-tooltip={c.tooltip} onclick={() => onCapsuleAction(c)}>{c.msg}</button>
       {#if c.raw}
         <button
@@ -1749,6 +1785,7 @@
         {#each inputTracks.slice(inputWin.start, inputWin.end) as t, vi (t.trackId)}
           {@const i = inputWin.start + vi}
           <TrackStrip
+            introMs={justAddedIds.has(t.trackId) ? 160 : 0}
             track={t}
             {tracks}
             {devices}
@@ -1820,6 +1857,7 @@
         {#each outputTracks.slice(outputWin.start, outputWin.end) as t, vi (t.trackId)}
           {@const i = outputWin.start + vi}
           <TrackStrip
+            introMs={justAddedIds.has(t.trackId) ? 160 : 0}
             track={t}
             {tracks}
             {devices}
@@ -1885,6 +1923,7 @@
     <button class:on={tab === "about"} onclick={() => (tab = "about")}>關於 / 更新</button>
   </div>
   {#if tab === "audio"}
+    <div class="tabpane" in:fade={{ duration: 120 }}>
     <div class="formrow">
       <label class="formlabel" for="setdev">裝置</label>
       <select
@@ -1964,7 +2003,9 @@
     {#if notice}
       <p class="err mono">{notice}</p>
     {/if}
+    </div>
   {:else if tab === "general"}
+    <div class="tabpane" in:fade={{ duration: 120 }}>
     <h2>啟動</h2>
     <div class="formrow checkrow" class:disabled={autostartBusy || autostartEnabled === null}>
       <input
@@ -2088,7 +2129,9 @@
         </select>
       </div>
     {/if}
+    </div>
   {:else if tab === "hotkeys"}
+    <div class="tabpane" in:fade={{ duration: 120 }}>
     <h2>快捷鍵</h2>
     <div class="formrow">
       <span class="formlabel">監聽靜音(全域)</span>
@@ -2110,8 +2153,11 @@
     {#if capturingHotkey && captureHint}
       <p class="dim">{captureHint}</p>
     {/if}
+    </div>
   {:else}
+    <div class="tabpane" in:fade={{ duration: 120 }}>
     <p class="dim mono">Engine 版本:{conn.engineVersion || "未知(尚未連線)"}</p>
+    </div>
   {/if}
   <UpdatePanel
     visible={tab === "about"}
@@ -2207,6 +2253,13 @@
   }
   .settingsdlg::backdrop {
     background: rgb(0 0 0 / 0.5);
+  }
+  /* 分頁內容容器:承接 settingsdlg 的 flex gap(原本 formrow 是直接子層);
+   * in:fade 120ms 只進不出的分頁切換過場(motion 政策見 motion.css 頂部註解) */
+  .tabpane {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
   }
   /* B:未儲存變更詢問(置中 modal,同 settingsdlg 手法) */
   .dirtydlg {

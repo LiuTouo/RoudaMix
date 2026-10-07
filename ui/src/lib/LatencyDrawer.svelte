@@ -1,5 +1,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
+  import { fly } from "svelte/transition";
+  import { cubicIn, cubicOut } from "svelte/easing";
   import { engineCommand } from "./protocol-commands.generated";
   import { errorText } from "./errors";
   import { samplesToMs } from "./format";
@@ -96,7 +98,13 @@
 </script>
 
 {#if open}
-  <aside class="latency-drawer" aria-label="Plugin 延遲與 Process Load 明細">
+  <!-- 一律播放,不連動 OS 動畫設定(ADR 0007) -->
+  <aside
+    class="latency-drawer"
+    aria-label="Plugin 延遲與 Process Load 明細"
+    in:fly={{ x: 24, duration: 180, easing: cubicOut }}
+    out:fly={{ x: 16, duration: 120, easing: cubicIn }}
+  >
     <div class="drawer-head">
       <strong>Plugin 延遲與 Process Load</strong>
       <button class="dialog-close" aria-label="關閉延遲明細" data-tooltip="關閉延遲與效能明細。" onclick={onClose}>×</button>
