@@ -1518,6 +1518,7 @@
   }
 
   // 擷取模式:capture phase 攔 keydown(擋住 Ctrl+S 等既有快捷鍵與瀏覽器預設行為)
+  let captureHint = $state<string | null>(null); // 拒絕組合的原因(無聲拒絕等於「沒反應」)
   $effect(() => {
     if (!capturingHotkey) return;
     const onKey = (e: KeyboardEvent) => {
@@ -1529,9 +1530,14 @@
       }
       const shortcut = eventToShortcut(e);
       if (shortcut) {
+        captureHint = null;
         capturingHotkey = false;
         void setMonitorHotkey(shortcut);
+        return;
       }
+      // 純修飾鍵是組合中途,不提示;其餘無法綁定的鍵當場說明原因
+      if (!["Control", "Shift", "Alt", "Meta"].includes(e.key))
+        captureHint = `「${e.key}」無法綁定：需含 Ctrl / Alt / Win 修飾鍵，或為 F1–F24（純字母／Shift 組合會在其他程式打字時誤觸）。仍在此等候，按 Esc 取消。`;
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
@@ -2069,7 +2075,7 @@
         <button class="primary" onclick={() => (capturingHotkey = false)}>按下快捷鍵…(點此或 Esc 取消)</button>
       {:else}
         <button
-          onclick={() => (capturingHotkey = true)}
+          onclick={() => { captureHint = null; capturingHotkey = true; }}
           data-tooltip="點擊後按下要綁定的組合鍵(需含 Ctrl/Alt/Win 修飾鍵,或為 F1–F24)。全域快捷鍵:RoudaMix 在背景時也能切換監聽靜音。"
         >{appSettings?.monitorHotkey ?? "未設定"}</button>
         {#if appSettings?.monitorHotkey}
@@ -2080,6 +2086,9 @@
         {/if}
       {/if}
     </div>
+    {#if capturingHotkey && captureHint}
+      <p class="dim">{captureHint}</p>
+    {/if}
   {:else}
     <p class="dim mono">Engine 版本:{conn.engineVersion || "未知(尚未連線)"}</p>
   {/if}
