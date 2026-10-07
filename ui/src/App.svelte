@@ -106,7 +106,7 @@
   let panelOpen = $state(false); // 硬體面板開啟中:stream 可能停,關閉後自動重建
   let settingsOpen = $state(false); // 設定 modal;已開再按 = 無操作,天然單例
   let settingsDlg = $state<HTMLDialogElement | null>(null);
-  let tab = $state<"audio" | "general" | "about">("audio");
+  let tab = $state<"audio" | "general" | "hotkeys" | "about">("audio");
   let appSettings = $state<AppSettings | null>(null);
   let autostartEnabled = $state<boolean | null>(null);
   let autostartBusy = $state(false);
@@ -1460,7 +1460,7 @@
     startMinimizedBusy = false;
   }
 
-  // ---------- 監聽全域快捷鍵(設定 → 通用;切換監聽輸出軌靜音) ----------
+  // ---------- 監聽全域快捷鍵(設定 → 快捷鍵;切換監聽輸出軌靜音) ----------
 
   let capturingHotkey = $state(false); // 設定頁擷取模式中
 
@@ -1854,6 +1854,7 @@
   <div class="tabs">
     <button class:on={tab === "audio"} onclick={() => (tab = "audio")}>音訊 / Session</button>
     <button class:on={tab === "general"} onclick={openGeneral}>通用</button>
+    <button class:on={tab === "hotkeys"} onclick={() => (tab = "hotkeys")}>快捷鍵</button>
     <button class:on={tab === "about"} onclick={() => (tab = "about")}>關於 / 更新</button>
   </div>
   {#if tab === "audio"}
@@ -1996,24 +1997,6 @@
         <option value="exit">關閉程式</option>
       </select>
     </div>
-    <h2>快捷鍵</h2>
-    <div class="formrow">
-      <span class="formlabel">監聽靜音(全域)</span>
-      {#if capturingHotkey}
-        <button class="primary" onclick={() => (capturingHotkey = false)}>按下快捷鍵…(點此或 Esc 取消)</button>
-      {:else}
-        <button
-          onclick={() => (capturingHotkey = true)}
-          data-tooltip="點擊後按下要綁定的組合鍵(需含 Ctrl/Alt/Win 修飾鍵,或為 F1–F24)。全域快捷鍵:RoudaMix 在背景時也能切換監聽靜音。"
-        >{appSettings?.monitorHotkey ?? "未設定"}</button>
-        {#if appSettings?.monitorHotkey}
-          <button
-            onclick={() => void setMonitorHotkey(null)}
-            data-tooltip="解除監聽靜音的全域快捷鍵綁定。"
-          >清除</button>
-        {/if}
-      {/if}
-    </div>
     <h2>場景</h2>
     <div class="formrow">
       <label class="formlabel" for="startupmode">啟動時</label>
@@ -2078,6 +2061,25 @@
         </select>
       </div>
     {/if}
+  {:else if tab === "hotkeys"}
+    <h2>快捷鍵</h2>
+    <div class="formrow">
+      <span class="formlabel">監聽靜音(全域)</span>
+      {#if capturingHotkey}
+        <button class="primary" onclick={() => (capturingHotkey = false)}>按下快捷鍵…(點此或 Esc 取消)</button>
+      {:else}
+        <button
+          onclick={() => (capturingHotkey = true)}
+          data-tooltip="點擊後按下要綁定的組合鍵(需含 Ctrl/Alt/Win 修飾鍵,或為 F1–F24)。全域快捷鍵:RoudaMix 在背景時也能切換監聽靜音。"
+        >{appSettings?.monitorHotkey ?? "未設定"}</button>
+        {#if appSettings?.monitorHotkey}
+          <button
+            onclick={() => void setMonitorHotkey(null)}
+            data-tooltip="解除監聽靜音的全域快捷鍵綁定。"
+          >清除</button>
+        {/if}
+      {/if}
+    </div>
   {:else}
     <p class="dim mono">Engine 版本:{conn.engineVersion || "未知(尚未連線)"}</p>
   {/if}
