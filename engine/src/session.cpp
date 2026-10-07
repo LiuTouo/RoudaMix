@@ -134,7 +134,10 @@ nlohmann::json serialize(const AudioEngine& engine) {
             plugins.push_back({
                 {"pluginPath", s.module_path},
                 {"classId", s.class_id},
-                {"name", s.name},
+                // name 恆存解析後名稱(自訂優先,人類可讀/舊版相容);displayName 僅自訂時存
+                {"name", s.display()},
+                {"displayName", s.display_name.empty() ? nlohmann::json()
+                                                       : nlohmann::json(s.display_name)},
                 {"bypassed", s.bypass},
                 {"monitorBypassed", s.monitor_bypass},
                 {"params", params},
@@ -412,6 +415,10 @@ std::optional<Failure> load(AudioEngine& engine, const std::filesystem::path& fi
                         class_id = sp["classId"].get<std::string>();
                     if (sp.contains("name") && sp["name"].is_string())
                         plug_name = sp["name"].get<std::string>();
+                    // 自訂名稱(v4 新檔才有;空/缺 = 未自訂)
+                    std::string display_name;
+                    if (sp.contains("displayName") && sp["displayName"].is_string())
+                        display_name = sp["displayName"].get<std::string>();
                     const bool bypassed =
                         sp.contains("bypassed") && sp["bypassed"].is_boolean()
                             ? sp["bypassed"].get<bool>()
@@ -502,6 +509,8 @@ std::optional<Failure> load(AudioEngine& engine, const std::filesystem::path& fi
                         loaded = true;
                     }
                     if (loaded) {
+                        if (!display_name.empty())
+                            (void)engine.set_plugin_name(instance_id, display_name);
                         if (bypassed) (void)engine.set_bypass(instance_id, true);
                         if (monitor_bypassed)
                             (void)engine.set_monitor_bypass(instance_id, true);
@@ -519,6 +528,10 @@ std::optional<Failure> load(AudioEngine& engine, const std::filesystem::path& fi
                                 ? missing.back()["message"].get<std::string>()
                                 : std::string("load failed"),
                             params, ph_id);
+                        // 自訂名稱也要套在 placeholder(存檔 name = 解析名,此處補 display_name;
+                        // 之後 retry 載回成功時原名會被 class name 蓋寫,解析靠 display_name)
+                        if (!display_name.empty())
+                            (void)engine.set_plugin_name(ph_id, display_name);
                         if (monitor_bypassed)
                             (void)engine.set_monitor_bypass(ph_id, true);
                     }

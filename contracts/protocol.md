@@ -117,6 +117,7 @@ render 裝置,`list_render_devices` 列 endpoints)。每軌一條 VST 鏈
 | `retry_plugin` | placeholder 重試載入:與 `add_plugin` 同規 worker preflight;`path` 帶了 = 重新定位到新 module 路徑。原 instanceId/鏈位/params/bypass 保留;非 placeholder → `bad_command`;載入再失敗 = 維持 placeholder、`plugin_load_failed`;載入成功 = 使用者核准該 module(#13),以 path+fingerprint 寫回 registry,下次 session restore 閘門放行 |
 | `remove_plugin` | — |
 | `move_plugin` | 所屬軌鏈內重排 |
+| `set_plugin_name` | 設定插件自訂顯示名稱;`name` trim 後空 = 恢復插件原名。純控制面 metadata(不動 RT graph);同值不推 revision。自訂名隨 session(`displayName` 欄)存檔/載入保留,複製/貼上/duplicate 一併帶過;status/session 的 `plugins[].name` 恆為解析後名稱(自訂優先),`displayName` 僅在自訂時出現 |
 | `copy_plugin` | `pluginCopyV1` capability。擷取目前 component/controller state、宿主參數及兩種 bypass；引擎保留最後成功快照，回傳 `clipboardId` 與 `name`。不增加 revision。來源刪除／修改不影響快照；重新連線或載入 session 清除。 |
 | `paste_plugin` | 依 `clipboardId` 在 `trackId` 的 `newIndex` 插入獨立實例；位置接受 0 到鏈長。回傳 `instanceId`、`trackId`、`tracks`，成功增加一次 revision。過期剪貼簿為 `bad_command`。 |
 | `duplicate_plugin` | 放下時擷取 `instanceId` 的目前設定並插入目標，結果及插入語意同貼上；不改寫剪貼簿。即使目標已有同款插件，也新增實例。 |

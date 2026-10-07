@@ -46,6 +46,7 @@ struct EngineStatusInfo {
 // 值快照：不持有來源 instance、佇列或 editor，來源刪除後仍可貼上。
 struct PluginSnapshot {
     std::string module_path, class_id, name;
+    std::string display_name;  // 自訂名稱(空 = 未自訂);複製/貼上時保留
     Vst3RuntimeState state;
     std::vector<std::pair<std::uint32_t, double>> params;
     bool bypass{}, monitor_bypass{};
@@ -158,6 +159,8 @@ public:
     std::optional<Failure> move_plugin(std::uint32_t instance_id, std::size_t to_index);
     std::optional<Failure> set_bypass(std::uint32_t instance_id, bool bypass);
     std::optional<Failure> set_monitor_bypass(std::uint32_t instance_id, bool bypass);
+    // 設定插件自訂顯示名稱;trim 後空 = 恢復原名。純控制面 metadata,不動 RT graph。
+    std::optional<Failure> set_plugin_name(std::uint32_t instance_id, const std::string& name);
     std::optional<Failure> set_param(std::uint32_t instance_id, std::uint32_t param_id,
                                      double value);
     // preset(檔案式 .vstpreset;控制面，由 Router 臨界區序列化)。

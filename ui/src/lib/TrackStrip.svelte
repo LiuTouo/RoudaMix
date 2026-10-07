@@ -554,6 +554,31 @@
     }
   }
 
+  // ---- 插件自訂名稱(右鍵選單「重新命名」/ F2;空白 = 恢復原名;engine 權威)----
+  let renamingId = $state<number | null>(null);
+  let renameDraft = $state("");
+  let renameInput: HTMLInputElement | undefined = $state();
+
+  function startRename(slot: RackSlot) {
+    renameDraft = slot.name;
+    renamingId = slot.instanceId;
+  }
+  function commitRename() {
+    if (renamingId === null) return; // 防 Esc 取消後 blur 二次送出
+    const id = renamingId;
+    renamingId = null;
+    const reported = track.plugins.find((s) => s.instanceId === id)?.name;
+    const n = renameDraft.trim();
+    if (reported === undefined || n === reported) return; // 沒改 = 不送
+    err = "";
+    mq.run(mutKey.plugin(id), "name", () =>
+      engineCommand("set_plugin_name", { instanceId: id, name: n }),
+    );
+  }
+  $effect(() => {
+    if (renamingId !== null) renameInput?.select();
+  });
+
   // ---- VST 鏈拖曳排序(move_plugin = erase+insert 最終位置;▲▼ 已移除)----
   const plugDrag = $derived($pluginTransfer.drag?.instanceId ?? null);
   let plugDropAt = $state<number | null>(null); // 插入位(chain index)
@@ -650,6 +675,11 @@
         disabled: !$pluginTransfer.clipboard || $pluginTransfer.busy, run: () => pasteAt() }]);
   }
   function pluginMenuKey(e: KeyboardEvent, slot?: RackSlot) {
+    if (slot && e.key === "F2" && e.target === e.currentTarget) {
+      e.preventDefault(); e.stopPropagation();
+      startRename(slot);
+      return;
+    }
     if (e.key !== "ContextMenu" && !(e.shiftKey && e.key === "F10")) return;
     if (e.target !== e.currentTarget) return;
     if (slot) {
@@ -842,6 +872,7 @@
         chainLength: track.plugins.length,
         latencyEnabled,
         monitorBypassShown: shownMonitorBypass(slot),
+        rename: { run: () => startRename(slot) },
         copy: pluginCopyEnabled ? { disabled: $pluginTransfer.busy,
           run: () => void runPluginTransfer(() => copyPlugin(slot.instanceId)) } : undefined,
         paste: pluginCopyEnabled ? { disabled: !$pluginTransfer.clipboard || $pluginTransfer.busy,
@@ -1092,6 +1123,25 @@
     <span>INSERTS ({track.plugins.length})</span>
     {#if $pluginTransfer.busy}<span class="dim" role="status">處理中…</span>{/if}
   </div>
+  {#snippet renameBox()}
+    <!-- 插件自訂名稱行內編輯(Enter 套用、Esc 取消;空白 = 恢復原名) -->
+    <input
+      class="plugrename"
+      bind:this={renameInput}
+      bind:value={renameDraft}
+      draggable="false"
+      aria-label="插件名稱(Enter 套用、Esc 取消;空白 = 恢復原名)"
+      onkeydown={(e) => {
+        if (e.key === "Enter") commitRename();
+        else if (e.key === "Escape") renamingId = null;
+      }}
+      onblur={commitRename}
+      onclick={(e) => e.stopPropagation()}
+      ondblclick={(e) => e.stopPropagation()}
+      onpointerdown={(e) => e.stopPropagation()}
+    />
+  {/snippet}
+
   <!-- 機架是可聚焦的右鍵選單入口，保留 group 語意及內部控制項。 -->
   <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
   <div class="vst" bind:this={vstBox} style={boxH !== null ? `flex:0 0 auto; height:${boxH}px` : ""}
@@ -1136,9 +1186,13 @@
                 class="plugname phname"
                 data-tooltip={`Plugin 檔案：\n${s.pluginPath}\n\n載入錯誤：${s.loadError ?? "原因未提供"}`}
               >
-                <span class="phwhy">{phLabel(s)}</span>
+              <span class="phwhy">{phLabel(s)}</span>
+              {#if renamingId === s.instanceId}
+                {@render renameBox()}
+              {:else}
                 {s.name || basename(s.pluginPath)}
-                {#if s.loadError}<span class="pherr">{s.loadError}</span>{/if}
+              {/if}
+              {#if s.loadError}<span class="pherr">{s.loadError}</span>{/if}
               </span>
             </div>
             <div class="plugactions placeholder-actions">
@@ -1162,19 +1216,25 @@
               >
             </div>
           {:else}
-            <span
-              class="plugname"
-              role="button"
-              tabindex="0"
-              data-tooltip="{s.name} — 單擊開啟 plugin 操作介面；按右鍵可開啟操作選單。"
-              onclick={() => openEditor(s)}
-              onkeydown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  void openEditor(s);
-                }
-              }}>{s.name}</span
-            >
+            {#if renamingId === s.instanceId}
+              {@render renameBox()}
+            {:else}
+              <span
+                class="plugname"
+                role="button"
+                tabindex="0"
+                data-tooltip={s.displayName
+                  ? `自訂名稱：${s.displayName}\n檔案：${s.pluginPath}`
+                  : "{s.name} — 單擊開啟 plugin 操作介面；按右鍵可開啟操作選單。"}
+                onclick={() => openEditor(s)}
+                onkeydown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    void openEditor(s);
+                  }
+                }}>{s.name}</span
+              >
+            {/if}
             <div class="plugactions">
               <button
                 class="mini plugicon power"

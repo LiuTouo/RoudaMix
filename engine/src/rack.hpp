@@ -69,6 +69,7 @@ struct RackSlot {
     using RuntimeState = RouteRuntimeState;
     std::uint32_t instance_id{};
     std::string name;  // UI 顯示(class name;placeholder 時 = session 存的名字)
+    std::string display_name;  // 使用者自訂名稱;空 = 未自訂(顯示用 name)
     std::string module_path;
     std::string class_id;
     bool bypass{};
@@ -96,6 +97,11 @@ struct RackSlot {
 
     [[nodiscard]] bool is_placeholder() const noexcept {
         return plugin == nullptr && availability != Availability::kOk;
+    }
+
+    // UI 顯示名:自訂名稱優先,否則插件原名
+    [[nodiscard]] const std::string& display() const noexcept {
+        return display_name.empty() ? name : display_name;
     }
 };
 

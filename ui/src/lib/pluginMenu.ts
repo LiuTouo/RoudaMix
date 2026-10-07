@@ -13,6 +13,7 @@ export function pluginMenuItems(input: {
   monitorBypassShown: boolean;
   copy?: { disabled: boolean; run: () => void };
   paste?: { disabled: boolean; run: () => void };
+  rename?: { run: () => void };
   run: { editor: () => void; move: (to: PluginMenuTo) => void; monitorBypass: () => void };
 }): PluginMenuItem[] {
   const { slot, index, chainLength, latencyEnabled, monitorBypassShown, run } = input;
@@ -21,6 +22,7 @@ export function pluginMenuItems(input: {
   const atEnd = index >= chainLength - 1;
   return [
     { label: "編輯", disabled: placeholder, run: run.editor },
+    ...(input.rename ? [{ label: "重新命名", run: input.rename.run }] : []),
     ...(input.copy ? [{ label: "複製", disabled: placeholder || input.copy.disabled, run: input.copy.run }] : []),
     ...(input.paste ? [{ label: "在此插件後貼上", ...input.paste }] : []),
     { label: "上移", disabled: atStart, run: () => run.move("up") },

@@ -48,3 +48,19 @@ test("Monitor Bypass 項目只在 capability 開啟時出現,標籤隨顯示狀�
   const shown = pluginMenuItems({ ...base, monitorBypassShown: true });
   assert.equal(shown.find((i) => i.label === "取消 Monitor Bypass")?.run, base.run.monitorBypass);
 });
+
+test("重新命名項目隨 rename 提供,placeholder 也可用", () => {
+  let called = 0;
+  const withRename = pluginMenuItems({ ...base, rename: { run: () => called++ } });
+  assert.equal(labels(withRename)[1], "重新命名"); // 緊跟在編輯之後
+  withRename.find((i) => i.label === "重新命名")?.run();
+  assert.equal(called, 1);
+  assert.equal(labels(pluginMenuItems(base)).includes("重新命名"), false);
+
+  const ph = pluginMenuItems({
+    ...base,
+    slot: { name: "Synth", availability: "missing" },
+    rename: { run: () => called++ },
+  });
+  assert.equal(ph.find((i) => i.label === "重新命名")?.disabled, undefined); // metadata-only,不隨 placeholder 禁用
+});

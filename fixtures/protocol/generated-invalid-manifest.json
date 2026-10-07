@@ -209,6 +209,16 @@
         "newIndex"
       ]
     },
+    "set_plugin_name": {
+      "missing": [
+        "instanceId",
+        "name"
+      ],
+      "wrongType": [
+        "instanceId",
+        "name"
+      ]
+    },
     "set_bypass": {
       "missing": [
         "instanceId",

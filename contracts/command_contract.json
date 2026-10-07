@@ -572,6 +572,23 @@
       "errors": ["bad_command"]
     },
     {
+      "kind": "set_plugin_name",
+      "payload": {
+        "type": "object",
+        "required": ["instanceId", "name"],
+        "properties": {
+          "instanceId": { "$ref": "#/definitions/u32" },
+          "name": { "type": "string" }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": ["tracks"],
+        "properties": { "tracks": { "$ref": "#/definitions/trackArray" } }
+      },
+      "errors": ["plugin_not_found", "bad_command"]
+    },
+    {
       "kind": "set_bypass",
       "payload": {
         "type": "object",

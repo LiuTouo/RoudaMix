@@ -206,6 +206,33 @@ void contract_error_declared_set_is_enforced() {
                  "unknown kinds skip the declared-set check");
 }
 
+void set_plugin_name_unknown_instance_fails_with_declared_code() {
+    expect_equal(rmx::contract::is_declared_error("set_plugin_name", "plugin_not_found"), true,
+                 "set_plugin_name declares plugin_not_found");
+    expect_equal(rmx::contract::is_declared_error("set_plugin_name", "bad_command"), true,
+                 "set_plugin_name declares bad_command");
+
+    rmx::Router router;
+    std::vector<nlohmann::json> frames;
+    router.connect(1, [&](const nlohmann::json& frame) { frames.push_back(frame); });
+    frames.clear();
+
+    (void)router.dispatch_guarded(
+        1, rmx::Command{rmx::kProtocolVersion, 401, "set_plugin_name",
+                        {{"instanceId", 999}, {"name", "X"}}});
+    const auto* missing = find_reply(frames, 401);
+    if (missing == nullptr) {
+        std::fprintf(stderr, "FAIL: set_plugin_name reply is missing\n");
+        ++failures;
+        return;
+    }
+    expect_equal(missing->at("ok"), false, "set_plugin_name unknown instance fails");
+    expect_equal(missing->at("error").at("code"), "plugin_not_found",
+                 "set_plugin_name unknown instance classifies as plugin_not_found");
+    expect_equal(missing->contains("result"), false,
+                 "error reply carries no result");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -218,6 +245,7 @@ int main(int argc, char** argv) {
     session_rebuild_advances_revision_once();
     error_replies_carry_declared_codes();
     contract_error_declared_set_is_enforced();
+    set_plugin_name_unknown_instance_fails_with_declared_code();
     if (failures == 0) {
         std::puts("router: all pass");
         return 0;

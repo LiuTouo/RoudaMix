@@ -81,6 +81,7 @@ private:
     using AddPluginRequest = router_request::AddPlugin;
     using InstanceRequest = router_request::Instance;
     using MovePluginRequest = router_request::MovePlugin;
+    using PluginSetNameRequest = router_request::PluginSetName;
     using PastePluginRequest = router_request::PastePlugin;
     using DuplicatePluginRequest = router_request::DuplicatePlugin;
     using BypassRequest = router_request::Bypass;
@@ -145,6 +146,7 @@ private:
     Outcome handle_add_plugin(const AddPluginRequest& request);
     Outcome handle_remove_plugin(const InstanceRequest& request);
     Outcome handle_move_plugin(const MovePluginRequest& request);
+    Outcome handle_set_plugin_name(const PluginSetNameRequest& request);
     Outcome handle_copy_plugin(const InstanceRequest& request);
     Outcome handle_paste_plugin(const PastePluginRequest& request);
     Outcome handle_duplicate_plugin(const DuplicatePluginRequest& request);

@@ -859,6 +859,78 @@ int main() {
         }
     }
 
+    // 16. 插件自訂名稱(display_name):placeholder 重建保留;serialize 寫解析名 +
+    //     displayName(僅自訂時);set_plugin_name 改名/清空(空 = 恢復原名)。
+    //     plugin 載不入(env 未設 + dummy 內容)→ placeholder,但不影響名稱 metadata。
+    {
+        const nlohmann::json j = {
+            {"roudamixSession", 4},
+            {"deviceKey", nullptr},
+            {"sampleRate", nullptr},
+            {"bufferSize", nullptr},
+            {"tracks",
+             nlohmann::json::array({nlohmann::json{
+                 {"trackId", 1},
+                 {"kind", "audio"},
+                 {"name", "T"},
+                 {"color", 0},
+                 {"dests", nlohmann::json::array()},
+                 {"output", nullptr},
+                 {"plugins",
+                  nlohmann::json::array({nlohmann::json{
+                      {"pluginPath", "C:\\nope\\ghost.vst3"},
+                      {"classId", "CID"},
+                      {"name", "Ghost"},              // 解析名(存檔時的 display())
+                      {"displayName", "我的 ghost"},  // 自訂名
+                      {"bypassed", false},
+                  }})},
+             }})},
+        };
+        const auto f16 = tmp / "display-name.rmsession";
+        write_text(f16, j.dump().c_str());
+
+        rmx::AudioEngine g;
+        nlohmann::json applied;
+        CHECK(!rmx::session::load(g, f16, applied));  // placeholder 佔位不算整體失敗
+        CHECK(g.tracks()[0].chain.size() == 1);
+        const auto& slot = g.tracks()[0].chain[0];
+        CHECK(slot.is_placeholder());
+        CHECK(slot.name == "Ghost");
+        CHECK(slot.display_name == "我的 ghost");
+        CHECK(slot.display() == "我的 ghost");
+
+        // set_plugin_name:trim、空 = 恢復原名、未知 instance
+        const auto id = slot.instance_id;
+        CHECK(!g.set_plugin_name(id, "  新名稱  "));
+        CHECK(g.tracks()[0].chain[0].display_name == "新名稱");
+        CHECK(g.tracks()[0].chain[0].display() == "新名稱");
+        CHECK(!g.set_plugin_name(id, "   \t\n"));
+        CHECK(g.tracks()[0].chain[0].display_name.empty());
+        CHECK(g.tracks()[0].chain[0].display() == "Ghost");
+        CHECK(g.set_plugin_name(999999, "x")->code == rmx::Err::kPluginNotFound);
+
+        // serialize:未自訂 → name = 原名、無 displayName
+        CHECK(!rmx::session::save(g, f16));
+        auto out = nlohmann::json::parse(read_text(f16));
+        const auto& p0 = out["tracks"][0]["plugins"][0];
+        CHECK(p0["name"] == "Ghost");
+        CHECK(p0.contains("displayName") == false || p0["displayName"].is_null());
+
+        // 自訂後 serialize:name = 解析名、displayName 存自訂;roundtrip 保留
+        CHECK(!g.set_plugin_name(id, "客製"));
+        CHECK(!rmx::session::save(g, f16));
+        out = nlohmann::json::parse(read_text(f16));
+        const auto& p1 = out["tracks"][0]["plugins"][0];
+        CHECK(p1["name"] == "客製");
+        CHECK(p1["displayName"] == "客製");
+
+        rmx::AudioEngine g2;
+        nlohmann::json applied2;
+        CHECK(!rmx::session::load(g2, f16, applied2));
+        CHECK(g2.tracks()[0].chain[0].display() == "客製");
+        CHECK(g2.tracks()[0].chain[0].name == "客製");
+    }
+
     std::filesystem::remove_all(tmp);
     std::printf("session_test PASSED\n");
     return 0;

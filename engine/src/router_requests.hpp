@@ -168,6 +168,14 @@ struct MovePlugin {
           new_index(payload.at("newIndex").get<std::size_t>()) {}
 };
 
+struct PluginSetName {
+    std::uint32_t instance_id;
+    std::string name;
+    explicit PluginSetName(const nlohmann::json& payload)
+        : instance_id(payload.at("instanceId").get<std::uint32_t>()),
+          name(payload.at("name").get<std::string>()) {}
+};
+
 struct PastePlugin {
     std::string clipboard_id;
     std::uint32_t track_id;

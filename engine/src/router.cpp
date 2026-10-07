@@ -219,6 +219,7 @@ const std::unordered_map<std::string, Router::Route>& Router::routes() {
         {"add_plugin", &Router::route<AddPluginRequest, &Router::handle_add_plugin>},
         {"remove_plugin", &Router::route<InstanceRequest, &Router::handle_remove_plugin>},
         {"move_plugin", &Router::route<MovePluginRequest, &Router::handle_move_plugin>},
+        {"set_plugin_name", &Router::route<PluginSetNameRequest, &Router::handle_set_plugin_name>},
         {"copy_plugin", &Router::route<InstanceRequest, &Router::handle_copy_plugin>},
         {"paste_plugin", &Router::route<PastePluginRequest, &Router::handle_paste_plugin>},
         {"duplicate_plugin", &Router::route<DuplicatePluginRequest, &Router::handle_duplicate_plugin>},
@@ -691,6 +692,12 @@ Router::Outcome Router::handle_duplicate_plugin(const DuplicatePluginRequest& re
 
 Router::Outcome Router::handle_move_plugin(const MovePluginRequest& request) {
     if (auto fail = engine_.move_plugin(request.instance_id, request.new_index))
+        return failure(std::move(*fail));
+    return success({{"tracks", session::tracks_json(engine_)}}, Effect::kDirty);
+}
+
+Router::Outcome Router::handle_set_plugin_name(const PluginSetNameRequest& request) {
+    if (auto fail = engine_.set_plugin_name(request.instance_id, request.name))
         return failure(std::move(*fail));
     return success({{"tracks", session::tracks_json(engine_)}}, Effect::kDirty);
 }

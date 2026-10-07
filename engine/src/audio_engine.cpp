@@ -1828,6 +1828,7 @@ std::optional<Failure> AudioEngine::capture_plugin(std::uint32_t instance_id,
     candidate.module_path = slot->module_path;
     candidate.class_id = slot->class_id;
     candidate.name = slot->name;
+    candidate.display_name = slot->display_name;
     candidate.params = slot->param_values;
     candidate.bypass = slot->bypass;
     candidate.monitor_bypass = slot->monitor_bypass;
@@ -1867,6 +1868,7 @@ std::optional<Failure> AudioEngine::insert_plugin_snapshot(const PluginSnapshot&
     slot.module_path = snapshot.module_path;
     slot.class_id = snapshot.class_id;
     slot.name = snapshot.name;
+    slot.display_name = snapshot.display_name;
     slot.bypass = snapshot.bypass;
     slot.monitor_bypass = snapshot.monitor_bypass;
     refresh_latency(slot);
@@ -2058,6 +2060,20 @@ std::optional<Failure> AudioEngine::set_bypass(std::uint32_t instance_id, bool b
 
 std::optional<Failure> AudioEngine::set_monitor_bypass(std::uint32_t instance_id, bool bypass) {
     return commit_bypass_flag(&RackSlot::monitor_bypass, instance_id, bypass);
+}
+
+std::optional<Failure> AudioEngine::set_plugin_name(std::uint32_t instance_id,
+                                                    const std::string& name) {
+    RackSlot* s = find_slot_mut(instance_id);
+    if (s == nullptr)
+        return failure(Err::kPluginNotFound, "unknown instanceId " + std::to_string(instance_id));
+    // trim 前後空白;trim 後空 = 恢復原名(清除自訂名稱)
+    const auto first = name.find_first_not_of(" \t\r\n");
+    std::string trimmed =
+        first == std::string::npos ? std::string{} : name.substr(first, name.find_last_not_of(" \t\r\n") - first + 1);
+    if (s->display_name == trimmed) return std::nullopt;  // 同值不推 revision
+    s->display_name = std::move(trimmed);
+    return std::nullopt;
 }
 
 std::optional<Failure> AudioEngine::set_param(std::uint32_t instance_id, std::uint32_t param_id,

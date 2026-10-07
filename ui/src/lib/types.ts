@@ -100,6 +100,8 @@ export interface EngineStatus {
 export interface RackSlot {
   instanceId: number;
   name: string;
+  /** 使用者自訂名稱(engine 已解析進 name);null = 未自訂,僅供 tooltip 標示 */
+  displayName?: string | null;
   pluginPath: string;
   classId: string;
   bypassed: boolean;

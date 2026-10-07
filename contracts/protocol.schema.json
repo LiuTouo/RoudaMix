@@ -1548,6 +1548,41 @@
               "$ref": "#/$defs/u64"
             },
             "kind": {
+              "const": "set_plugin_name"
+            },
+            "payload": {
+              "type": "object",
+              "required": [
+                "instanceId",
+                "name"
+              ],
+              "properties": {
+                "instanceId": {
+                  "$ref": "#/$defs/u32"
+                },
+                "name": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "protocolVersion",
+            "id",
+            "kind",
+            "payload"
+          ],
+          "properties": {
+            "protocolVersion": {
+              "const": 2
+            },
+            "id": {
+              "$ref": "#/$defs/u64"
+            },
+            "kind": {
               "const": "set_bypass"
             },
             "payload": {

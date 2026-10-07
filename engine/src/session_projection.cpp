@@ -56,7 +56,10 @@ static nlohmann::json tracks_json_with_strips(const AudioEngine& engine,
                 params.push_back({{"paramId", id}, {"normalized", value}});
             plugins.push_back({
                 {"instanceId", slot.instance_id},
-                {"name", slot.name},
+                {"name", slot.display()},
+                // 自訂名稱(僅自訂時出現;UI 供 tooltip 標示)
+                {"displayName", slot.display_name.empty() ? nlohmann::json()
+                                                          : nlohmann::json(slot.display_name)},
                 {"pluginPath", slot.module_path},
                 {"classId", slot.class_id},
                 {"bypassed", slot.bypass},

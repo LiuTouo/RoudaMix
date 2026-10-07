@@ -110,6 +110,7 @@ void check_command_result_schemas() {
          {{"instanceId", 3}, {"trackId", 2}, {"tracks", nlohmann::json::array()}}},
         {"remove_plugin", {{"tracks", nlohmann::json::array()}}},
         {"move_plugin", {{"tracks", nlohmann::json::array()}}},
+        {"set_plugin_name", {{"tracks", nlohmann::json::array()}}},
         {"set_bypass", {{"tracks", nlohmann::json::array()}}},
         {"set_monitor_bypass", {{"tracks", nlohmann::json::array()}}},
         {"retry_plugin", {{"instanceId", 1}, {"tracks", nlohmann::json::array()}}},
