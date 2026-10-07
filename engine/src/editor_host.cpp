@@ -439,7 +439,26 @@ struct EditorHost::Impl {
         return rows;
     }
 
-    // 原生 editor 比 client 小(plugin 不縮放,如 kHs Gain)→ 置中,周圍留深色底
+    // plugin attach 後自建的 child HWND 實際尺寸 = 原生編輯器的真實大小。
+    // getSize() 回報的可能與它不同(JUCE 系會自行 DPI 縮放/約束,甚至 attach
+    // 中就 resizeView 一個比 getSize 大的尺寸)。找不到 child(非同步建 UI)
+    // → false,呼叫端沿用 getSize 值
+    bool editor_child_size(int& w, int& h) const noexcept {
+        if (client == nullptr) return false;
+        HWND child = FindWindowExW(client, nullptr, nullptr, nullptr);
+        if (child == nullptr) return false;
+        RECT wr{};
+        GetWindowRect(child, &wr);
+        w = wr.right - wr.left;
+        h = wr.bottom - wr.top;
+        return w > 0 && h > 0;
+    }
+
+    // 原生 editor 比 client 小(plugin 不縮放,如 kHs Gain)→ 置中,周圍留深色底。
+    // offset 夾在 ≥ 0:child 比 client 大時(JUCE 系無視 onSize 自行定尺寸),
+    // 負 offset = 編輯器四邊被 client 邊界裁切/藏進帶列(實測 Denoiser Classic
+    // 586×344 回報 vs 700×408 實際);此時保持 0,由 layout_children 的
+    // fit-to-child 把 client 撑到 child 實際尺寸
     void center_editor_child() noexcept {
         if (client == nullptr) return;
         HWND child = FindWindowExW(client, nullptr, nullptr, nullptr);
@@ -452,8 +471,8 @@ struct EditorHost::Impl {
         GetClientRect(client, &cr);
         const int w = wr.right - wr.left;
         const int h = wr.bottom - wr.top;
-        const int x = (cr.right - cr.left - w) / 2;
-        const int y = (cr.bottom - cr.top - h) / 2;
+        const int x = (std::max)(0, static_cast<int>(cr.right - cr.left - w) / 2);
+        const int y = (std::max)(0, static_cast<int>(cr.bottom - cr.top - h) / 2);
         if (x != tl.x || y != tl.y)
             SetWindowPos(child, nullptr, x, y, 0, 0,
                          SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
@@ -483,11 +502,20 @@ struct EditorHost::Impl {
                     last_view_h = vh;
                     slot->plugin->editor_resize_view(cw, vh);
                 }
-            } else if (cw != fit_w || vh != fit_h) {
+            } else {
                 // 固定版面插件(canResize=false):onSize 只會把插件視窗背景拉開、
-                // 控制項留在原位 = 右側死空間。不餵,直接把窗貼回原生尺寸;
-                // SetWindowPos 同步觸發的 WM_SIZE 重入時尺寸已符 → 收斂無迴圈
-                resize_to_client(fit_w, fit_h);
+                // 控制項留在原位 = 右側死空間。不餵,直接把窗貼回原生尺寸。
+                // 原生尺寸以 **plugin 實際 child 為準**(取 max):只信 getSize
+                // 會把 client 壓得比 plugin 實際視窗小 = 原生編輯器四邊被裁切
+                // (實測 Denoiser Classic:getSize 586×344,child 實際 700×408,
+                // 開窗即裁)。client ⊇ child 後尺寸已符不再動 → 收斂無迴圈
+                int tw = fit_w, th = fit_h;
+                int cw2 = 0, ch2 = 0;
+                if (editor_child_size(cw2, ch2)) {
+                    tw = (std::max)(tw, cw2);
+                    th = (std::max)(th, ch2);
+                }
+                if (cw != tw || vh != th) resize_to_client(tw, th);
             }
             center_editor_child();
         }
@@ -631,9 +659,17 @@ struct EditorHost::Impl {
         last_view_w = last_view_h = -1;  // 新 view:強制首次 layout 餵 onSize
         fit_w = w;
         fit_h = h;
+        // getSize 只是 plugin 自報尺寸;attach 後實際 child 可能更大(JUCE 系
+        // 自行縮放/約束)—— 以實際 child 為 fit 基準,否則首次 layout 就把
+        // client 壓得比 plugin 小,開窗即四邊裁切(實測 586×344 vs 700×408)
+        int cw2 = 0, ch2 = 0;
+        if (editor_child_size(cw2, ch2)) {
+            fit_w = (std::max)(fit_w, cw2);
+            fit_h = (std::max)(fit_h, ch2);
+        }
         if (std::find(opened_ids.begin(), opened_ids.end(), id) == opened_ids.end())
             opened_ids.push_back(id);
-        resize_to_client(w, h);
+        resize_to_client(fit_w, fit_h);  // fit 已夾實際 child 尺寸(見上)
         layout_children();  // 同尺寸重開不觸發 WM_SIZE → 補一次置中/onSize
         set_title(id);
         ShowWindow(wnd, SW_SHOW);
