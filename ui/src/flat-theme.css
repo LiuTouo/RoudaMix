@@ -1,0 +1,119 @@
+/* B 細框幾何：定案自 prototype/geometric-flat-ui。由暗至亮表示畫布、面板、區塊、浮層及控制項。 */
+:root {
+  --flat-0: #111418;
+  --flat-1: #1d232b;
+  --flat-2: #28313c;
+  --flat-3: #354151;
+  --flat-4: #424f60;
+  --bg: var(--flat-0);
+  --bg-panel: var(--flat-1);
+  --bg-raised: var(--flat-2);
+  --text: #edf2f7;
+  --text-dim: #c1cad6;
+  --accent: #9acaff;
+  --border: #465365;
+  --flat-radius: 2px;
+  --flat-edge: var(--border);
+  --surface: var(--flat-1);
+  --section: var(--flat-2);
+  --control: var(--flat-3);
+  --hover: var(--flat-4);
+  --panel: var(--surface);
+  --line: var(--border);
+  --dim: var(--text-dim);
+}
+/* 統一幾何與平面樣式；拖放位置的實線指示保留。 */
+#app * {
+  border-radius: var(--flat-radius);
+}
+#app :where(*):not(.dropbefore, .dropafter, .emptydrop) {
+  box-shadow: none;
+}
+#app :is(.bar, .strip, .startcard) {
+  background: var(--surface);
+  border-color: var(--flat-edge);
+}
+#app :is(.head, .vst, .vsthead, .vstfoot, .meterwrap, .nometer) {
+  background: var(--section);
+  border-color: var(--flat-edge);
+}
+#app .vstlist { background: var(--section); }
+#app .plug {
+  background: var(--control);
+  border-color: var(--flat-edge);
+}
+#app :is(.plugtitle, .plugactions) { background: transparent; }
+#app .plug.placeholder { border-left-color: var(--warn); }
+#app :is(.vstgrip, .badge, .sysbadge) {
+  background: var(--section); border-color: var(--flat-edge);
+}
+#app .vstgrip::after { background: var(--text-dim); }
+#app button {
+  background: var(--control); border-color: var(--flat-edge);
+}
+#app :is(select, input:not([type="range"], [type="checkbox"], [type="color"]), .destination-trigger, .sys-dest) {
+  background: var(--control); color: var(--text); border-color: var(--flat-edge);
+}
+#app :is(button, .sys-dest):enabled:hover {
+  background: var(--hover); border-color: var(--text-dim);
+}
+#app :is(.dialog-close, .capsule-body, .capsule-btn, .aslink, .ctxitem, .sort, .plug .plugicon) {
+  background: transparent;
+}
+#app button.primary {
+  background: var(--accent); border-color: var(--accent); color: var(--flat-0);
+}
+#app :is(button.on:not(.tabs button, .monitor-bypass), button.danger:not(.plugicon)) {
+  background: var(--warn); border-color: var(--warn); color: var(--flat-0);
+}
+#app .monitor-bypass.on { color: var(--accent); border-color: var(--accent); }
+#app button.primary:enabled:hover { background: #a6d0ff; }
+#app :is(button.on:not(.tabs button, .monitor-bypass), button.danger:not(.plugicon)):enabled:hover {
+  background: #ffd095;
+}
+#app :is(.destination-trigger[aria-expanded="true"], .rebind) { border-color: var(--accent); }
+#app .rebind { border-color: var(--warn); }
+#app input[type="range"]::-webkit-slider-runnable-track {
+  background: var(--section); border-color: var(--border); border-radius: var(--flat-radius); box-shadow: none;
+}
+#app input[type="range"]::-webkit-slider-thumb {
+  background: var(--accent); border-color: var(--accent); border-radius: var(--flat-radius); box-shadow: none;
+}
+/* 浮層本體較面板亮；其內容與操作再向上取色，不從 DOM 深度推算。 */
+#app :is(dialog:not(.ctxdlg), .latency-drawer, .destination-popup, .ctx, .capsule, .gaintip) {
+  --surface: var(--flat-3);
+  --section: var(--flat-3);
+  --control: var(--flat-4);
+  --hover: var(--flat-4);
+  background: var(--surface); color: var(--text); border-color: var(--border);
+}
+#app :is(.dialog-head, .drawer-head, .tabs) { background: transparent; }
+#app :is(.tabs, .plugin-thead, .latency-row) { border-color: var(--border); }
+#app .tabs button { background: transparent; border-color: transparent; }
+#app .tabs button.on { background: var(--control); border-bottom-color: var(--accent); }
+#app :is(.formrow, .update-status, .latency-output, .latency-table, .plugin-thead, .plugin-group summary) {
+  background: var(--section); border-color: var(--flat-edge);
+}
+#app :is(.plugin-row, .app) {
+  background: var(--control); border-color: var(--flat-edge);
+}
+#app :is(.categories span, .destination-count) { background: transparent; }
+#app :is(.destination-option, .ctxitem, .plugin-group summary):hover {
+  background: var(--control);
+}
+#app .destination-option:has(input:checked) { background: var(--control); }
+#app .capsule.iserr { border-color: var(--warn); }
+#app .capsule.iserr .capsule-body { color: var(--warn); }
+#app :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+#app .ctxdlg:focus-visible { outline: none; }
+#app :is(.colorbar, .name, .nameedit) { box-shadow: none; }
+#app .colorbar .name { background: var(--flat-1); border-color: transparent; }
+#app :is(.dot, .sys-dot, .destination-dot) { border-radius: 50%; }
+
+
+/* 保留插件清單既有間距與次要文字層級。 */
+#app .plugin-picker ul { padding: 4px 6px 10px; gap: 10px; }
+#app :is(.badge, .sysbadge, .categories span, .plugin-picker h2 span) { color: var(--text-dim); }
+#app .categories span { border-color: var(--border); }
+#app .vstgrip::after { opacity: .4; }
+#app input::placeholder { color: var(--text-dim); opacity: 1; }

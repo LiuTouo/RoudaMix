@@ -187,13 +187,11 @@ button:disabled {
   overflow-wrap: anywhere;
   white-space: pre-line;
   color: var(--text);
-  background: #22262c;
-  border: 1px solid #4b535e;
+  background: var(--flat-3);
+  border: 1px solid var(--border);
   border-left: 2px solid var(--accent);
-  border-radius: 3px;
-  box-shadow:
-    0 7px 20px rgb(0 0 0 / 0.58),
-    inset 0 1px rgb(255 255 255 / 0.035);
+  border-radius: var(--flat-radius);
+  box-shadow: none;
   font: 12px/1.5 "IBM Plex Sans TC", "Segoe UI", system-ui, sans-serif;
   letter-spacing: 0.01em;
   pointer-events: none;
@@ -209,10 +207,8 @@ button:disabled {
   /* 高元素旋轉角在上下端位移放大(1000px × 2.5° ≈ 43px)= 看起來歪很大;1° 剛好有拿起感 */
   transform: rotate(1deg) scale(1.03);
   opacity: 0.96;
-  border-radius: 8px;
+  border-radius: var(--flat-radius);
   background: var(--bg-panel);
   border: 1px solid var(--accent);
-  box-shadow:
-    0 16px 40px rgb(0 0 0 / 0.65),
-    0 3px 10px rgb(0 0 0 / 0.45);
+  box-shadow: none;
 }
