@@ -74,7 +74,8 @@ function enterCaptureMode() {
 it("無修飾鍵組合被拒時應顯示原因並維持擷取模式(不再無聲)", async () => {
   component = mount(App, { target: document.body });
   await settle();
-  [...document.querySelectorAll("button")].find((b) => b.textContent === "設定")!.click();
+  // 齒輪鈕是純 icon:以 aria-label(無障礙名稱)定位
+  [...document.querySelectorAll("button")].find((b) => b.getAttribute("aria-label") === "設定")!.click();
   await settle();
   [...document.querySelectorAll(".tabs button")].find((b) => b.textContent === "快捷鍵")!.click();
   await settle();
