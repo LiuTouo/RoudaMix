@@ -1628,7 +1628,28 @@
       >複製診斷</button
     >
   {/if}
-  <button class="settings" onclick={() => (settingsOpen = true)}>設定</button>
+  <button
+    class="settings gear"
+    aria-label="設定"
+    data-tooltip="開啟設定頁面。"
+    onclick={() => (settingsOpen = true)}
+  >
+    <!-- 幾何齒輪:圓環 + 八齒,純線段無填色 -->
+    <svg
+      viewBox="0 0 24 24"
+      width="17"
+      height="17"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2.6"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="5" />
+      <path
+        d="M12 2.6v3.4M12 18v3.4M2.6 12h3.4M18 12h3.4M5.35 5.35l2.41 2.41M16.24 16.24l2.41 2.41M18.65 5.35l-2.41 2.41M7.76 16.24l-2.41 2.41"
+      />
+    </svg>
+  </button>
   {#if dirty}
     <span class="dim" data-tooltip="目前 Session 有尚未儲存的變更。">● 未儲存</span>
   {/if}
@@ -2141,6 +2162,23 @@
   .settings {
     padding: 2px 8px;
     font-size: 12px;
+  }
+  /* 方形齒輪鈕:灰階幾何 icon,hover 提亮 */
+  .gear {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    color: var(--text-dim);
+  }
+  .gear:hover {
+    color: var(--text);
+    border-color: var(--text-dim);
+  }
+  .gear svg {
+    display: block;
   }
   .settingsdlg {
     background: var(--bg-panel);
