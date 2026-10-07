@@ -187,13 +187,13 @@ button:disabled {
   overflow-wrap: anywhere;
   white-space: pre-line;
   color: var(--text);
-  background: #22262c;
+  background: var(--tooltip-bg, #22262c);
   border: 1px solid #4b535e;
   border-left: 2px solid var(--accent);
-  border-radius: 3px;
-  box-shadow:
+  border-radius: var(--tooltip-radius, 3px);
+  box-shadow: var(--tooltip-shadow,
     0 7px 20px rgb(0 0 0 / 0.58),
-    inset 0 1px rgb(255 255 255 / 0.035);
+    inset 0 1px rgb(255 255 255 / 0.035));
   font: 12px/1.5 "IBM Plex Sans TC", "Segoe UI", system-ui, sans-serif;
   letter-spacing: 0.01em;
   pointer-events: none;

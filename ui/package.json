@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prototype": "vite --config vite.prototype.config.ts --mode prototype",
     "build": "vite build",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "test": "npm run test:node && npm run test:modules",

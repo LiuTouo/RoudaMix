@@ -1,0 +1,189 @@
+/* THROWAWAY：A 直角色塊 / B 細框幾何 / C 連續分區；保留所有元件幾何。 */
+:root[data-flat-preview][data-prototype-variant] {
+  --flat-0: #111418;
+  --flat-1: #1d232b;
+  --flat-2: #28313c;
+  --flat-3: #354151;
+  --flat-4: #424f60;
+  --bg: var(--flat-0);
+  --bg-panel: var(--flat-1);
+  --bg-raised: var(--flat-2);
+  --text: #edf2f7;
+  --text-dim: #c1cad6;
+  --accent: #9acaff;
+  --border: #465365;
+  --flat-radius: 0px;
+  --flat-edge: transparent;
+  --surface: var(--flat-1);
+  --section: var(--flat-2);
+  --control: var(--flat-3);
+  --hover: var(--flat-4);
+  --tooltip-bg: var(--flat-3);
+  --tooltip-radius: var(--flat-radius);
+  --tooltip-shadow: none;
+  --proto-radius: var(--flat-radius);
+  --proto-shadow: none;
+  --proto-inset: none;
+  --proto-card-shadow: none;
+  --proto-surface-shadow: none;
+  --proto-panel: var(--surface);
+  --proto-head: var(--section);
+  --proto-well: var(--section);
+  --proto-control: var(--control);
+  --proto-card: var(--control);
+  --proto-card-edge: var(--flat-edge);
+  --panel: var(--surface);
+  --line: var(--border);
+  --dim: var(--text-dim);
+}
+:root[data-flat-preview][data-prototype-variant][data-prototype-variant="B"] {
+  --flat-radius: 2px;
+  --flat-edge: var(--border);
+}
+/* 較高優先序只用於暫用皮膚，覆蓋正式主題與 Svelte scoped styles。 */
+:root[data-flat-preview][data-prototype-variant] #app :where(*):not([data-ui-tool], [data-ui-tool] *) {
+  border-radius: var(--flat-radius) !important;
+}
+:root[data-flat-preview][data-prototype-variant] #app :where(*):not(.dropbefore, .dropafter, .emptydrop, [data-ui-tool], [data-ui-tool] *) {
+  box-shadow: none !important;
+}
+:root[data-flat-preview][data-prototype-variant] #app :is(.bar, .strip, .startcard) {
+  background: var(--surface);
+  border-color: var(--flat-edge);
+}
+:root[data-flat-preview][data-prototype-variant] #app :is(.head, .vst, .vsthead, .vstfoot, .meterwrap, .nometer) {
+  background: var(--section);
+  border-color: var(--flat-edge);
+}
+:root[data-flat-preview][data-prototype-variant] #app .vstlist { background: var(--section); }
+:root[data-flat-preview][data-prototype-variant] #app .plug {
+  background: var(--control);
+  border-color: var(--flat-edge);
+}
+:root[data-flat-preview][data-prototype-variant] #app :is(.plugtitle, .plugactions) { background: transparent; }
+:root[data-flat-preview][data-prototype-variant] #app .plug.placeholder { border-left-color: var(--warn); }
+:root[data-flat-preview][data-prototype-variant] #app :is(.vstgrip, .badge, .sysbadge) {
+  background: var(--section); border-color: var(--flat-edge);
+}
+:root[data-flat-preview][data-prototype-variant] #app .vstgrip::after { background: var(--text-dim); }
+:root[data-flat-preview][data-prototype-variant] #app button:not([data-ui-tool] *) {
+  background: var(--control); border-color: var(--flat-edge);
+}
+:root[data-flat-preview][data-prototype-variant] #app :is(select, input:not([type="range"], [type="checkbox"], [type="color"]), .destination-trigger, .sys-dest) {
+  background: var(--control); color: var(--text); border-color: var(--flat-edge);
+}
+:root[data-flat-preview][data-prototype-variant] #app :is(button, .sys-dest):not([data-ui-tool] *):enabled:hover {
+  background: var(--hover); border-color: var(--text-dim);
+}
+:root[data-flat-preview][data-prototype-variant] #app :is(.dialog-close, .capsule-body, .capsule-btn, .aslink, .ctxitem, .sort, .plug .plugicon) {
+  background: transparent;
+}
+:root[data-flat-preview][data-prototype-variant] #app button.primary {
+  background: var(--accent); border-color: var(--accent); color: var(--flat-0);
+}
+:root[data-flat-preview][data-prototype-variant] #app :is(button.on:not(.tabs button, .monitor-bypass), button.danger:not(.plugicon)) {
+  background: var(--warn); border-color: var(--warn); color: var(--flat-0);
+}
+:root[data-flat-preview][data-prototype-variant] #app .monitor-bypass.on { color: var(--accent); border-color: var(--accent); }
+:root[data-flat-preview][data-prototype-variant] #app button.primary:enabled:hover { background: #a6d0ff; }
+:root[data-flat-preview][data-prototype-variant] #app :is(button.on:not(.tabs button, .monitor-bypass), button.danger:not(.plugicon)):enabled:hover {
+  background: #ffd095;
+}
+:root[data-flat-preview][data-prototype-variant] #app :is(.destination-trigger[aria-expanded="true"], .rebind) { border-color: var(--accent); }
+:root[data-flat-preview][data-prototype-variant] #app .rebind { border-color: var(--warn); }
+:root[data-flat-preview][data-prototype-variant] #app input[type="range"]::-webkit-slider-runnable-track {
+  background: var(--section); border-color: var(--border); border-radius: var(--flat-radius); box-shadow: none;
+}
+:root[data-flat-preview][data-prototype-variant] #app input[type="range"]::-webkit-slider-thumb {
+  background: var(--accent); border-color: var(--accent); border-radius: var(--flat-radius); box-shadow: none;
+}
+/* 浮層本體較面板亮；其內容與操作再向上取色，不從 DOM 深度推算。 */
+:root[data-flat-preview][data-prototype-variant] #app :is(dialog:not(.ctxdlg), .latency-drawer, .destination-popup, .ctx, .capsule, .gaintip) {
+  --surface: var(--flat-3);
+  --section: var(--flat-3);
+  --control: var(--flat-4);
+  --hover: var(--flat-4);
+  background: var(--surface); color: var(--text); border-color: var(--border);
+}
+:root[data-flat-preview][data-prototype-variant] #app :is(.dialog-head, .drawer-head, .tabs) { background: transparent; }
+:root[data-flat-preview][data-prototype-variant] #app :is(.tabs, .plugin-thead, .latency-row) { border-color: var(--border); }
+:root[data-flat-preview][data-prototype-variant] #app .tabs button { background: transparent; border-color: transparent; }
+:root[data-flat-preview][data-prototype-variant] #app .tabs button.on { background: var(--control); border-bottom-color: var(--accent); }
+:root[data-flat-preview][data-prototype-variant] #app :is(.formrow, .update-status, .latency-output, .latency-table, .plugin-thead, .plugin-group summary) {
+  background: var(--section); border-color: var(--flat-edge);
+}
+:root[data-flat-preview][data-prototype-variant] #app :is(.plugin-row, .app) {
+  background: var(--control); border-color: var(--flat-edge);
+}
+:root[data-flat-preview][data-prototype-variant] #app :is(.categories span, .destination-count) { background: transparent; }
+:root[data-flat-preview][data-prototype-variant] #app :is(.destination-option, .ctxitem, .plugin-group summary):hover {
+  background: var(--control);
+}
+:root[data-flat-preview][data-prototype-variant] #app .destination-option:has(input:checked) { background: var(--control); }
+:root[data-flat-preview][data-prototype-variant] #app .capsule.iserr { border-color: var(--warn); }
+:root[data-flat-preview][data-prototype-variant] #app .capsule.iserr .capsule-body { color: var(--warn); }
+:root[data-flat-preview][data-prototype-variant] #app :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+:root[data-flat-preview][data-prototype-variant] #app .ctxdlg:focus-visible { outline: none; }
+:root[data-flat-preview][data-prototype-variant] #app :is(.colorbar, .name, .nameedit) { box-shadow: none; }
+:root[data-flat-preview][data-prototype-variant] #app .colorbar .name { background: var(--flat-1); border-color: transparent; }
+:root[data-flat-preview][data-prototype-variant] #app :is(.dot, .sys-dot, .destination-dot) { border-radius: 50% !important; }
+:root[data-flat-preview][data-prototype-variant] .drag-ghost { box-shadow: none; border-radius: var(--flat-radius); }
+/* C：保留相同邊框寬度及間距，只把視覺邊界改為連續區域與水平線。 */
+:root[data-flat-preview][data-prototype-variant][data-prototype-variant="C"] #app :is(.head, .vsthead, .vstfoot) {
+  background: var(--surface);
+}
+:root[data-flat-preview][data-prototype-variant][data-prototype-variant="C"] #app :is(.plug, .plugin-row, .app) {
+  background: var(--section); border-color: transparent; border-bottom-color: var(--border);
+}
+:root[data-flat-preview][data-prototype-variant][data-prototype-variant="C"] #app :is(.plugin-picker ul, .applist, .vstlist) {
+  background: var(--section);
+}
+:root[data-flat-preview][data-prototype-variant][data-prototype-variant="C"] #app :is(.plugin-row, .app):enabled:hover { background: var(--control); }
+:root[data-flat-preview][data-prototype-variant][data-prototype-variant="C"] #app .plug.placeholder { border-left-color: var(--warn); }
+
+/* 比較工具獨立於待評估介面，popover 使 modal 中也能切換。 */
+.prototype-toolbar {
+  position: fixed; inset: auto auto 10px 50%; transform: translateX(-50%);
+  width: max-content; max-width: calc(100vw - 24px); margin: 0; padding: 10px 12px;
+  overflow: visible; color: #edf2f7; background: #111820; border: 1px solid #7a8ea8;
+  border-radius: 6px; font: 12px/1.5 "IBM Plex Sans TC", sans-serif;
+}
+.prototype-toolbar::backdrop { background: transparent; pointer-events: none; }
+.prototype-row, .prototype-variants { display: flex; align-items: center; gap: 5px; }
+.prototype-row { flex-wrap: wrap; justify-content: center; }
+.prototype-mark { color: #bdcbdc; padding-right: 8px; font-size: 11px; }
+.prototype-toolbar button {
+  background: #293647; color: #edf2f7; border: 1px solid #697b91; border-radius: 3px;
+  padding: 5px 9px; font: inherit; cursor: pointer; box-shadow: none;
+}
+.prototype-toolbar button:hover { border-color: #edf2f7; }
+.prototype-toolbar button[aria-pressed="true"] { color: #111820; background: #dbe7f5; border-color: #dbe7f5; }
+.prototype-toolbar button:focus-visible { outline: 2px solid #a6ceff; outline-offset: 2px; }
+.prototype-toolbar .prototype-description { margin: 8px 0 0; font-size: 12px; text-align: center; color: #dbe7f5; }
+.prototype-toolbar .prototype-notice { margin: 6px 0 0; font-size: 11px; text-align: center; color: #bdcbdc; }
+.prototype-levels { display: flex; justify-content: center; margin-top: 8px; }
+.prototype-levels span { padding: 4px 9px; font-size: 10px; background: #111418; }
+.prototype-levels span:nth-child(2) { background: #1d232b; }
+.prototype-levels span:nth-child(3) { background: #28313c; }
+.prototype-levels span:nth-child(4) { background: #354151; }
+.prototype-levels span:nth-child(5) { background: #424f60; }
+[data-prototype-variant="original"] .prototype-levels { visibility: hidden; }
+.prototype-state { margin-top: 6px; font-size: 11px; color: #bdcbdc; }
+.prototype-scenarios { display: flex; justify-content: center; gap: 6px; margin-top: 6px; }
+.prototype-scenarios button { padding: 2px 7px; font-size: 11px; background: transparent; }
+.prototype-state summary { cursor: pointer; text-align: center; }
+.prototype-state pre {
+  position: absolute; bottom: calc(100% + 8px); left: 0; right: 0;
+  max-height: min(40vh, 340px); margin: 0; padding: 12px; overflow: auto;
+  color: #edf2f7; background: #111820; border: 1px solid #7a8ea8; border-radius: 3px;
+  font: 11px/1.5 Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.prototype-toolbar.is-collapsed .prototype-expanded,
+.prototype-toolbar.is-collapsed .prototype-variants button[aria-pressed="false"] { display: none; }
+@media (max-width: 900px) {
+  .prototype-toolbar .prototype-mark { display: none; }
+  .prototype-toolbar button { padding: 4px 7px; font-size: 11px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root[data-flat-preview][data-prototype-variant] #app * { transition: none !important; }
+}
