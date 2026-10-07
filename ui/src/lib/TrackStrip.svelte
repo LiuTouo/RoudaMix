@@ -1022,19 +1022,6 @@
           {/each}
         </optgroup>
       </select>
-      {#if latencyEnabled}
-        <select
-          class="latency-policy"
-          value={shownLatencyPolicy()}
-          disabled={isLatencyPolicyPending(latencyPolicyState)}
-          onchange={(e) => void setLatencyPolicy(e.currentTarget.value as OutputLatencyPolicy)}
-          aria-label="輸出軌 {track.name} 的延遲政策"
-          data-tooltip="Full PDC 會對齊匯流分支；Low Latency 不加入 Compensation Delay，且不保證平行路徑同步。"
-        >
-          <option value="fullPdc">Full PDC</option>
-          <option value="lowLatency">Low Latency</option>
-        </select>
-      {/if}
     {/if}
   </div>
 
@@ -1068,6 +1055,22 @@
         pending={sidechainLocal !== null} onToggle={toggleSidechain}
         label="側鏈來源" panelSuffix="sidechain"
         emptyText="沒有可作為側鏈來源的輸入軌。" />
+    </div>
+  {:else if isOutput && latencyEnabled}
+    <div class="row routing-row">
+      <!-- 勾選 = Low Latency(不加入 Compensation Delay);取消勾選 = Full PDC(對齊匯流分支) -->
+      <label class="latency-toggle">
+        <input
+          type="checkbox"
+          checked={shownLatencyPolicy() === "lowLatency"}
+          disabled={isLatencyPolicyPending(latencyPolicyState)}
+          onchange={(e) =>
+            void setLatencyPolicy(e.currentTarget.checked ? "lowLatency" : "fullPdc")}
+          aria-label="輸出軌 {track.name} 低延遲"
+          data-tooltip="勾選 = Low Latency（不加入 Compensation Delay，不保證平行路徑同步）；取消勾選 = Full PDC（匯流分支 sample-exact 對齊）。"
+        />
+        <span>低延遲</span>
+      </label>
     </div>
   {:else}
     <div class="row routing-row" aria-hidden="true"></div>
@@ -1515,6 +1518,12 @@
   .sys-dest:hover { background: var(--bg-raised); }
   .sys-dest input { flex: none; margin: 0; width: 14px; height: 14px; accent-color: var(--accent); }
   .sys-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+  /* 低延遲勾選框(輸出軌):勾 = Low Latency,不勾 = Full PDC */
+  .latency-toggle {
+    display: flex; align-items: center; gap: 5px; min-width: 0;
+    font-size: 12px; line-height: normal; cursor: pointer; user-select: none;
+  }
+  .latency-toggle input { flex: none; margin: 0; width: 14px; height: 14px; accent-color: var(--accent); }
   /* VST 常駐 box:預設自適應內容(超出即內捲),拖底部把手可拉長 */
   .vst {
     flex: 0 1 auto;

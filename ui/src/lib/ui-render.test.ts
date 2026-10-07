@@ -78,7 +78,8 @@ test("TrackStrip 依 capability 顯示 Monitor Bypass 與 Output Latency Policy"
 
   assert.doesNotMatch(disabled, /aria-label="啟用 Synth 的 Monitor Bypass"/);
   assert.match(enabled, /aria-label="啟用 Synth 的 Monitor Bypass"/);
-  assert.match(enabled, /aria-label="輸出軌 Stream 的延遲政策"/);
+  assert.match(enabled, /aria-label="輸出軌 Stream 低延遲"/);
+  assert.doesNotMatch(enabled, /<option value="fullPdc">/);
 });
 
 test("VST 機架以可操作名稱呈現 GUI 入口，加入按鈕不承擔重新掃描", () => {
