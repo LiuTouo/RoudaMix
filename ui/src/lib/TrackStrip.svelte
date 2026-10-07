@@ -596,7 +596,10 @@
     if (e.dataTransfer) {
       e.dataTransfer.effectAllowed = pluginCopyEnabled && !isPh(slot) ? "copyMove" : "move";
       const row = (e.target as HTMLElement).closest<HTMLElement>(".plug");
-      if (row) mountDragGhost(e.dataTransfer, row, row.offsetWidth || 170);
+      if (row) {
+        const r = row.getBoundingClientRect();
+        mountDragGhost(e.dataTransfer, row, row.offsetWidth || 170, { x: e.clientX - r.left, y: e.clientY - r.top });
+      }
     }
   }
   function onPlugDragOver(e: DragEvent) {
@@ -1440,16 +1443,30 @@
     user-select: text;
   }
   .strip.dragging {
-    opacity: 0.35;
+    opacity: 0.22; /* 內容已被拿起,原地只剩空槽 */
     border-style: dashed;
     border-color: var(--accent);
   }
-  /* 暫態落點優先於任何主題的面板陰影；inset 不被 overflow 裁切。 */
-  .strip.dropbefore {
-    box-shadow: inset 3px 0 0 0 var(--accent) !important;
-  }
+  /* 暫態落點「對焦」:落點整卡亮框+淡藍染色,呼吸式明暗。
+   * 功能性回饋:console.css 的 reduced-motion 防護已豁免本指示,OS 動畫關閉仍播放。
+   * !important 優先於任何主題的面板陰影;inset 999px 全卡染色不被 overflow 裁切。 */
+  .strip.dropbefore,
   .strip.dropafter {
-    box-shadow: inset -3px 0 0 0 var(--accent) !important;
+    box-shadow: inset 0 0 0 999px color-mix(in srgb, var(--accent) 10%, transparent) !important;
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+    animation: drop-focus 1.2s ease-in-out infinite;
+  }
+  @keyframes drop-focus {
+    0%,
+    100% {
+      box-shadow: inset 0 0 0 999px color-mix(in srgb, var(--accent) 7%, transparent);
+      outline-color: color-mix(in srgb, var(--accent) 40%, transparent);
+    }
+    50% {
+      box-shadow: inset 0 0 0 999px color-mix(in srgb, var(--accent) 17%, transparent);
+      outline-color: var(--accent);
+    }
   }
   .head {
     flex: 0 0 22px;

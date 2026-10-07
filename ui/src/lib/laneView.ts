@@ -1,9 +1,9 @@
 // P1-I:水平帶 viewport virtualization + 拖曳插入位置的幾何計算(純函式)。
-// strip 固定寬(CSS flex:0 0 250px、gap 8px),位置可純算 —— 不查 DOM,
+// strip 固定寬(CSS flex:0 0 250px、gap 16px),位置可純算 —— 不查 DOM,
 // 虛擬化後(不在 DOM 的 strip)拖放計算依然正確。
 
 export const STRIP_W = 250;
-export const STRIP_GAP = 8;
+export const STRIP_GAP = 16;
 export const STRIP_PITCH = STRIP_W + STRIP_GAP;
 
 /** [start, end) = 要 render 的 index 範圍(含 overscan;夾 [0, count]) */

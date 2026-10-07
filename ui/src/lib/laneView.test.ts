@@ -1,9 +1,9 @@
 // P1-I 測試:視窗計算、spacer 幾何、虛擬化下的拖放插入位
 import { test } from "node:test";
 import assert from "node:assert";
-import { visibleRange, spacerWidths, dropPosFromX, STRIP_PITCH, STRIP_W } from "./laneView.ts";
+import { visibleRange, spacerWidths, dropPosFromX, STRIP_PITCH, STRIP_W, STRIP_GAP } from "./laneView.ts";
 
-const P = STRIP_PITCH; // 258
+const P = STRIP_PITCH;
 
 test("visibleRange:窗口 + overscan,夾 [0,count]", () => {
   // 前 10 條全部可見(scroll 0、視窗 2600):start 0,end = ceil(2600/258)+1 = 11 → 夾 10
@@ -29,10 +29,10 @@ test("spacerWidths:總寬守恆(spacer + render 區 = 全量內容寬)", () => {
   const start = 3, end = 7;
   const { left, right } = spacerWidths(start, end, count);
   // render 區寬(含 gap):strip 3..6 + 其間 gap
-  const mid = (end - start) * STRIP_W + (end - start - 1) * 8;
+  const mid = (end - start) * STRIP_W + (end - start - 1) * STRIP_GAP;
   // 全量寬 = count*w + (count-1)*gap;spacer 校正後總和應等於全量
-  const total = count * STRIP_W + (count - 1) * 8;
-  assert.equal(left + 8 + mid + 8 + right, total);
+  const total = count * STRIP_W + (count - 1) * STRIP_GAP;
+  assert.equal(left + STRIP_GAP + mid + STRIP_GAP + right, total);
   // 邊界:全 render 無 spacer
   assert.deepEqual(spacerWidths(0, count, count), { left: 0, right: 0 });
 });
@@ -41,8 +41,8 @@ test("dropPosFromX:中心點判插入位;指標過尾 = count", () => {
   // lane 在視窗 x=100、未捲動:內容座標 = clientX-100。第 0 條中心 = 125
   assert.equal(dropPosFromX(200, 100, 0, 5), 0); // 內容 100 < 125 → 0
   assert.equal(dropPosFromX(230, 100, 0, 5), 1); // 內容 130 > 125 → 1
-  // 捲動 258:內容座標 300 的指標 = 視窗 100+300-258 = 142(第 0 條中心之後)
-  assert.equal(dropPosFromX(142, 100, 258, 5), 1);
+  // 捲動一個 pitch:內容座標 300 的指標 = 視窗 100+300-P = 142(第 0 條中心之後)
+  assert.equal(dropPosFromX(142, 100, P, 5), 1);
   // 指標在最後一條中心之後 → count
   assert.equal(dropPosFromX(100 + 4 * P + 200, 100, 0, 5), 5);
 });

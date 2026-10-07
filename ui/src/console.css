@@ -1,5 +1,5 @@
 /* Approved C / minimal console. Shared by the real App and the isolated DEV preview.
-   Keep the 250px strip / 8px lane pitch: virtualization and drag hit-testing use it. */
+   Keep the 250px strip / 16px lane pitch (STRIP_GAP): virtualization and drag hit-testing use it. */
 :root {
   --flat-0: #0D0F10; --flat-1: #121416; --flat-2: #181B1E; --flat-3: #181B1E; --flat-4: #202428;
   --border: #292D31; --divider: #1E2225; --text: #E2E5E8; --text-dim: #9CA5AE;
@@ -25,7 +25,7 @@ body { background: var(--flat-0); }
   & .colhead { height: 32px; flex: none; padding: 4px 12px; gap: 8px; background: var(--flat-0); border-bottom: 1px solid var(--border); }
   & .colhead .mini { font-size: 11px; padding: 3px 6px; }
   & .lanes { background: var(--flat-1); }
-  & .strip { position: relative; padding: 4px 12px 0; gap: 4px; border: 0; border-right: 1px solid var(--divider); background: transparent; }
+  & .strip { position: relative; padding: 4px 12px 0; gap: 4px; border: 1px solid var(--border); border-radius: 0; background: var(--flat-4); }
   & .head { position: absolute; top: 4px; right: 12px; width: 28px; height: 28px; min-height: 28px; border: 0; background: transparent; padding: 0; }
   & .sysbadge { background: none; border: 0; padding: 0; color: var(--text-dim); font: 10px var(--mono); }
   & .head .del { width: 28px; height: 26px; color: var(--text-dim); }
@@ -139,5 +139,6 @@ body { background: var(--flat-0); }
   #app .audio-console .console-telemetry { flex-wrap: wrap; gap: 6px 12px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  #app .audio-console * { transition: none !important; animation: none !important; }
+  /* 落點指示(.dropbefore/.dropafter)是功能性回饋:依需求在 OS 動畫關閉時仍要播放 */
+  #app .audio-console *:not(.dropbefore, .dropafter) { transition: none !important; animation: none !important; }
 }

@@ -1238,7 +1238,8 @@
       e.dataTransfer?.setData("text/plain", el.dataset.trackId ?? "");
       if (e.dataTransfer) {
         e.dataTransfer.effectAllowed = "move";
-        mountDragGhost(e.dataTransfer, el, el.offsetWidth || 250);
+        const r = el.getBoundingClientRect();
+        mountDragGhost(e.dataTransfer, el, el.offsetWidth || 250, { x: e.clientX - r.left, y: e.clientY - r.top });
       }
     };
   }
@@ -2394,7 +2395,7 @@
     flex: 1;
     min-height: 0;
     display: flex;
-    gap: 8px;
+    gap: 16px; /* 與 laneView.ts STRIP_GAP 同步 */
   }
   .hint {
     font-size: 11px;

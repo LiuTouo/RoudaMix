@@ -202,13 +202,25 @@ button:disabled {
   display: none;
 }
 
-/* ---- 拖曳「拿起」幽靈圖(ui/src/lib/ghost.ts 掛的 clone;全域因為在 body 下) ---- */
+/* ---- 拖曳「拿起」幽靈圖(ui/src/lib/ghost.ts 掛的真實 DOM 跟隨層;全域因為在 body 下) ----
+   陰影是真實 DOM 渲染,不會像拖曳影像點陣圖那樣被裁切或套 OS 半透明 */
 .drag-ghost {
-  /* 高元素旋轉角在上下端位移放大(1000px × 2.5° ≈ 43px)= 看起來歪很大;1° 剛好有拿起感 */
-  transform: rotate(1deg) scale(1.03);
-  opacity: 0.96;
+  /* 放大 + 多層深陰影 = 「整條提起來」的懸浮感;不傾斜(使用者指定) */
+  transform: scale(1.05);
+  opacity: 1;
   border-radius: var(--flat-radius);
   background: var(--bg-panel);
   border: 1px solid var(--accent);
-  box-shadow: none;
+  box-shadow:
+    0 18px 36px rgba(0, 0, 0, 0.45),
+    0 6px 12px rgba(0, 0, 0, 0.3);
+  /* 拿起瞬間:從原尺寸撐到懸浮尺寸,加強「剛離手」感;無 reduced-motion 防護,
+   * Win11 動畫關閉也要生效(使用者指定);陰影同步淡入避免彈跳 */
+  animation: ghost-lift 150ms ease-out;
+}
+@keyframes ghost-lift {
+  from {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(0, 0, 0, 0);
+  }
 }
