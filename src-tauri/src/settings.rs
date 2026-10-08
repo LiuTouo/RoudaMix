@@ -157,6 +157,9 @@ pub fn normalize(raw: Value) -> (Settings, Vec<String>) {
             },
             "lastWorkingBuffer" => match v.as_u64() {
                 Some(n) if n <= 8192 => s.last_working_buffer = Some(n as u32),
+                // null = 合法「無偏好」(WASAPI master 沒有 buffer,persistLastWorking 帶 null);
+                // 當非法警告會在每次 set_settings 重複誤報(null 已被 serde 存回檔案)
+                None if v.is_null() => s.last_working_buffer = None,
                 Some(_) | None => {
                     warnings.push("settings.lastWorkingBuffer 值不合法,已回復預設".into())
                 }
@@ -408,6 +411,39 @@ mod tests {
         // 型別錯 → 回預設 None + warning
         let (s, w) = normalize(json!({"monitorHotkey": 42}));
         assert_eq!(s.monitor_hotkey, None);
+        assert_eq!(w.len(), 1);
+    }
+
+    #[test]
+    fn normalize_last_working_buffer_null_is_legitimate() {
+        // WASAPI master 沒有 buffer:persistLastWorking("wasapi", null) 會存 null。
+        // null = 合法「無偏好」,不得警告 —— 否則每次 set_settings(含存 Session 後的
+        // rememberLastSession)都會誤報「設定有部分值不合法」。
+        let (s, w) = normalize(json!({"lastWorkingDevice": "wasapi", "lastWorkingBuffer": null}));
+        assert_eq!(s.last_working_device.as_deref(), Some("wasapi"));
+        assert_eq!(s.last_working_buffer, None);
+        assert!(w.is_empty());
+
+        // 使用者實際 settings.json 形狀:null 已被 serde 序列化存檔,每欄位重驗也要零警告
+        let (s, w) = normalize(json!({
+            "checkUpdatesOnStartup": true,
+            "closeBehavior": "tray",
+            "lastSessionPath": "D:/x/liut.rmsession",
+            "lastWorkingBuffer": null,
+            "lastWorkingDevice": "wasapi",
+            "monitorHotkey": null,
+            "schemaVersion": 3,
+            "sessionDir": "D:/Software/RoudaMix",
+            "startMinimizedOnAutostart": true,
+            "startupFile": "liut.rmsession",
+            "startupMode": "folder"
+        }));
+        assert!(w.is_empty(), "warnings: {w:?}");
+        assert_eq!(s.last_working_device.as_deref(), Some("wasapi"));
+
+        // 超出上限仍是非法值
+        let (s, w) = normalize(json!({"lastWorkingBuffer": 9999}));
+        assert_eq!(s.last_working_buffer, None);
         assert_eq!(w.len(), 1);
     }
 
