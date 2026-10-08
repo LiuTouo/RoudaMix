@@ -173,7 +173,12 @@ button:disabled {
   outline-offset: 1px;
 }
 
-/* ---- 應用程式提示:取代瀏覽器原生 title，沿用機架面板語彙 ---- */
+/* ---- 應用程式提示:取代瀏覽器原生 title，統一 console 主題語彙 ----
+   跟主程式(Approved C console)同一套幾何與面板色:直角硬邊、近黑面板、
+   1px 細框、左緣 2px accent 刻度(頻道焦點燈);字級對齊軌道小字(11px)，
+   tabular-nums 讓 dB/% 讀值對齊 —— 專業混音台工具的技術讀出感。
+   (本層掛在 body、不在 #app 內，須自帶 console 的直角語彙，
+    覆蓋不了 console.css 的 `#app .audio-console * { border-radius: 0 }`。) */
 .app-tooltip {
   position: fixed;
   inset: auto;
@@ -182,18 +187,19 @@ button:disabled {
   max-width: min(360px, calc(100vw - 16px));
   max-height: min(320px, calc(100vh - 16px));
   margin: 0;
-  padding: 6px 9px 7px;
+  padding: 4px 9px 5px;
   overflow: hidden;
   overflow-wrap: anywhere;
   white-space: pre-line;
   color: var(--text);
-  background: var(--flat-3);
+  background: var(--flat-2);
   border: 1px solid var(--border);
   border-left: 2px solid var(--accent);
-  border-radius: var(--flat-radius);
-  box-shadow: none;
-  font: 12px/1.5 "IBM Plex Sans TC", "Segoe UI", system-ui, sans-serif;
-  letter-spacing: 0.01em;
+  border-radius: 0;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 0.5);
+  font: 11px/1.5 "IBM Plex Sans TC", "Segoe UI", system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
   pointer-events: none;
   user-select: none;
   /* 顯示過場:tooltip.ts 在定位（強制 reflow）後加 .show,由此處淡入;
