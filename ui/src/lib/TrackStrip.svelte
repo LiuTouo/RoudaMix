@@ -4,7 +4,7 @@
   import MeterCanvas from "./MeterCanvas.svelte";
   import { fade } from "svelte/transition";
   import { powerOff, powerOn } from "./icons";
-  import { mountDragGhost, removeDragGhost } from "./ghost";
+  import { mountDragGhost, removeDragGhost, settleDragGhost } from "./ghost";
   import { open as openFile } from "@tauri-apps/plugin-dialog";
   import { engineCommand } from "./protocol-commands.generated";
   import { cssColor, destCandidates, matteColor, parseColor, sidechainCandidates, stripOfTrack, type MeterStripView } from "./tracks";
@@ -624,8 +624,10 @@
       e.dataTransfer.effectAllowed = pluginCopyEnabled && !isPh(slot) ? "copyMove" : "move";
       const row = (e.target as HTMLElement).closest<HTMLElement>(".plug");
       if (row) {
-        const r = row.getBoundingClientRect();
-        mountDragGhost(e.dataTransfer, row, row.offsetWidth || 170, { x: e.clientX - r.left, y: e.clientY - r.top });
+        // 機架列小,不釘按住點(游標正好蓋住內容):負 grab = 幽靈整體挪到
+        // 游標右下 14px;fit content = 寬度隨名稱撐開,完整名稱不被窄欄裁切;
+        // 落點判定仍以指標為準,不受偏移影響
+        mountDragGhost(e.dataTransfer, row, row.offsetWidth || 170, { x: -14, y: -14 }, "content");
       }
     }
   }
@@ -668,6 +670,14 @@
     e.stopPropagation();
     onPlugDragOver(e); // 放下位置與當下顯示的插入位使用同一個判定。
     const from = track.plugins.findIndex((s) => s.instanceId === plugDrag);
+    // 幽靈落定(與音軌同款):滑向被拖曳列(同軌;rect 含預覽位移 = 最終槽位)或
+    // 插入點前一列(跨軌)後淡出。須在清空 plugDropAt/plugPitch 前量 rect。
+    const rows = vstBox?.querySelectorAll<HTMLElement>(".vstlist > .plug") ?? [];
+    const target = from >= 0
+      ? rows[from] ?? null
+      : plugDropAt !== null
+        ? rows[plugDropAt - 1] ?? vstBox?.querySelector<HTMLElement>(".empty-slot") ?? null
+        : null;
     if (source.trackId !== track.trackId && plugDropAt !== null) {
       void runPluginTransfer(() => duplicatePlugin(source.instanceId, track.trackId, plugDropAt!));
     } else if (from >= 0 && plugDropAt !== null) {
@@ -680,10 +690,10 @@
         );
       }
     }
+    settleDragGhost(target); // 先落定再收尾:層已移交動畫,endPluginDrag 的清理變 no-op
     endPluginDrag();
     plugDropAt = null;
     plugPitch = 0;
-    removeDragGhost();
   }
   function onPlugDragEnd() {
     endPluginDrag();
@@ -1205,7 +1215,7 @@
           onkeydown={(e) => pluginMenuKey(e, s)}
           aria-label="plugin {s.name}"
           ondragstart={(e) => onPlugDragStart(e, s)}
-          ondragend={onPlugDragEnd}
+          ondragend={() => { if ($pluginTransfer.drag) onPlugDragEnd(); }}
           oncontextmenu={(e) => {
             if ((e.target as HTMLElement).closest("button")) return;
             e.preventDefault();
@@ -1755,7 +1765,10 @@
     background: color-mix(in srgb, var(--accent) 14%, transparent);
     color: var(--text);
   }
-  .plug.drag-active {
+  /* motion.css 的 #app :is(…, .plug, …) 以 ID 優先序整組蓋掉 transition,
+   * 滑動預覽的 transform 轉場失效(列瞬跳,不如音軌流暢);用同級 #app
+   * 選擇器搶回來,時長/曲線與音軌 .strip.drag-active 完全一致 */
+  :global(#app) .plug.drag-active {
     transition: transform 0.16s ease;
   }
   .power {

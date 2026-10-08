@@ -107,7 +107,7 @@
   let panelOpen = $state(false); // 硬體面板開啟中:stream 可能停,關閉後自動重建
   let settingsOpen = $state(false); // 設定 modal;已開再按 = 無操作,天然單例
   let settingsDlg = $state<HTMLDialogElement | null>(null);
-  let tab = $state<"audio" | "general" | "hotkeys" | "about">("audio");
+  let tab = $state<"audio" | "general" | "scenes" | "hotkeys" | "about">("audio");
   let appSettings = $state<AppSettings | null>(null);
   let autostartEnabled = $state<boolean | null>(null);
   let autostartBusy = $state(false);
@@ -1583,8 +1583,12 @@
 
   function openGeneral() {
     tab = "general";
-    refreshFolderFiles().catch(() => {});
     void refreshAutostartState();
+  }
+
+  function openScenes() {
+    tab = "scenes";
+    refreshFolderFiles().catch(() => {});
   }
 
   async function updateCheckPreference(enabled: boolean): Promise<boolean> {
@@ -1925,6 +1929,7 @@
   <div class="tabs">
     <button class:on={tab === "audio"} onclick={() => (tab = "audio")}>音訊 / Session</button>
     <button class:on={tab === "general"} onclick={openGeneral}>通用</button>
+    <button class:on={tab === "scenes"} onclick={openScenes}>場景</button>
     <button class:on={tab === "hotkeys"} onclick={() => (tab = "hotkeys")}>快捷鍵</button>
     <button class:on={tab === "about"} onclick={() => (tab = "about")}>關於 / 更新</button>
   </div>
@@ -1977,13 +1982,14 @@
       </select>
     </div>
     <div class="formrow">
+      <span class="formlabel">驅動面板</span>
       <button
         onclick={openDevicePanel}
         disabled={!running || wasapiMaster}
         data-tooltip={wasapiMaster
           ? "系統音訊（WASAPI）模式沒有 ASIO 驅動程式控制面板。"
           : "開啟 ASIO 驅動程式控制面板以調整硬體取樣率。Buffer 大小請使用 RoudaMix 的 Buffer 選單；面板關閉後會自動同步並重建音訊引擎。"}
-        >硬體面板</button
+        >ASIO</button
       >
       {#if panelOpen}
         <span class="err mono"
@@ -1992,6 +1998,7 @@
       {/if}
     </div>
     <div class="formrow">
+      <span class="formlabel">引擎</span>
       {#if running}
         <button class="danger" onclick={stop} disabled={busy}>Stop</button>
       {:else}
@@ -2000,20 +2007,19 @@
         >
       {/if}
       <span style="flex:1"></span>
-      <button onclick={saveSession}>儲存 Session</button>
-      <button onclick={loadSession}>載入 Session</button>
     </div>
     {#if status?.error}
-      <p class="err mono">{status.error}</p>
+      <p class="err mono indent">{status.error}</p>
     {/if}
     {#if notice}
-      <p class="err mono">{notice}</p>
+      <p class="err mono indent">{notice}</p>
     {/if}
     </div>
   {:else if tab === "general"}
     <div class="tabpane" in:fade={{ duration: 120 }}>
-    <h2>啟動</h2>
+    <h2>自動啟動</h2>
     <div class="formrow checkrow" class:disabled={autostartBusy || autostartEnabled === null}>
+      <span class="formlabel">自動啟動</span>
       <input
         id="autostartenabled"
         type="checkbox"
@@ -2036,6 +2042,7 @@
         autostartBusy ||
         startMinimizedBusy}
     >
+      <span class="formlabel"></span>
       <input
         id="startminimizedonautostart"
         type="checkbox"
@@ -2071,7 +2078,10 @@
         <option value="exit">關閉程式</option>
       </select>
     </div>
-    <h2>場景</h2>
+    </div>
+  {:else if tab === "scenes"}
+    <div class="tabpane" in:fade={{ duration: 120 }}>
+    <h2>啟動</h2>
     <div class="formrow">
       <label class="formlabel" for="startupmode">啟動時</label>
       <select
@@ -2100,10 +2110,11 @@
       <button onclick={pickSessionDir}>選擇…</button>
     </div>
     {#if restoreError}
-      <p class="err mono">啟動恢復失敗:{restoreError}</p>
+      <p class="err mono indent">啟動恢復失敗:{restoreError}</p>
     {/if}
     {#if appSettings?.startupMode === "last"}
       <div class="formrow">
+        <span class="formlabel"></span>
         <span
           class="dim mono dirpath"
           data-tooltip={`啟動時開啟最近 Session：\n${appSettings.lastSessionPath ?? "尚未儲存過 Session"}`}
@@ -2135,6 +2146,12 @@
         </select>
       </div>
     {/if}
+    <h2>Session</h2>
+    <div class="formrow">
+      <span class="formlabel">Session</span>
+      <button onclick={saveSession}>儲存 Session</button>
+      <button onclick={loadSession}>載入 Session</button>
+    </div>
     </div>
   {:else if tab === "hotkeys"}
     <div class="tabpane" in:fade={{ duration: 120 }}>
@@ -2157,7 +2174,7 @@
       {/if}
     </div>
     {#if capturingHotkey && captureHint}
-      <p class="dim">{captureHint}</p>
+      <p class="dim indent">{captureHint}</p>
     {/if}
     </div>
   {:else}
@@ -2334,10 +2351,14 @@
     gap: 10px;
   }
   .formlabel {
-    width: 96px;
+    width: 112px;
     flex-shrink: 0;
     color: var(--text-dim);
     font-size: 13px;
+  }
+  /* 說明/錯誤文字對齊控制項欄(112px 標籤 + 10px gap) */
+  .indent {
+    margin-left: 122px;
   }
   .checkrow {
     min-height: 26px;

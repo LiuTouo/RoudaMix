@@ -42,14 +42,36 @@ afterEach(async () => { await unmount(component); removeDragGhost(); document.bo
 describe("VST 拖曳落點", () => {
   it("上移:前列下滑讓位,放下送出相同插入位置", () => {
     drag(rows()[2], "dragstart");
+    // 幽靈偏移:跟隨層釘在游標右下 14px,完整露出內容不被游標蓋住
+    const move = new Event("drag", { bubbles: true });
+    Object.defineProperties(move, { clientX: { value: 40 }, clientY: { value: 60 } });
+    window.dispatchEvent(move);
+    flushSync();
+    expect(document.querySelector(".drag-ghost")!.parentElement!.style.transform).toBe("translate(54px, 74px)");
+    // 機架列幽靈:寬度隨內容撐開(完整名稱)、高度自適應(不鎖原高)
+    const ghostEl = document.querySelector<HTMLElement>(".drag-ghost")!;
+    expect(ghostEl.parentElement!.style.width).toBe("max-content");
+    expect(ghostEl.style.height).toBe("");
+    // 防夾:超出視窗右/下緣時夾回視窗內(jsdom viewport 1024×768;層尺寸 mock 300×200)
+    vi.spyOn(ghostEl.parentElement!, "offsetWidth", "get").mockReturnValue(300);
+    vi.spyOn(ghostEl.parentElement!, "offsetHeight", "get").mockReturnValue(200);
+    const edge = new Event("drag", { bubbles: true });
+    Object.defineProperties(edge, { clientX: { value: 1100 }, clientY: { value: 900 } });
+    window.dispatchEvent(edge);
+    flushSync();
+    expect(ghostEl.parentElement!.style.transform).toBe("translate(724px, 568px)");
     drag(rows()[0], "dragover", 103);
     expect(rows()[0].style.transform).toBe("translateY(50px)");
     expect(rows()[1].style.transform).toBe("translateY(50px)");
     expect(rows()[2].style.transform).toBe("translateY(-100px)"); // 被拖曳列滑到首列
+    vi.useFakeTimers();
     drag(rows()[0], "drop", 103);
     expect(command).toHaveBeenCalledWith("move_plugin", { instanceId: 3, newIndex: 0 });
     expect(rows()[0].style.transform).toBe("translateY(0px)");
+    expect(document.querySelector(".drag-ghost")).not.toBeNull(); // 放手落定動畫中
+    vi.advanceTimersByTime(300);
     expect(document.querySelector(".drag-ghost")).toBeNull();
+    vi.useRealTimers();
   });
   it("下移:後列上滑,放下先移除再計算最後位置", () => {
     drag(rows()[0], "dragstart");

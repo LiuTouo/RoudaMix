@@ -59,6 +59,7 @@ it.each([false, true])("ASIO 清單空白，running=%s 載入 WASAPI Session 會
   component = mount(App, { target: document.body }); await settle();
   listeners.get("engine-event")!({ payload: { kind: "status", payload: { ...status, running } } });
   await settle(); command.mockClear();
+  button("場景").click(); await settle(); // 儲存/載入 Session 已移至設定 → 場景分頁
   button("載入 Session").click(); await settle();
   expect(command.mock.calls.filter(([name]) => name === "start" || name === "stop").map(([name]) => name))
     .toEqual(running ? ["stop", "start"] : ["start"]);
@@ -82,6 +83,7 @@ it("主裝置失效會顯示通知，手動 Start 使用 WASAPI 格式並可再�
 it("Session 載入失敗不啟動或停止目前串流", async () => {
   component = mount(App, { target: document.body }); await settle(); command.mockClear();
   command.mockRejectedValueOnce({ code: "session_io", message: "invalid session" });
+  button("場景").click(); await settle(); // 儲存/載入 Session 已移至設定 → 場景分頁
   button("載入 Session").click(); await settle();
   expect(command).toHaveBeenCalledExactlyOnceWith("load_session", { path: "test.rmsession" });
   expect(document.querySelector(".capsules")?.textContent).toContain("Session 載入失敗");

@@ -116,13 +116,17 @@ describe("跨音軌拖曳", () => {
     expect(transfer.effectAllowed).toBe("copyMove");
     const outer = vi.fn(); racks()[1].parentElement!.addEventListener("dragover", outer);
     drag(racks()[1], "dragover", y); expect(transfer.dropEffect).toBe("copy");
+    vi.useFakeTimers();
     drag(racks()[1], "drop", y);
     expect(command).toHaveBeenCalledExactlyOnceWith("duplicate_plugin", { instanceId: 1, trackId: 2, newIndex });
     expect(outer).not.toHaveBeenCalled(); expect(rows()).toHaveLength(2);
     expect(get(pluginTransfer).clipboard?.clipboardId).toBe("snapshot-1");
     expect([...document.querySelectorAll<HTMLElement>(".plug")].every((el) => el.style.transform === "translateY(0px)" || el.style.transform === ""))
       .toBe(true);
+    expect(document.querySelector(".drag-ghost")).not.toBeNull(); // 放手落定動畫中
+    vi.advanceTimersByTime(300);
     expect(document.querySelector(".drag-ghost")).toBeNull();
+    vi.useRealTimers();
   });
   it("空機架顯示落點並接受副本，同軌仍是排序", async () => {
     show(); drag(rows()[0], "dragstart"); drag(racks()[2], "dragover", 100);

@@ -72,6 +72,8 @@ body { background: var(--flat-0); }
   & .vstlist { padding: 0; gap: 0; background: transparent; counter-reset: insert; }
   & .plug { display: grid; grid-template-columns: 14px 18px minmax(0, 1fr) 18px 18px; align-items: center; gap: 2px; min-height: 28px; flex: none; padding: 1px 0; border: 0; background: transparent; counter-increment: insert; }
   & .plug::before { content: counter(insert, decimal-leading-zero); grid-column: 1; grid-row: 1; color: var(--text-dim); font: 9px var(--mono); }
+  /* 拖曳幽靈(clone)不在 .vstlist 計數器鏈上,序號會永遠顯示 01 —— 直接不畫 */
+  & .drag-ghost::before { content: none; }
   & .plug:not(.placeholder) > .plugname { grid-column: 3; grid-row: 1; font-size: 11px; padding: 0; line-height: 24px; }
   /* 改名輸入框:非 placeholder 直接是 grid child(佔名稱格);placeholder 時深埋 .plugtitle 內,grid 語不生效 */
   & .plugrename { grid-column: 3; grid-row: 1; width: 100%; min-width: 0; background: var(--flat-2); color: var(--text); text-align: left; border: 0; border-bottom: 1px solid var(--accent); font-size: 11px; }
