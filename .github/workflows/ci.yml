@@ -39,6 +39,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Rust installation failed' }
           rustup default 1.97.1
           if ($LASTEXITCODE -ne 0) { throw 'Rust selection failed' }
+      # 快取 cargo test（debug profile）的依賴編譯產物。
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Restore dependencies
         shell: pwsh
         run: |
@@ -51,7 +53,7 @@ jobs:
         run: |
           cmake -S engine -B engine/build -A x64
           if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed' }
-          cmake --build engine/build --config Release --parallel 2
+          cmake --build engine/build --config Release --parallel 4
           if ($LASTEXITCODE -ne 0) { throw 'CMake build failed' }
       - name: Run full test suite
         shell: pwsh

@@ -29,7 +29,7 @@ if (-not $SkipRestore) {
     Invoke-ReleaseCommand npm @('--prefix', 'ui', 'ci')
 }
 Invoke-ReleaseCommand cmake @('-S', 'engine', '-B', 'engine/build', '-A', 'x64')
-Invoke-ReleaseCommand cmake @('--build', 'engine/build', '--config', 'Release', '--parallel', '2')
+Invoke-ReleaseCommand cmake @('--build', 'engine/build', '--config', 'Release', '--parallel', '4')
 if (-not $SkipTests) {
     Invoke-ReleaseCommand powershell @('-NoProfile', '-ExecutionPolicy', 'Bypass',
         '-File', 'scripts/test-all.ps1', '-Python', $Python)

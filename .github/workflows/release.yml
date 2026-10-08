@@ -73,14 +73,16 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Rust installation failed' }
           rustup default 1.97.1
           if ($LASTEXITCODE -ne 0) { throw 'Rust selection failed' }
-      - name: Test and build portable, installer and corresponding source
+      # 快取 release 依賴的編譯產物；tauri build 每次只需重編 app crate。
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Build portable, installer and corresponding source
         shell: pwsh
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.version }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: ./scripts/build-release.ps1 -Version $env:RELEASE_VERSION
-      - name: Preserve tested release assets
+        run: ./scripts/build-release.ps1 -Version $env:RELEASE_VERSION -SkipTests
+      - name: Preserve release assets
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-assets
@@ -91,8 +93,54 @@ jobs:
           retention-days: 7
           compression-level: 0
 
+  # 完整測試與打包平行跑，縮短關鍵路徑；publish 仍以兩個 job 全綠為門檻。
+  test:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            ui/package-lock.json
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: Install Rust toolchain
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal
+          if ($LASTEXITCODE -ne 0) { throw 'Rust installation failed' }
+          rustup default 1.97.1
+          if ($LASTEXITCODE -ne 0) { throw 'Rust selection failed' }
+      # 快取 cargo test（debug profile）的依賴編譯產物。
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Restore dependencies
+        shell: pwsh
+        run: |
+          npm ci
+          if ($LASTEXITCODE -ne 0) { throw 'npm ci failed (root)' }
+          npm --prefix ui ci
+          if ($LASTEXITCODE -ne 0) { throw 'npm ci failed (ui)' }
+      - name: Build engine
+        shell: pwsh
+        run: |
+          cmake -S engine -B engine/build -A x64
+          if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed' }
+          cmake --build engine/build --config Release --parallel 4
+          if ($LASTEXITCODE -ne 0) { throw 'CMake build failed' }
+      - name: Run full test suite
+        shell: pwsh
+        run: ./scripts/test-all.ps1
+
   publish:
-    needs: build
+    needs: [build, test]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
