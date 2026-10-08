@@ -46,7 +46,7 @@
     SilenceWatcher,
     type AlarmKey,
   } from "./lib/silence";
-  import { visibleRange, spacerWidths, dropPosFromX } from "./lib/laneView";
+  import { visibleRange, spacerWidths, dropPosFromX, dragShift, STRIP_PITCH } from "./lib/laneView";
   import { reorderLane } from "./lib/laneOrder";
   import {
     initialScanJob,
@@ -1243,6 +1243,12 @@
     return () => observers.forEach((ro) => ro.disconnect());
   });
 
+  // 拖曳中每張 strip 的滑動預覽位移(px);dropAt 不在該帶時全 0
+  function stripShift(group: LaneGroup, i: number): number {
+    if (!drag || !dropAt || dropAt.group !== group) return 0;
+    const from = laneArr(group).findIndex((track) => track.trackId === drag!.id);
+    return dragShift(i, from, dropAt.pos, STRIP_PITCH);
+  }
   function lanePos(lane: HTMLElement, x: number, count: number): number {
     // 虛擬化安全:幾何計算,不查 DOM
     return dropPosFromX(x, lane.getBoundingClientRect().left, lane.scrollLeft, count);
@@ -1307,11 +1313,11 @@
         const target = reordered.indexOf(drag.id);
         if (target !== tracks.findIndex((track) => track.trackId === drag!.id))
           engineCommand("track_move", { trackId: drag.id, newIndex: target }).catch(() => {});
-        // 幽靈落定:滑向最終槽位(虛擬化視窗外/原位則滑回原處);排序由狀態更新瞬間完成
-        const slot = pos <= dragIdx ? pos : pos - 1;
-        const els = (e.currentTarget as HTMLElement).querySelectorAll<HTMLElement>("[data-track-id]");
-        const start = group === "input" ? inputWin.start : outputWin.start;
-        settleDragGhost(els[slot - start] ?? null);
+        // 幽靈落定:滑動預覽已把被拖曳卡放到落點,取得它自身(含 transform 的現位置);
+        // 找不到(虛擬化視窗外/已移除)則滑回原處。排序由狀態更新瞬間完成
+        settleDragGhost(
+          (e.currentTarget as HTMLElement).querySelector<HTMLElement>(`[data-track-id="${drag.id}"]`),
+        );
       }
       onDragEnd();
     };
@@ -1803,8 +1809,8 @@
             scanReady={conn.connected}
             onCancelScan={cancelScan}
             {openMenu}
-            dropBefore={dropAt?.group === "input" && dropAt.pos === i}
-            dropAfter={dropAt?.group === "input" && dropAt.pos === i + 1 && dropAt.pos === inputTracks.length}
+            dragShift={stripShift("input", i)}
+            dragActive={drag?.group === "input"}
             dragging={drag?.id === t.trackId}
           />
         {:else}
@@ -1875,8 +1881,8 @@
             scanReady={conn.connected}
             onCancelScan={cancelScan}
             {openMenu}
-            dropBefore={dropAt?.group === "output" && dropAt.pos === i}
-            dropAfter={dropAt?.group === "output" && dropAt.pos === i + 1 && dropAt.pos === outputTracks.length}
+            dragShift={stripShift("output", i)}
+            dragActive={drag?.group === "output"}
             dragging={drag?.id === t.trackId}
           />
         {:else}

@@ -26,11 +26,11 @@
   --line: var(--border);
   --dim: var(--text-dim);
 }
-/* 統一幾何與平面樣式；拖放位置的實線指示保留。 */
+/* 統一幾何與平面樣式；拖放位置的實線指示(emptydrop)保留。 */
 #app * {
   border-radius: var(--flat-radius);
 }
-#app :where(*):not(.dropbefore, .dropafter, .emptydrop) {
+#app :where(*):not(.emptydrop) {
   box-shadow: none;
 }
 #app :is(.bar, .strip, .startcard) {

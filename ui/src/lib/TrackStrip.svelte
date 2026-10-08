@@ -10,6 +10,7 @@
   import { cssColor, destCandidates, matteColor, parseColor, sidechainCandidates, stripOfTrack, type MeterStripView } from "./tracks";
   import { MutationQueue, mutKey } from "./mutations";
   import { reorderLane } from "./laneOrder";
+  import { dragShift as laneShift } from "./laneView";
   import { pluginMenuItems } from "./pluginMenu";
   import { pluginTransfer, PLUGIN_DRAG_TYPE, beginPluginDrag, endPluginDrag,
     copyPlugin, pastePlugin, duplicatePlugin } from "./pluginTransfer";
@@ -65,8 +66,9 @@
     scanReady = false,
     onCancelScan,
     openMenu,
-    dropBefore = false,
-    dropAfter = false,
+    /** 拖曳滑動預覽:本卡位移(px);拖曳中才非 0。transition 由 dragActive 閘門 */
+    dragShift = 0,
+    dragActive = false,
     dragging = false,
     /** 新增軌淡入時長(ms);0 = 不播。由 App 的 justAddedIds 閘門控制,虛擬化捲動重建不誤觸發 */
     introMs = 0,
@@ -89,8 +91,8 @@
     onCancelScan: () => void;
     /** P2-M:請求右鍵選單(App 持有全域 ContextMenu;{x,y} + items) */
     openMenu: (x: number, y: number, label: string, items: Array<{ label: string; disabled?: boolean; run: () => void }>) => void;
-    dropBefore?: boolean;
-    dropAfter?: boolean;
+    dragShift?: number;
+    dragActive?: boolean;
     dragging?: boolean;
     introMs?: number;
   } = $props();
@@ -586,7 +588,8 @@
   // ---- VST 鏈拖曳排序(move_plugin = erase+insert 最終位置;▲▼ 已移除)----
   const plugDrag = $derived($pluginTransfer.drag?.instanceId ?? null);
   let plugDropAt = $state<number | null>(null); // 插入位(chain index)
-  $effect(() => { if (!$pluginTransfer.drag) plugDropAt = null; });
+  let plugPitch = $state(0); // 拖曳中量到的列距(px);0 = 無滑動預覽
+  $effect(() => { if (!$pluginTransfer.drag) { plugDropAt = null; plugPitch = 0; } });
 
   function onPlugDragStart(e: DragEvent, slot: RackSlot) {
     if ($pluginTransfer.busy || (e.target as HTMLElement).closest?.("button, input")) {
@@ -618,6 +621,11 @@
     }
     e.preventDefault();
     const rows = [...(e.currentTarget as HTMLElement).querySelectorAll<HTMLElement>(".vstlist > .plug")];
+    if (rows.length > 0) {
+      const r0 = rows[0].getBoundingClientRect();
+      const pitch = rows.length > 1 ? rows[1].getBoundingClientRect().top - r0.top : r0.height + 2;
+      if (pitch > 0) plugPitch = pitch;
+    }
     const before = rows.findIndex((row) => {
       const rect = row.getBoundingClientRect();
       return e.clientY < rect.top + rect.height / 2;
@@ -632,6 +640,11 @@
   function onPlugDragLeave(e: DragEvent) {
     const target = e.relatedTarget;
     if (!(target instanceof Node) || !(e.currentTarget as HTMLElement).contains(target)) plugDropAt = null;
+  }
+  // 滑動預覽:拖曳中各列依插入位的位移;非拖曳或原位全 0。外部複製 from = -1
+  function plugShift(i: number): number {
+    if (!plugPitch || plugDropAt === null) return 0;
+    return laneShift(i, track.plugins.findIndex((slot) => slot.instanceId === plugDrag), plugDropAt, plugPitch);
   }
   function onPlugDrop(e: DragEvent) {
     const source = $pluginTransfer.drag;
@@ -654,11 +667,13 @@
     }
     endPluginDrag();
     plugDropAt = null;
+    plugPitch = 0;
     removeDragGhost();
   }
   function onPlugDragEnd() {
     endPluginDrag();
     plugDropAt = null;
+    plugPitch = 0;
     removeDragGhost();
   }
 
@@ -903,10 +918,10 @@
   class="strip"
   in:fade={{ duration: introMs }}
   class:out={isOutput}
-  class:dropbefore={dropBefore}
-  class:dropafter={dropAfter}
+  class:drag-active={dragActive}
   class:dragging={dragging}
   class:unbound={needsRebind}
+  style:transform={dragShift ? `translateX(${dragShift}px)` : undefined}
   draggable="true"
   data-track-id={track.trackId}
   data-console-kind={track.kind}
@@ -1168,8 +1183,8 @@
           class:placeholder={isPh(s)}
           draggable="true"
           class:dragging={plugDrag === s.instanceId}
-          class:dropbefore={plugDropAt === i}
-          class:dropafter={plugDropAt === i + 1 && plugDropAt === track.plugins.length}
+          class:drag-active={plugDrag !== null}
+          style:transform={`translateY(${plugShift(i)}px)`}
           role="listitem"
           tabindex="0"
           onkeydown={(e) => pluginMenuKey(e, s)}
@@ -1452,34 +1467,12 @@
     border-style: dashed;
     border-color: var(--accent);
   }
-  /* 暫態落點「對焦」:落點整卡亮框＋淡藍染色,呼吸式明暗。
-   * 呼吸改由 ::before 染色層動 opacity（合成器）,不再逐幀重繪
-   * box-shadow/outline。功能性回饋:一律播放,不連動 OS 動畫設定（ADR 0007）。 */
-  .strip.dropbefore,
-  .strip.dropafter {
-    outline: 2px solid var(--accent);
-    outline-offset: -2px;
-  }
-  .strip.dropbefore::before,
-  .strip.dropafter::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    z-index: 2; /* 蓋過內容（含 absolute .head）;不攔事件 */
-    border-radius: inherit;
-    background: var(--accent);
-    opacity: 0.1;
-    pointer-events: none;
-    animation: drop-focus 1.2s ease-in-out infinite;
-  }
-  @keyframes drop-focus {
-    0%,
-    100% {
-      opacity: 0.07;
-    }
-    50% {
-      opacity: 0.17;
-    }
+  /* 暫態落點:滑動預覽取代亮框染色 —— 拖曳中各卡以 transform 滑到放下後的排列。
+   * transition 只在拖曳中(drag-active)開:放下時狀態與 transform 同一 flush 歸零,
+   * 不套 transition、直接對齊最終排列(與預覽一致,零跳動)。
+   * 功能性回饋:一律播放,不連動 OS 動畫設定（ADR 0007）。 */
+  .strip.drag-active {
+    transition: transform 0.16s ease;
   }
   .head {
     flex: 0 0 22px;
@@ -1747,11 +1740,8 @@
     background: color-mix(in srgb, var(--accent) 14%, transparent);
     color: var(--text);
   }
-  .plug.dropbefore {
-    box-shadow: inset 0 3px 0 0 var(--accent) !important;
-  }
-  .plug.dropafter {
-    box-shadow: inset 0 -3px 0 0 var(--accent) !important;
+  .plug.drag-active {
+    transition: transform 0.16s ease;
   }
   .power {
     display: inline-flex;

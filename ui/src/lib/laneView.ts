@@ -42,6 +42,18 @@ export function spacerWidths(
   };
 }
 
+/** 拖放預覽:第 i 張卡在插入位 pos 下的位移(px)。
+ *  被拖曳卡滑到最終槽位 L = pos <= from ? pos : pos - 1;
+ *  from < i < pos 左移一個 pitch、pos <= i < from 右移一個 pitch。
+ *  from = -1 表外部插入(跨軌複製):pos 以下整批讓位一個 pitch。 */
+export function dragShift(i: number, from: number, pos: number, pitch = STRIP_PITCH): number {
+  if (from < 0) return i >= pos ? pitch : 0;
+  if (i === from) return ((pos <= from ? pos : pos - 1) - from) * pitch;
+  if (i > from && i < pos) return -pitch;
+  if (i >= pos && i < from) return pitch;
+  return 0;
+}
+
 /** 拖放插入位:第一個「中心點在指標右側」的 index;都沒有 = count(尾端)。
  *  clientX = 指標視窗座標;laneLeft = lane 元素 getBoundingClientRect().left */
 export function dropPosFromX(

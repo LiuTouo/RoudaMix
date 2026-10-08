@@ -120,7 +120,9 @@ describe("跨音軌拖曳", () => {
     expect(command).toHaveBeenCalledExactlyOnceWith("duplicate_plugin", { instanceId: 1, trackId: 2, newIndex });
     expect(outer).not.toHaveBeenCalled(); expect(rows()).toHaveLength(2);
     expect(get(pluginTransfer).clipboard?.clipboardId).toBe("snapshot-1");
-    expect(document.querySelector(".dropbefore, .dropafter, .drag-ghost")).toBeNull();
+    expect([...document.querySelectorAll<HTMLElement>(".plug")].every((el) => el.style.transform === "translateY(0px)" || el.style.transform === ""))
+      .toBe(true);
+    expect(document.querySelector(".drag-ghost")).toBeNull();
   });
   it("空機架顯示落點並接受副本，同軌仍是排序", async () => {
     show(); drag(rows()[0], "dragstart"); drag(racks()[2], "dragover", 100);
@@ -133,7 +135,9 @@ describe("跨音軌拖曳", () => {
   it("取消清除其他機架的指示；拒絕外部拖入", () => {
     show(); expect(drag(racks()[1], "dragover", 100).defaultPrevented).toBe(false);
     drag(rows()[0], "dragstart"); drag(racks()[2], "dragover", 100); drag(rows()[0], "dragend");
-    expect(document.querySelector(".emptydrop, .dropbefore, .dragging")).toBeNull();
+    expect(document.querySelector(".emptydrop, .dragging")).toBeNull();
+    expect([...document.querySelectorAll<HTMLElement>(".plug")].every((el) => el.style.transform === "translateY(0px)" || el.style.transform === ""))
+      .toBe(true);
     expect(command).not.toHaveBeenCalled();
   });
   it("placeholder 不接受跨軌落點，也不誤觸排序", () => {

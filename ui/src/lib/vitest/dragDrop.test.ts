@@ -40,52 +40,58 @@ beforeEach(() => {
 afterEach(async () => { await unmount(component); removeDragGhost(); document.body.innerHTML = ""; });
 
 describe("VST 拖曳落點", () => {
-  it("上移顯示首列上緣且送出相同插入位置", () => {
+  it("上移:前列下滑讓位,放下送出相同插入位置", () => {
     drag(rows()[2], "dragstart");
     drag(rows()[0], "dragover", 103);
-    expect(rows()[0].classList.contains("dropbefore")).toBe(true);
+    expect(rows()[0].style.transform).toBe("translateY(50px)");
+    expect(rows()[1].style.transform).toBe("translateY(50px)");
+    expect(rows()[2].style.transform).toBe("translateY(-100px)"); // 被拖曳列滑到首列
     drag(rows()[0], "drop", 103);
     expect(command).toHaveBeenCalledWith("move_plugin", { instanceId: 3, newIndex: 0 });
-    expect(rack().querySelector(".dropbefore, .dropafter")).toBeNull();
+    expect(rows()[0].style.transform).toBe("translateY(0px)");
     expect(document.querySelector(".drag-ghost")).toBeNull();
   });
-  it("下移顯示尾列下緣且先移除再計算最後位置", () => {
+  it("下移:後列上滑,放下先移除再計算最後位置", () => {
     drag(rows()[0], "dragstart");
     drag(rows()[2], "dragover", 245);
-    expect(rows()[2].classList.contains("dropafter")).toBe(true);
+    expect(rows()[0].style.transform).toBe("translateY(100px)");
+    expect(rows()[1].style.transform).toBe("translateY(-50px)");
+    expect(rows()[2].style.transform).toBe("translateY(-50px)");
     drag(rows()[2], "drop", 245);
     expect(command).toHaveBeenCalledWith("move_plugin", { instanceId: 1, newIndex: 2 });
   });
   it("插件間隙也能顯示並接受落點", () => {
     drag(rows()[2], "dragstart");
     drag(rack().querySelector<HTMLElement>(".vstlist")!, "dragover", 149);
-    expect(rows()[1].classList.contains("dropbefore")).toBe(true);
+    expect(rows()[1].style.transform).toBe("translateY(50px)");
+    expect(rows()[2].style.transform).toBe("translateY(-50px)");
     drag(rack().querySelector<HTMLElement>(".vstlist")!, "drop", 149);
     expect(command).toHaveBeenCalledWith("move_plugin", { instanceId: 3, newIndex: 1 });
   });
   it("機架尾端空白可放到鏈尾", () => {
     drag(rows()[0], "dragstart");
     drag(rack().querySelector<HTMLElement>(".vstfoot")!, "dragover", 280);
-    expect(rows()[2].classList.contains("dropafter")).toBe(true);
+    expect(rows()[2].style.transform).toBe("translateY(-50px)");
     drag(rack().querySelector<HTMLElement>(".vstfoot")!, "drop", 280);
     expect(command).toHaveBeenCalledWith("move_plugin", { instanceId: 1, newIndex: 2 });
   });
-  it("離開機架清除指示；移過子元件不清除；取消時收尾", () => {
+  it("離開機架歸零位移；移過子元件不清除；取消時收尾", () => {
     drag(rows()[2], "dragstart");
     drag(rows()[0], "dragover", 103);
     drag(rows()[0], "dragleave", 103, rows()[1]);
-    expect(rows()[0].classList.contains("dropbefore")).toBe(true);
+    expect(rows()[0].style.transform).toBe("translateY(50px)");
     drag(rack(), "dragleave", 103, document.body);
-    expect(rack().querySelector(".dropbefore, .dropafter")).toBeNull();
+    expect(rows()[0].style.transform).toBe("translateY(0px)");
     drag(rows()[0], "dragover", 103);
     drag(rows()[2], "dragend");
-    expect(rack().querySelector(".dropbefore, .dropafter, .dragging")).toBeNull();
+    expect(rows()[0].style.transform).toBe("translateY(0px)");
+    expect(rack().querySelector(".dragging")).toBeNull();
     expect(command).not.toHaveBeenCalled();
   });
-  it("原位不顯示移動指示，也不送出排序指令", () => {
+  it("原位不產生預覽位移，也不送出排序指令", () => {
     drag(rows()[1], "dragstart");
     drag(rows()[1], "dragover", 153);
-    expect(rack().querySelector(".dropbefore, .dropafter")).toBeNull();
+    expect(rows().every((row) => row.style.transform === "translateY(0px)")).toBe(true);
     drag(rows()[1], "drop", 153);
     expect(command).not.toHaveBeenCalled();
   });

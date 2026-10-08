@@ -1,7 +1,7 @@
 // P1-I 測試:視窗計算、spacer 幾何、虛擬化下的拖放插入位
 import { test } from "node:test";
 import assert from "node:assert";
-import { visibleRange, spacerWidths, dropPosFromX, STRIP_PITCH, STRIP_W, STRIP_GAP } from "./laneView.ts";
+import { visibleRange, spacerWidths, dropPosFromX, dragShift, STRIP_PITCH, STRIP_W, STRIP_GAP } from "./laneView.ts";
 
 const P = STRIP_PITCH;
 
@@ -45,4 +45,34 @@ test("dropPosFromX:中心點判插入位;指標過尾 = count", () => {
   assert.equal(dropPosFromX(142, 100, P, 5), 1);
   // 指標在最後一條中心之後 → count
   assert.equal(dropPosFromX(100 + 4 * P + 200, 100, 0, 5), 5);
+});
+
+test("dragShift:被拖曳卡滑到最終槽位,中間卡讓位一個 pitch", () => {
+  // [A0,B1,C2,D3] 拖 B(1) 插到 pos=3 → [A,C,B,D]:B +1,C -1,D -1,A 0
+  assert.equal(dragShift(1, 1, 3), P);
+  assert.equal(dragShift(2, 1, 3), -P);
+  assert.equal(dragShift(3, 1, 3), 0); // D 是插入點,不動
+  assert.equal(dragShift(0, 1, 3), 0);
+  // 插到最前 pos=0:拖 B 到 0,前面卡右移
+  assert.equal(dragShift(0, 1, 0), P);
+  assert.equal(dragShift(1, 1, 0), -P);
+  // 插到尾端 pos=count:拖曳卡到最後,中間卡左移
+  assert.equal(dragShift(1, 1, 4), 2 * P);
+  assert.equal(dragShift(2, 1, 4), -P);
+  assert.equal(dragShift(3, 1, 4), -P);
+});
+
+test("dragShift:原位相鄰全 0;外部插入讓位", () => {
+  // 原位(pos=from / from+1)不改變排序 → 全 0
+  assert.equal(dragShift(1, 1, 1), 0);
+  assert.equal(dragShift(1, 1, 2), 0);
+  assert.equal(dragShift(0, 1, 2), 0);
+  assert.equal(dragShift(2, 1, 2), 0);
+  // 外部插入(from=-1,跨軌複製):pos 以下整批右移讓位
+  assert.equal(dragShift(0, -1, 1), 0);
+  assert.equal(dragShift(1, -1, 1), P);
+  assert.equal(dragShift(2, -1, 1), P);
+  // pos=0 全讓位;pos 超過尾端無卡讓位
+  assert.equal(dragShift(0, -1, 0), P);
+  assert.equal(dragShift(2, -1, 3), 0);
 });

@@ -40,8 +40,8 @@ export function mountDragGhost(
   origin = { left: r.left, top: r.top };
   layer.style.transform = `translate(${r.left}px, ${r.top}px)`; // 起始 = 原軌原位(從原地拿起)
   const ghost = src.cloneNode(true) as HTMLElement;
-  // 拖曳中的暫態 class 不能進 ghost(原件的淡化/插入指示會一起被帶走)
-  ghost.classList.remove("dragging", "dropbefore", "dropafter");
+  // 拖曳中的暫態 class 不能進 ghost(原件的淡化/滑動預覽會一起被帶走)
+  ghost.classList.remove("dragging", "drag-active");
   ghost.classList.add("drag-ghost");
   // 原軌被 lane 拉伸到全高;clone 預設塌成內容高,鎖回原高才是「整條實體」
   ghost.style.height = `${h}px`;
