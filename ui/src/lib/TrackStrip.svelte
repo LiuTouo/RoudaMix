@@ -10,7 +10,7 @@
   import { cssColor, destCandidates, matteColor, parseColor, sidechainCandidates, stripOfTrack, type MeterStripView } from "./tracks";
   import { MutationQueue, mutKey } from "./mutations";
   import { reorderLane } from "./laneOrder";
-  import { dragShift as laneShift } from "./laneView";
+  import { dragShift as laneShift, dropPosFromY } from "./laneView";
   import { pluginMenuItems } from "./pluginMenu";
   import { pluginTransfer, PLUGIN_DRAG_TYPE, beginPluginDrag, endPluginDrag,
     copyPlugin, pastePlugin, duplicatePlugin } from "./pluginTransfer";
@@ -590,6 +590,25 @@
   let plugDropAt = $state<number | null>(null); // 插入位(chain index)
   let plugPitch = $state(0); // 拖曳中量到的列距(px);0 = 無滑動預覽
   $effect(() => { if (!$pluginTransfer.drag) { plugDropAt = null; plugPitch = 0; } });
+  // 幾何只在拿起當下量一次(該刻尚無任何預覽 transform = 純 layout),之後 dragover
+  // 的落點全用這組常數純算。若即時量 rect,量到的是被自己位移/transition 中的列,
+  // 量測→位移→再量測互相回饋,落點會來回亂跳。
+  let plugRowH = 0; // 單列高(px;translateY 不影響高度,量一次即可)
+  let plugBaseOffset = 0; // 首列頂端相對 .vstlist 頂端的位移(.vstlist 永不被 transform)
+  function measurePlugGeometry() {
+    const rows = vstBox?.querySelectorAll<HTMLElement>(".vstlist > .plug") ?? [];
+    const r0 = rows[0]?.getBoundingClientRect();
+    const list = rows[0]?.parentElement;
+    if (rows.length > 0 && r0) {
+      plugRowH = r0.height;
+      plugPitch = rows.length > 1 ? rows[1].getBoundingClientRect().top - r0.top : r0.height + 2;
+      plugBaseOffset = list ? r0.top - list.getBoundingClientRect().top : 0;
+    } else {
+      plugRowH = 0;
+      plugPitch = 0;
+      plugBaseOffset = 0;
+    }
+  }
 
   function onPlugDragStart(e: DragEvent, slot: RackSlot) {
     if ($pluginTransfer.busy || (e.target as HTMLElement).closest?.("button, input")) {
@@ -599,6 +618,7 @@
     e.stopPropagation(); // 別 bubble 到 lane 的軌道拖曳(會蓋 ghost + 誤開軌道排序)
     beginPluginDrag({ instanceId: slot.instanceId, trackId: track.trackId, copyable: !isPh(slot) });
     plugDropAt = null;
+    measurePlugGeometry(); // 拿起當下量一次;拖曳中不再碰 rect
     e.dataTransfer?.setData(PLUGIN_DRAG_TYPE, String(slot.instanceId));
     if (e.dataTransfer) {
       e.dataTransfer.effectAllowed = pluginCopyEnabled && !isPh(slot) ? "copyMove" : "move";
@@ -621,16 +641,11 @@
     }
     e.preventDefault();
     const rows = [...(e.currentTarget as HTMLElement).querySelectorAll<HTMLElement>(".vstlist > .plug")];
-    if (rows.length > 0) {
-      const r0 = rows[0].getBoundingClientRect();
-      const pitch = rows.length > 1 ? rows[1].getBoundingClientRect().top - r0.top : r0.height + 2;
-      if (pitch > 0) plugPitch = pitch;
-    }
-    const before = rows.findIndex((row) => {
-      const rect = row.getBoundingClientRect();
-      return e.clientY < rect.top + rect.height / 2;
-    });
-    const pos = before < 0 ? rows.length : before;
+    if (plugPitch === 0) measurePlugGeometry(); // 跨軌複製第一回:此刻尚無位移,量到純 layout
+    // 落點純算:拿起時量好的列距/列高 + 永不被 transform 的 .vstlist 頂端。
+    const list = rows[0]?.parentElement;
+    const base = list ? list.getBoundingClientRect().top + plugBaseOffset : 0;
+    const pos = dropPosFromY(e.clientY, base, plugRowH, plugPitch, rows.length);
     const from = track.plugins.findIndex((slot) => slot.instanceId === plugDrag);
     // 原位上下緣均不會改變排序，不顯示誤導的有效落點。
     const moves = copying || (from >= 0 && pos !== from && pos !== from + 1);

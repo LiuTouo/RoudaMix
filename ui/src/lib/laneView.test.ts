@@ -1,7 +1,7 @@
 // P1-I 測試:視窗計算、spacer 幾何、虛擬化下的拖放插入位
 import { test } from "node:test";
 import assert from "node:assert";
-import { visibleRange, spacerWidths, dropPosFromX, dragShift, STRIP_PITCH, STRIP_W, STRIP_GAP } from "./laneView.ts";
+import { visibleRange, spacerWidths, dropPosFromX, dropPosFromY, dragShift, STRIP_PITCH, STRIP_W, STRIP_GAP } from "./laneView.ts";
 
 const P = STRIP_PITCH;
 
@@ -45,6 +45,19 @@ test("dropPosFromX:中心點判插入位;指標過尾 = count", () => {
   assert.equal(dropPosFromX(142, 100, P, 5), 1);
   // 指標在最後一條中心之後 → count
   assert.equal(dropPosFromX(100 + 4 * P + 200, 100, 0, 5), 5);
+});
+
+test("dropPosFromY:中線規則,夾 [0,count];空清單插在開頭", () => {
+  // 3 列、列距 50、列高 48、首列頂 100:中線 = 100 + i*50 + 24
+  const base = 100;
+  assert.equal(dropPosFromY(100 + 24, base, 48, 50, 3), 1); // 恰在第 0 列中線 → 插第 1 位
+  assert.equal(dropPosFromY(100 + 23, base, 48, 50, 3), 0); // 中線上方 → 插最前
+  assert.equal(dropPosFromY(100 + 74, base, 48, 50, 3), 2); // 第 1 列中線
+  assert.equal(dropPosFromY(100 + 174, base, 48, 50, 3), 3); // 尾端空白 → 鏈尾
+  assert.equal(dropPosFromY(0, base, 48, 50, 3), 0); // 清單上方 → 夾 0
+  assert.equal(dropPosFromY(9999, base, 48, 50, 3), 3); // 遠低於尾端 → 夾 count
+  assert.equal(dropPosFromY(100, base, 48, 50, 0), 0); // 空清單
+  assert.equal(dropPosFromY(100, base, 48, 0, 3), 0); // 未量得列距 → 不誤判
 });
 
 test("dragShift:被拖曳卡滑到最終槽位,中間卡讓位一個 pitch", () => {

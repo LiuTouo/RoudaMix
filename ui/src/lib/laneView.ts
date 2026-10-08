@@ -54,6 +54,22 @@ export function dragShift(i: number, from: number, pos: number, pitch = STRIP_PI
   return 0;
 }
 
+/** 拖放插入位(垂直清單版):第一個「layout 中線在指標下方」的 index;都沒有 = count(尾端)。
+ *  baseTop = 未 transform 的清單頂端 + 首列 layout 偏移;列距/列高須在拿起當下
+ *  量好傳入 —— 拖曳中即時量 rect 會量到被預覽位移/transition 的列,與位移互相
+ *  回饋,落點來回亂跳。 */
+export function dropPosFromY(
+  clientY: number,
+  baseTop: number,
+  rowH: number,
+  pitch: number,
+  count: number,
+): number {
+  if (count <= 0 || pitch <= 0) return 0; // 空清單 = 插在開頭
+  const y = clientY - baseTop - rowH / 2;
+  return Math.max(0, Math.min(count, Math.floor(y / pitch) + 1));
+}
+
 /** 拖放插入位:第一個「中心點在指標右側」的 index;都沒有 = count(尾端)。
  *  clientX = 指標視窗座標;laneLeft = lane 元素 getBoundingClientRect().left */
 export function dropPosFromX(
