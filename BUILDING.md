@@ -19,6 +19,26 @@ git submodule update --init --recursive
 輸出位於 `output/release`。版本由 tag 或手動輸入注入 Tauri 建置設定，並記錄於 `BUILD-INFO.json`。
 新版本應使用乾淨 checkout，避免舊 NSIS 檔案或來源包混入。
 
+## CI 發布加速與驗證
+
+Release 的 `build`、`test` job 平行執行，`publish` 必須等兩者成功才公開下載。
+打包 job 使用 `-SkipTests`，只編譯正式 engine／worker；test job 仍編譯全部 C++ 測試與 fixture，
+並執行完整測試套件。本機不帶 `-SkipTests` 的建置仍先編譯、執行完整測試。
+安裝包、便攜版、原始碼、更新簽章、授權及 SHA256 驗證不因加速而省略。
+
+Rust 快取分為 `windows-test-v1` 與 `windows-release-v1`。可信任的 `main` CI 會平行執行
+`release-cache` job，在 Release 依賴快取未命中時使用相同 Tauri CLI 做無封裝建置；不使用簽章金鑰，
+也不發布檔案。不同 tag 不能互讀 GitHub Actions 快取，因此發布只讀取 `main` 預熱的依賴，
+不依賴上一個 tag 的快取；應用程式本身仍重新編譯。快取不存在時照常完整建置，不影響正確性。
+
+第一次冷建置或 Rust／依賴更新會較慢；若要讓新 tag 命中快取，先等該提交的 main CI 預熱完成。
+預熱會增加冷快取時的 CI 用量，命中後則跳過預熱建置。未快取 C++ 建置目錄，避免跨 runner 的
+絕對路徑、工具鏈與時間戳造成不可靠的重用，也未降低正式版最佳化或縮減測試。
+
+在 Actions 各 job 的步驟耗時與 build job summary 查看實測；`[release timing]` 記錄建置命令耗時，
+不以預估秒數作發布保證。`scripts/build-release.test.ps1` 以替身命令驗證完整／分離測試模式、
+編譯失敗中止及發布流程必要門檻，並由完整測試套件執行。
+
 ## 從 Release 原始碼包建置
 
 `*-source.tar.gz` 包含該提交的應用程式、ASIO submodule 內容、C++ 相依套件、完整 Rust vendor sources、

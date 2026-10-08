@@ -13,8 +13,15 @@ Set-Location -LiteralPath $repoRoot
 
 function Invoke-ReleaseCommand {
     param([string]$Command, [string[]]$Arguments)
-    & $Command @Arguments
-    if ($LASTEXITCODE -ne 0) { throw "Command failed ($LASTEXITCODE): $Command" }
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    try {
+        & $Command @Arguments
+        if ($LASTEXITCODE -ne 0) { throw "Command failed ($LASTEXITCODE): $Command" }
+    } finally {
+        $line = "{0} {1}: {2:N1}s" -f $Command, $Arguments[0], $timer.Elapsed.TotalSeconds
+        Write-Host "[release timing] $line"
+        if ($env:GITHUB_STEP_SUMMARY) { Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "- $line" -Encoding utf8 }
+    }
 }
 
 Invoke-ReleaseCommand $Python @('scripts/release.py', 'prepare', '--version', $Version)
@@ -29,7 +36,10 @@ if (-not $SkipRestore) {
     Invoke-ReleaseCommand npm @('--prefix', 'ui', 'ci')
 }
 Invoke-ReleaseCommand cmake @('-S', 'engine', '-B', 'engine/build', '-A', 'x64')
-Invoke-ReleaseCommand cmake @('--build', 'engine/build', '--config', 'Release', '--parallel', '4')
+$engineBuild = @('--build', 'engine/build', '--config', 'Release', '--parallel', '4')
+# The parallel test job builds all fixtures; packaging only needs the two shipped binaries.
+if ($SkipTests) { $engineBuild += @('--target', 'roudamix-engine', 'roudamix-worker') }
+Invoke-ReleaseCommand cmake $engineBuild
 if (-not $SkipTests) {
     Invoke-ReleaseCommand powershell @('-NoProfile', '-ExecutionPolicy', 'Bypass',
         '-File', 'scripts/test-all.ps1', '-Python', $Python)

@@ -16,6 +16,7 @@ function Invoke-TestCommand {
     if ($LASTEXITCODE -ne 0) { throw "Command failed ($LASTEXITCODE): $Command" }
 }
 
+Invoke-TestCommand powershell @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'scripts/build-release.test.ps1')
 Invoke-TestCommand $Python @('-m', 'unittest', 'discover', '-s', 'scripts', '-p', 'release_test.py')
 Invoke-TestCommand ctest @('--test-dir', 'engine/build', '-C', 'Release', '--output-on-failure')
 Invoke-TestCommand npm @('run', 'test:protocol')

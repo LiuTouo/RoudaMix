@@ -73,8 +73,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Rust installation failed' }
           rustup default 1.97.1
           if ($LASTEXITCODE -ne 0) { throw 'Rust selection failed' }
-      # 快取 release 依賴的編譯產物；tauri build 每次只需重編 app crate。
+      # 從 main 的 release-cache job 讀取依賴；不同 tag 不能互讀快取。
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: windows-release-v1
+          save-if: 'false'
       - name: Build portable, installer and corresponding source
         shell: pwsh
         env:
@@ -119,8 +122,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Rust installation failed' }
           rustup default 1.97.1
           if ($LASTEXITCODE -ne 0) { throw 'Rust selection failed' }
-      # 快取 cargo test（debug profile）的依賴編譯產物。
+      # 與 main CI 共用 test profile，但不與 release profile 爭用不可變快取。
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: windows-test-v1
+          save-if: 'false'
       - name: Restore dependencies
         shell: pwsh
         run: |
