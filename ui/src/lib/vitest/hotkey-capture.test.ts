@@ -34,6 +34,9 @@ const mocks = vi.hoisted(() => ({
   getCurrentWindow: vi.fn(),
 }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
+vi.mock("@tauri-apps/api/webview", () => ({
+  getCurrentWebview: () => ({ setZoom: vi.fn().mockResolvedValue(undefined) }),
+}));
 vi.mock("@tauri-apps/api/event", () => ({ listen: mocks.listen }));
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({

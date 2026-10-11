@@ -52,6 +52,8 @@ pub struct Settings {
     /// 僅由 Windows 登入自動啟動時，讓主視窗保持隱藏並常駐系統匣。
     pub start_minimized_on_autostart: bool,
     pub check_updates_on_startup: bool,
+    /// 主介面縮放百分比(75–150)，不影響 VST 原生視窗。
+    pub ui_scale: u32,
     /// 監聽系統輸出軌靜音的全域快捷鍵(Tauri Shortcut 字串,如 "Ctrl+Shift+M");
     /// None = 未綁定。註冊與觸發由前端 global-shortcut plugin 處理。
     pub monitor_hotkey: Option<String>,
@@ -70,6 +72,7 @@ impl Default for Settings {
             close_behavior: None,
             start_minimized_on_autostart: false,
             check_updates_on_startup: true,
+            ui_scale: 100,
             monitor_hotkey: None,
         }
     }
@@ -186,6 +189,10 @@ pub fn normalize(raw: Value) -> (Settings, Vec<String>) {
             "checkUpdatesOnStartup" => match v.as_bool() {
                 Some(value) => s.check_updates_on_startup = value,
                 None => warnings.push("settings.checkUpdatesOnStartup 型別錯誤,已回復預設 true".into()),
+            },
+            "uiScale" => match v.as_u64() {
+                Some(value) if (75..=150).contains(&value) => s.ui_scale = value as u32,
+                _ => warnings.push("settings.uiScale 值不合法,已回復預設 100%".into()),
             },
             "monitorHotkey" => match opt_str(v) {
                 Ok(v) => s.monitor_hotkey = v,
@@ -367,6 +374,34 @@ mod tests {
         save_to(&path, &merge(serde_json::json!({}), &settings)).unwrap();
         let (loaded, warnings) = load_from(&path);
         assert!(!loaded.check_updates_on_startup);
+        assert!(warnings.is_empty());
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn ui_scale_defaults_validates_and_persists() {
+        let (legacy, warnings) = normalize(migrate(json!({"schemaVersion": 2})));
+        assert_eq!(legacy.ui_scale, 100);
+        assert!(warnings.is_empty());
+        assert_eq!(serde_json::from_value::<Settings>(json!({})).unwrap().ui_scale, 100);
+
+        for scale in [75, 100, 125, 150] {
+            let (settings, warnings) = normalize(json!({"uiScale": scale}));
+            assert_eq!(settings.ui_scale, scale);
+            assert!(warnings.is_empty());
+        }
+        for value in [json!(0), json!(-1), json!(74), json!(151), json!(100.5), json!("125"), json!(null), json!(true)] {
+            let (settings, warnings) = normalize(json!({"uiScale": value}));
+            assert_eq!(settings.ui_scale, 100);
+            assert_eq!(warnings.len(), 1);
+        }
+
+        let path = tmp_path("ui-scale");
+        let (settings, _) = normalize(json!({"uiScale": 125, "lastWorkingBuffer": 256}));
+        save_to(&path, &merge(json!({}), &settings)).unwrap();
+        let (loaded, warnings) = load_from(&path);
+        assert_eq!(loaded.ui_scale, 125);
+        assert_eq!(loaded.last_working_buffer, Some(256));
         assert!(warnings.is_empty());
         fs::remove_file(path).unwrap();
     }

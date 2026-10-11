@@ -12,7 +12,7 @@ export default defineConfig(({ command, mode }) => {
     cacheDir: consolePreview ? 'node_modules/.vite-console-prototype' : undefined,
     resolve: {
       ...(process.env.VITEST ? { conditions: ['browser'] } : {}),
-      alias: consolePreview ? ['api/core', 'api/event', 'api/window', 'api/app', 'plugin-dialog', 'plugin-autostart', 'plugin-global-shortcut', 'plugin-updater']
+      alias: consolePreview ? ['api/core', 'api/event', 'api/window', 'api/webview', 'api/app', 'plugin-dialog', 'plugin-autostart', 'plugin-global-shortcut', 'plugin-updater']
         .map(name => ({ find: `@tauri-apps/${name}`, replacement: mock })) : [],
     },
     clearScreen: false,

@@ -11,6 +11,9 @@ vi.mock("../protocol-commands.generated", async (original) => ({
   ...await original<typeof import("../protocol-commands.generated")>(), engineCommand: command,
 }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
+vi.mock("@tauri-apps/api/webview", () => ({
+  getCurrentWebview: () => ({ setZoom: vi.fn().mockResolvedValue(undefined) }),
+}));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async (name, cb) => {
   listeners.set(name, cb); return () => listeners.delete(name);
 }) }));

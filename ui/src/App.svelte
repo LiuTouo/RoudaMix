@@ -9,6 +9,7 @@
     isEnabled as isAutostartEnabled,
   } from "@tauri-apps/plugin-autostart";
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { getCurrentWebview } from "@tauri-apps/api/webview";
   import TrackStrip from "./lib/TrackStrip.svelte";
   import UpdatePanel from "./lib/UpdatePanel.svelte";
   import { resetPluginTransfer } from "./lib/pluginTransfer";
@@ -109,6 +110,10 @@
   let settingsDlg = $state<HTMLDialogElement | null>(null);
   let tab = $state<"audio" | "general" | "scenes" | "hotkeys" | "about">("audio");
   let appSettings = $state<AppSettings | null>(null);
+  let uiScale = $state(100);
+  let appliedUiScale = 100;
+  let uiScaleRequest = 0;
+  let uiScaleError = $state("");
   let autostartEnabled = $state<boolean | null>(null);
   let autostartBusy = $state(false);
   let startMinimizedBusy = $state(false);
@@ -439,6 +444,7 @@
     else unsubs.push(u);
   }
   onMount(() => {
+    void settingsReady(); // 介面偏好不必等音訊引擎連線完成。
     // P2-M/P1-O 折衷:原生網頁右鍵選單全面不出現(去網頁感 —— 軌/插件右鍵走
     // 自訂主題選單);但「需要複製的文字區」與輸入框放行原生選單(右鍵 Copy /
     // 貼上),user-select 已開放、Ctrl+C 亦通 —— 複製能力不受影響
@@ -691,7 +697,8 @@
     | "preferences"
     | "last-session"
     | "last-working"
-    | "start-minimized";
+    | "start-minimized"
+    | "ui-scale";
   function writeSettings(
     tag: SettingsMutationTag,
     patch: Partial<AppSettings>,
@@ -801,6 +808,7 @@
     settingsP ??= getSettings()
       .then((r) => {
         appSettings = r.settings;
+        void updateUiScale(r.settings.uiScale ?? 100);
         // P1-E:normalize 警告(known field 壞值已回預設)—— 頂欄通知呈現
         if (r.warnings.length > 0)
           addNotice("error", "設定檔有問題,部分值已回復預設", r.warnings.join("\n"));
@@ -1440,6 +1448,29 @@
 
   // ---------- 通用設定 ----------
 
+  async function updateUiScale(scale: number, persist = false): Promise<void> {
+    const request = ++uiScaleRequest;
+    uiScale = scale;
+    uiScaleError = "";
+    // 縮放與磁碟寫入分開排隊：拖動即時預覽，放開或鍵盤調整完成才儲存。
+    const zoom = await mutations.run("app:ui-scale", "zoom", async () => {
+      await getCurrentWebview().setZoom(scale / 100);
+      appliedUiScale = scale;
+    });
+    if (request !== uiScaleRequest) return;
+    if (zoom.status === "failed") {
+      uiScale = appliedUiScale;
+      uiScaleError = `介面縮放套用失敗：${errorText(zoom.error)}`;
+    }
+    if (zoom.status !== "completed" || !persist || !appSettings) return;
+    appSettings.uiScale = scale;
+    const patch = { uiScale: scale };
+    const result = await writeSettings("ui-scale", patch);
+    if (result.status === "completed") acceptSettingsReply(patch, result.value);
+    else if (result.status === "failed" && request === uiScaleRequest)
+      uiScaleError = `縮放比例儲存失敗，下次啟動沿用舊值：${errorText(result.error)}`;
+  }
+
   async function refreshFolderFiles() {
     if (!appSettings?.sessionDir) {
       folderFiles = [];
@@ -2062,6 +2093,33 @@
     </div>
     <h2>視窗</h2>
     <div class="formrow">
+      <label class="formlabel" for="uiscale">介面縮放</label>
+      <div class="scale-controls">
+        <input
+          id="uiscale"
+          type="range"
+          min="75"
+          max="150"
+          step="5"
+          value={uiScale}
+          disabled={!appSettings}
+          aria-valuetext={`${uiScale}%`}
+          aria-describedby="uiscale-hint"
+          data-tooltip="等比例縮放整個主介面；可拖動或使用方向鍵調整，每次 5%。"
+          oninput={(e) => void updateUiScale(e.currentTarget.valueAsNumber)}
+          onchange={(e) => void updateUiScale(e.currentTarget.valueAsNumber, true)}
+        />
+        <output class="mono" for="uiscale">{uiScale}%</output>
+        <button
+          disabled={!appSettings}
+          data-tooltip="將主介面縮放還原為預設的 100%。"
+          onclick={() => void updateUiScale(100, true)}>還原 100%</button
+        >
+      </div>
+    </div>
+    <p id="uiscale-hint" class="dim indent">75%–150%，即時生效；不影響 VST 插件視窗。</p>
+    {#if uiScaleError}<p class="err indent" role="alert">{uiScaleError}</p>{/if}
+    <div class="formrow">
       <label class="formlabel" for="closebehavior">關閉視窗時</label>
       <select
         id="closebehavior"
@@ -2355,6 +2413,27 @@
     flex-shrink: 0;
     color: var(--text-dim);
     font-size: 13px;
+  }
+  .scale-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+    min-width: 0;
+  }
+  .scale-controls input {
+    flex: 1;
+    min-width: 0;
+    width: 0;
+    margin: 0;
+    accent-color: var(--accent);
+  }
+  .scale-controls output {
+    min-width: 4ch;
+    text-align: right;
+  }
+  .scale-controls button {
+    flex-shrink: 0;
   }
   /* 說明/錯誤文字對齊控制項欄(112px 標籤 + 10px gap) */
   .indent {

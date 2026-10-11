@@ -8,7 +8,7 @@ const handlers = new Map<string, Set<(event: { payload: any }) => void>>();
 const status = structuredClone({ ...initialStatus, tracks: [] as Track[] });
 let settings: AppSettings = { startupMode: 'blank', sessionDir: null, startupFile: null,
   lastSessionPath: null, closeBehavior: null, startMinimizedOnAutostart: false,
-  checkUpdatesOnStartup: false, monitorHotkey: null };
+  checkUpdatesOnStartup: false, monitorHotkey: null, uiScale: 100 };
 let autostart = false;
 let jobId = 0;
 let scanTimer: ReturnType<typeof setTimeout> | undefined;
@@ -220,6 +220,9 @@ export async function unregister() { previewNotice('已清除模擬快捷鍵'); 
 export function previewScenario(scenario: 'close' | 'warning') {
   if (scenario === 'close') closeWindow();
   else emit('telemetry-abi-mismatch', { expected: 2, found: 1 });
+}
+export function getCurrentWebview() {
+  return { setZoom: async (scale: number) => previewNotice(`主介面縮放 ${Math.round(scale * 100)}%（僅模擬，不改變瀏覽器縮放）`) };
 }
 export function getCurrentWindow() {
   return {
