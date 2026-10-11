@@ -1983,6 +1983,39 @@
               "$ref": "#/$defs/u64"
             },
             "kind": {
+              "const": "set_editor_scale"
+            },
+            "payload": {
+              "type": "object",
+              "required": [
+                "percent"
+              ],
+              "properties": {
+                "percent": {
+                  "type": "integer",
+                  "minimum": 75,
+                  "maximum": 150
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "protocolVersion",
+            "id",
+            "kind",
+            "payload"
+          ],
+          "properties": {
+            "protocolVersion": {
+              "const": 2
+            },
+            "id": {
+              "$ref": "#/$defs/u64"
+            },
+            "kind": {
               "const": "set_editor_owner"
             },
             "payload": {

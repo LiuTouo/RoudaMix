@@ -35,6 +35,7 @@
 #include <cmath>
 #include <cstdio>
 #include <thread>
+#include <utility>
 
 namespace rmx {
 
@@ -49,6 +50,11 @@ constexpr int kBand2H = 36;     // 帶2:bypass 電源鈕 + preset 控制
 constexpr int kClientMinW = 80;
 constexpr int kClientMinH = 60;
 constexpr int kHostMinClientW = 282;  // 帶2 全控(電源+兩鈕,load 右緣 268 + 邊距)
+constexpr UINT kEditorResizeMessage = WM_APP + 10;
+
+// 只換算宿主 chrome；不更動 process/thread DPI awareness 或插件座標。
+int ui_scale_percent = 100;
+int chrome_px(int value) noexcept { return MulDiv(value, ui_scale_percent, 100); }
 
 constexpr wchar_t kHostClassName[] = L"RmxVST3Editor";   // 沿用:m3b probe 以 class 數窗
 constexpr wchar_t kTabsClassName[] = L"RmxEditorTabs";
@@ -71,24 +77,35 @@ constexpr COLORREF kOk = RGB(0x55, 0xc2, 0xa3);          // = --ok(電源 on,同
 constexpr COLORREF kWarn = RGB(0xd9, 0xa4, 0x41);        // = --warn(bypass,同機架 off 圓點)
 constexpr COLORREF kBtnBorder = RGB(0x29, 0x2d, 0x31);   // = --border(細框/髮絲線)
 
+HFONT scaled_font(HFONT& font, int base_height, const wchar_t* face) {
+    const int height = -chrome_px(base_height);
+    LOGFONTW current{};
+    if (font != nullptr && GetObjectW(font, sizeof(current), &current) != 0 &&
+        current.lfHeight == height) return font;
+    const HFONT next = CreateFontW(height, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
+                                   0, 0, CLEARTYPE_QUALITY, 0, face);
+    if (next != nullptr) {
+        if (font != nullptr) DeleteObject(font);
+        font = next;
+    }
+    return font != nullptr ? font : static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+}
+
 HFONT strip_font() {
-    static HFONT f = CreateFontW(-12, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0,
-                                 CLEARTYPE_QUALITY, 0, L"Segoe UI");
-    return f;
+    static HFONT f = nullptr;
+    return scaled_font(f, 12, L"Segoe UI");
 }
 
 // 主程式 label 同級 11px(帶2 按鈕文字)
 HFONT label_font() {
-    static HFONT f = CreateFontW(-11, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0,
-                                 CLEARTYPE_QUALITY, 0, L"Segoe UI");
-    return f;
+    static HFONT f = nullptr;
+    return scaled_font(f, 11, L"Segoe UI");
 }
 
 // 主程式 meta 資訊同款等寬字(--mono: Cascadia Mono/Consolas 系)
 HFONT mono_font() {
-    static HFONT f = CreateFontW(-11, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0,
-                                 CLEARTYPE_QUALITY, 0, L"Consolas");
-    return f;
+    static HFONT f = nullptr;
+    return scaled_font(f, 11, L"Consolas");
 }
 
 // 背景 process 無權 SetForegroundWindow 搶焦點:借目前前景視窗 thread 的
@@ -126,7 +143,6 @@ void foreground_window(HWND wnd) noexcept {
 class EditorPlugFrame final : public IPlugFrame {
 public:
     HWND hwnd{};        // host top-level(視窗銷毀時清 null,擋遲到的 resizeView)
-    int extra_cy = kCaptionH + kTabH + kBand2H;
 
     tresult PLUGIN_API queryInterface(const TUID requested_iid, void** obj) override {
         if (obj == nullptr) return kInvalidArgument;
@@ -153,13 +169,9 @@ public:
         if (w <= 0 || h <= 0) return kInvalidArgument;
         w = std::clamp(w, kClientMinW, 4096);
         h = std::clamp(h, kClientMinH, 4096);
-        RECT rc{0, 0, w, h + extra_cy};
-        AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
-        SetWindowPos(hwnd, nullptr, 0, 0, rc.right - rc.left, rc.bottom - rc.top,
-                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
         ViewRect clamped{0, 0, w, h};
-        view->onSize(&clamped);  // 契約:視窗 resize 完成後通知 plugin
-        return kResultOk;
+        return static_cast<tresult>(SendMessageW(hwnd, kEditorResizeMessage,
+            reinterpret_cast<WPARAM>(view), reinterpret_cast<LPARAM>(&clamped)));
     }
 
 private:
@@ -167,10 +179,10 @@ private:
 };
 
 // 帶2 控制項的矩形(ty = 帶2 頂 = 帶1 列數 × kTabH;列數隨分頁換行變動)
-RECT power_rect(int ty) noexcept { return {8, ty + 5, 36, ty + kBand2H - 5}; }
-RECT save_btn_rect(int ty) noexcept { return {44, ty + 6, 148, ty + kBand2H - 6}; }
-RECT load_btn_rect(int ty) noexcept { return {156, ty + 6, 260, ty + kBand2H - 6}; }
-RECT preset_name_rect(int ty, int cw) noexcept { return {270, ty + 4, cw - 10, ty + kBand2H - 4}; }
+RECT power_rect(int ty) noexcept { return {chrome_px(8), ty + chrome_px(5), chrome_px(36), ty + chrome_px(kBand2H - 5)}; }
+RECT save_btn_rect(int ty) noexcept { return {chrome_px(44), ty + chrome_px(6), chrome_px(148), ty + chrome_px(kBand2H - 6)}; }
+RECT load_btn_rect(int ty) noexcept { return {chrome_px(156), ty + chrome_px(6), chrome_px(260), ty + chrome_px(kBand2H - 6)}; }
+RECT preset_name_rect(int ty, int cw) noexcept { return {chrome_px(270), ty + chrome_px(4), cw - chrome_px(10), ty + chrome_px(kBand2H - 4)}; }
 
 LRESULT CALLBACK host_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept;
 LRESULT CALLBACK tabs_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept;
@@ -305,8 +317,8 @@ struct EditorHost::Impl {
     bool tabs_measured = false;  // 分頁文字寬已量(名單變更時重置)
     int rows = 1;                // 帶1 換行列數(寬度不足時延伸下一列)
 
-    int strip_h() const noexcept { return kTabH * rows + kBand2H; }
-    int band2_y() const noexcept { return kTabH * rows; }
+    int strip_h() const noexcept { return chrome_px(kTabH) * rows + chrome_px(kBand2H); }
+    int band2_y() const noexcept { return chrome_px(kTabH) * rows; }
     IPtr<EditorPlugFrame> frame;
     // 帶列 hover 狀態(tabs 視窗座標;WM_MOUSEMOVE 維護、WM_MOUSELEAVE 清除)
     int hover_tab = -1;     // 可點(未活)tab index;-1 無
@@ -316,8 +328,10 @@ struct EditorHost::Impl {
     bool cap_hover_tracked = false;
     bool active = false;         // 視窗是否前景(標題文字亮度)
     std::wstring title;          // 自繪 caption 文字快取
-    int last_view_w = -1, last_view_h = -1;  // 上次餵給 view 的 client 尺寸(擋回聲)
+    int last_view_w = -1, last_view_h = -1;  // 插件的原生尺寸，與 chrome 最小寬度分開。
+    int last_client_w = -1, last_client_h = -1; // Windows 可能在 ShowWindow 重送同尺寸 WM_SIZE。
     int fit_w = 0, fit_h = 0;    // active 插件 attach 回報的原生尺寸(固定版面 = 視窗貼合尺寸)
+    bool resizing_host = false; // 宿主 chrome/插件請求改外框，不向插件回送容器尺寸。
 
     ~Impl() {
         if (wnd != nullptr) DestroyWindow(wnd);  // WM_DESTROY 內 detach + 清欄位
@@ -352,7 +366,7 @@ struct EditorHost::Impl {
         for (auto& t : tabs_data) {
             SIZE sz{};
             GetTextExtentPoint32W(dc, t.name.c_str(), static_cast<int>(t.name.size()), &sz);
-            t.w = sz.cx + kTabPadX * 2;
+            t.w = sz.cx + chrome_px(kTabPadX) * 2;
         }
         SelectObject(dc, old);
         ReleaseDC(tabs, dc);
@@ -368,7 +382,7 @@ struct EditorHost::Impl {
         for (auto& t : tabs_data) {
             if (x > 0 && x + t.w > cw) {
                 x = 0;
-                y += kTabH;
+                y += chrome_px(kTabH);
                 ++rows;
             }
             t.x = x;
@@ -428,15 +442,23 @@ struct EditorHost::Impl {
         // tabs 只佔帶高:若讓它延伸到窗底,會蓋住 client(第一個建立的
         // 子視窗 = z 最上) —— plugin 區所有滑鼠輸入被 tabs 吃掉,編輯器開了卻
         // 點不動。不重疊 = hit-test 直達 client,不受 sibling z-order 影響。
-        MoveWindow(tabs, 0, kCaptionH, cw, sh, FALSE);  // 不先擦:WM_PAINT 單趟自畫,resize 不閃
-        MoveWindow(client, 0, kCaptionH + sh, cw, ch - kCaptionH - sh,
-                   TRUE);  // CLIPCHILDREN:擦不到 plugin 區
+        const int caption_h = chrome_px(kCaptionH);
+        const int vh = ch - caption_h - sh;
+        if (vh < kClientMinH) {
+            resize_to_client(cw, kClientMinH);
+            return;
+        }
+        const bool client_changed = cw != last_client_w || vh != last_client_h;
+        last_client_w = cw;
+        last_client_h = vh;
+        MoveWindow(tabs, 0, caption_h, cw, sh, FALSE);  // 不先擦:WM_PAINT 單趟自畫,resize 不閃
+        MoveWindow(client, 0, caption_h + sh, cw, vh, TRUE);
         if (const auto* slot = find_slot(active_id); slot != nullptr && slot->plugin->editor_open()) {
-            const int vh = ch - kCaptionH - sh;
+            if (resizing_host) { center_editor_child(); return; }
             if (slot->plugin->editor_can_resize()) {
                 // 只在 client 尺寸真的變了才餵 onSize:plugin 收 onSize 回 resizeView
                 // → host WM_SIZE → 又 onSize 的回聲迴圈(閃爍/暴衝)從這裡斷掉
-                if (cw != last_view_w || vh != last_view_h) {
+                if (client_changed) {
                     last_view_w = cw;
                     last_view_h = vh;
                     slot->plugin->editor_resize_view(cw, vh);
@@ -454,6 +476,7 @@ struct EditorHost::Impl {
                     tw = (std::max)(tw, cw2);
                     th = (std::max)(th, ch2);
                 }
+                tw = (std::max)(tw, chrome_px(kHostMinClientW));
                 if (cw != tw || vh != th) resize_to_client(tw, th);
             }
             center_editor_child();
@@ -461,12 +484,14 @@ struct EditorHost::Impl {
     }
 
     void resize_to_client(int w, int h) noexcept {
+        w = (std::max)(w, chrome_px(kHostMinClientW));
         layout_tabs(w);  // 以目標寬度定列數(strip 高隨之)
-        if (frame != nullptr) frame->extra_cy = kCaptionH + strip_h();
-        RECT rc{0, 0, w, h + kCaptionH + strip_h()};
-        AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
-        SetWindowPos(wnd, nullptr, 0, 0, rc.right - rc.left, rc.bottom - rc.top,
+        const bool previous = std::exchange(resizing_host, true);
+        // WM_NCCALCSIZE 已讓整窗成為 client，不能再加 Windows 原生 caption 邊距。
+        SetWindowPos(wnd, nullptr, 0, 0, w, h + chrome_px(kCaptionH) + strip_h(),
                      SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+        layout_children(); // 尺寸相同也要重新配置子視窗。
+        resizing_host = previous;
     }
 
     // 列數變化(插件增刪/重新編號/視窗寬變)→ 以目前 client 尺寸重設外框高,
@@ -480,7 +505,6 @@ struct EditorHost::Impl {
         layout_tabs(hc.right);
         if (strip_h() != old_strip) {
             resize_to_client(hc.right, cc.bottom);
-            layout_children();
         }
         if (tabs != nullptr) InvalidateRect(tabs, nullptr, FALSE);
     }
@@ -500,7 +524,7 @@ struct EditorHost::Impl {
         // 標題也畫在自繪 caption 上：重繪 caption 帶
         RECT rc{};
         GetClientRect(wnd, &rc);
-        const RECT cap{0, 0, rc.right, kCaptionH};
+        const RECT cap{0, 0, rc.right, chrome_px(kCaptionH)};
         InvalidateRect(wnd, &cap, FALSE);
     }
 
@@ -548,14 +572,13 @@ struct EditorHost::Impl {
         const COLORREF brc = kBtnBorder;
         DwmSetWindowAttribute(wnd, DWMWA_BORDER_COLOR, &brc, sizeof(brc));
         frame->hwnd = wnd;
-        frame->extra_cy = kCaptionH + strip_h();
         tabs = CreateWindowExW(0, kTabsClassName, L"", WS_CHILD | WS_VISIBLE,
-                               0, kCaptionH, 480, strip_h(), wnd, nullptr,
+                               0, chrome_px(kCaptionH), 480, strip_h(), wnd, nullptr,
                                GetModuleHandleW(nullptr), this);
         // WS_CLIPCHILDREN:client 擦深色底時剪掉 plugin 子視窗範圍,resize 不閃 plugin
         client = CreateWindowExW(0, kClientClassName, L"",
                                  WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
-                                 0, kCaptionH + strip_h(), 480, 300, wnd, nullptr,
+                                 0, chrome_px(kCaptionH) + strip_h(), 480, 300, wnd, nullptr,
                                  GetModuleHandleW(nullptr), this);
         return tabs != nullptr && client != nullptr;
     }
@@ -595,7 +618,6 @@ struct EditorHost::Impl {
             return false;
         }
         active_id = id;
-        last_view_w = last_view_h = -1;  // 新 view:強制首次 layout 餵 onSize
         fit_w = w;
         fit_h = h;
         // getSize 只是 plugin 自報尺寸;attach 後實際 child 可能更大(JUCE 系
@@ -608,8 +630,9 @@ struct EditorHost::Impl {
         }
         if (std::find(opened_ids.begin(), opened_ids.end(), id) == opened_ids.end())
             opened_ids.push_back(id);
-        resize_to_client(fit_w, fit_h);  // fit 已夾實際 child 尺寸(見上)
-        layout_children();  // 同尺寸重開不觸發 WM_SIZE → 補一次置中/onSize
+        last_view_w = fit_w;
+        last_view_h = fit_h;
+        resize_to_client(fit_w, fit_h);  // chrome 再寬也不拉伸 plugin 原生 editor
         set_title(id);
         ShowWindow(wnd, SW_SHOW);
         foreground_window(wnd);
@@ -652,6 +675,27 @@ void EditorHost::set_engine(AudioEngine* engine) noexcept {
 
 void EditorHost::set_command_target(HWND post_to) noexcept {
     impl_->post_to = post_to;
+}
+
+void EditorHost::set_ui_scale(int percent) noexcept {
+    percent = std::clamp(percent, 75, 150);
+    if (ui_scale_percent == percent) return;
+    ui_scale_percent = percent;
+    impl_->tabs_measured = false;
+    impl_->hover_tab = -1;
+    impl_->hover_btn = 0;
+    impl_->cap_hover = false;
+    if (impl_->wnd == nullptr) return;
+    int w = impl_->last_view_w > 0 ? impl_->last_view_w : impl_->fit_w;
+    int h = impl_->last_view_h > 0 ? impl_->last_view_h : impl_->fit_h;
+    int child_w = 0, child_h = 0;
+    if (impl_->editor_child_size(child_w, child_h)) {
+        w = (std::max)(w, child_w);
+        h = (std::max)(h, child_h);
+    }
+    impl_->resize_to_client(w, h);
+    InvalidateRect(impl_->wnd, nullptr, FALSE);
+    InvalidateRect(impl_->tabs, nullptr, FALSE);
 }
 
 void EditorHost::set_owner(HWND /*owner*/) noexcept {
@@ -724,7 +768,7 @@ namespace {
 // ---- host top-level ----
 
 // 自繪 caption 的關閉鈕：24x?;方塊內 × 與帶列控制同語彙（hover 淡底亮字）
-RECT close_btn_rect(int cw) noexcept { return {cw - kCaptionH, 0, cw, kCaptionH}; }
+RECT close_btn_rect(int cw) noexcept { return {cw - chrome_px(kCaptionH), 0, cw, chrome_px(kCaptionH)}; }
 
 void draw_close_glyph(HDC dc, int cw, bool hover, bool pressed) noexcept {
     const RECT r = close_btn_rect(cw);
@@ -739,9 +783,10 @@ void draw_close_glyph(HDC dc, int cw, bool hover, bool pressed) noexcept {
                                      : Gdiplus::Color(255, 0x8a, 0x91, 0x9b);
     Gdiplus::Graphics g(dc);
     g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
-    Gdiplus::Pen pen(color, 1.6f);
+    const float scale = ui_scale_percent / 100.0f;
+    Gdiplus::Pen pen(color, 1.6f * scale);
     const float cx = (r.left + r.right) / 2.0f, cy = (r.top + r.bottom) / 2.0f;
-    constexpr float half = 5.0f;
+    const float half = 5.0f * scale;
     g.DrawLine(&pen, cx - half, cy - half, cx + half, cy + half);
     g.DrawLine(&pen, cx - half, cy + half, cx + half, cy - half);
 }
@@ -773,7 +818,7 @@ LRESULT CALLBACK host_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
             GetWindowRect(h, &wr);
             const int x = pt.x - wr.left, y = pt.y - wr.top;
             const int w = wr.right - wr.left, hh = wr.bottom - wr.top;
-            constexpr int edge = 6;
+            const int edge = chrome_px(6);
             const bool L = x < edge, R = x >= w - edge, T = y < edge, B = y >= hh - edge;
             if (T && L) return HTTOPLEFT;
             if (T && R) return HTTOPRIGHT;
@@ -783,7 +828,7 @@ LRESULT CALLBACK host_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
             if (R) return HTRIGHT;
             if (T) return HTTOP;
             if (B) return HTBOTTOM;
-            if (y < kCaptionH) {
+            if (y < chrome_px(kCaptionH)) {
                 RECT rc{}, cr{};
                 GetClientRect(h, &rc);
                 cr = close_btn_rect(rc.right);
@@ -813,26 +858,29 @@ LRESULT CALLBACK host_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
         // 自繪 caption：平面底 + 標題 + 關閉鈕（單趟繪製，無 DWM 動畫）
         PAINTSTRUCT ps;
         HDC dc = BeginPaint(h, &ps);
+        const int saved_dc = SaveDC(dc);
         RECT rc{};
         GetClientRect(h, &rc);
         const int cw = rc.right - rc.left;
+        const int caption_h = chrome_px(kCaptionH);
         // 平面底:整條 caption 填 --flat-0(單趟 FillRect,無漸層無快取)
-        const RECT capfill{0, 0, cw, kCaptionH};
+        const RECT capfill{0, 0, cw, caption_h};
         FillRect(dc, &capfill, dark_brush());
         // caption/帶列 分隔線（同帶1/帶2 分隔線語彙）
-        RECT div{0, kCaptionH - 1, cw, kCaptionH};
+        RECT div{0, caption_h - 1, cw, caption_h};
         FillRect(dc, &div, hairline_brush());
         // 標題：前景亮、失焦暗（WM_ACTIVATE 重繪一次，無動畫）
         if (self != nullptr && !self->title.empty()) {
             SetBkMode(dc, TRANSPARENT);
             SelectObject(dc, strip_font());
-            RECT tr{10, 0, cw - kCaptionH - 8, kCaptionH - 1};
+            RECT tr{chrome_px(10), 0, cw - caption_h - chrome_px(8), caption_h - 1};
             SetTextColor(dc, self->active ? kTextActive : kTextIdle);
             DrawTextW(dc, self->title.c_str(), -1, &tr,
                       DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         }
         if (self != nullptr)
             draw_close_glyph(dc, cw, self->cap_hover, self->cap_hover);
+        RestoreDC(dc, saved_dc);
         EndPaint(h, &ps);
         return 0;
     }
@@ -841,7 +889,7 @@ LRESULT CALLBACK host_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
             self->active = LOWORD(wp) != WA_INACTIVE;
             RECT rc{};
             GetClientRect(h, &rc);
-            const RECT cap{0, 0, rc.right, kCaptionH};
+            const RECT cap{0, 0, rc.right, chrome_px(kCaptionH)};
             InvalidateRect(h, &cap, FALSE);
         }
         break;
@@ -862,7 +910,7 @@ LRESULT CALLBACK host_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
             self->cap_hover = over;
             RECT rc2{};
             GetClientRect(h, &rc2);
-            const RECT cap{0, 0, rc2.right, kCaptionH};
+            const RECT cap{0, 0, rc2.right, chrome_px(kCaptionH)};
             InvalidateRect(h, &cap, FALSE);
         }
         SetCursor(LoadCursorW(nullptr, reinterpret_cast<LPCWSTR>(IDC_ARROW)));
@@ -873,10 +921,10 @@ LRESULT CALLBACK host_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
             self->cap_hover = false;
             RECT rc{};
             GetClientRect(h, &rc);
-            const RECT cap{0, 0, rc.right, kCaptionH};
+            const RECT cap{0, 0, rc.right, chrome_px(kCaptionH)};
             InvalidateRect(h, &cap, FALSE);
         }
-        self->cap_hover_tracked = false;
+        if (self != nullptr) self->cap_hover_tracked = false;
         return 0;
     case WM_LBUTTONDOWN: {
         // 關閉鈕：按下即關（自繪 chrome 慣例；caption 其餘 = 拖曳區不走這）
@@ -885,12 +933,25 @@ LRESULT CALLBACK host_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
             RECT rc{}, cr{};
             GetClientRect(h, &rc);
             cr = close_btn_rect(rc.right);
-            if (pt.y < kCaptionH && PtInRect(&cr, pt)) {
+            if (pt.y < chrome_px(kCaptionH) && PtInRect(&cr, pt)) {
                 PostMessageW(h, WM_CLOSE, 0, 0);
                 return 0;
             }
         }
         break;
+    }
+    case kEditorResizeMessage: {
+        if (self == nullptr || wp == 0 || lp == 0) return kInvalidArgument;
+        auto* view = reinterpret_cast<IPlugView*>(wp);
+        auto* size = reinterpret_cast<ViewRect*>(lp);
+        self->fit_w = self->last_view_w = size->right - size->left;
+        self->fit_h = self->last_view_h = size->bottom - size->top;
+        const bool previous = std::exchange(self->resizing_host, true);
+        self->resize_to_client(self->fit_w, self->fit_h);
+        view->onSize(size);
+        self->center_editor_child();
+        self->resizing_host = previous;
+        return kResultOk;
     }
     case WM_SIZE:
         if (self != nullptr && wp != SIZE_MINIMIZED) {
@@ -899,7 +960,7 @@ LRESULT CALLBACK host_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
             // WM_PAINT 的單趟 BitBlt 蓋掉,不隨尺寸變動累積
             RECT rc{};
             GetClientRect(h, &rc);
-            const RECT cap{0, 0, rc.right, kCaptionH};
+            const RECT cap{0, 0, rc.right, chrome_px(kCaptionH)};
             InvalidateRect(h, &cap, FALSE);
         }
         return 0;
@@ -907,10 +968,9 @@ LRESULT CALLBACK host_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
         auto* mmi = reinterpret_cast<MINMAXINFO*>(lp);
         // 寬下限 = 帶2 全控能完整顯示(不是 editor 需求 —— editor 小就置中留深色底)
         // 高下限用單列帶高:列數增加時 sync_strip_height 會自動調高外框。
-        RECT rc{0, 0, kHostMinClientW, kClientMinH + kCaptionH + kTabH + kBand2H};
-        AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
-        mmi->ptMinTrackSize.x = rc.right - rc.left;
-        mmi->ptMinTrackSize.y = rc.bottom - rc.top;
+        mmi->ptMinTrackSize.x = chrome_px(kHostMinClientW);
+        mmi->ptMinTrackSize.y = kClientMinH + chrome_px(kCaptionH) +
+                               chrome_px(kTabH) + chrome_px(kBand2H);
         // 固定版面插件(canResize=false):上限 = 原生尺寸 + 現行帶高 → 使用者
         // 拉不動,不出現死空間/被拉開的插件背景(可縮放插件不受限,照舊跟隨)。
         // 上限不低於下限(max<min 時拖曳行為未定義)。建立途中 self 尚為 null → 略過
@@ -918,13 +978,11 @@ LRESULT CALLBACK host_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
             if (const auto* slot = self->find_slot(self->active_id);
                 slot != nullptr && slot->plugin->editor_open() &&
                 !slot->plugin->editor_can_resize()) {
-                self->layout_tabs(self->fit_w);
-                RECT fx{0, 0, self->fit_w, self->fit_h + kCaptionH + self->strip_h()};
-                AdjustWindowRect(&fx, WS_OVERLAPPEDWINDOW, FALSE);
-                mmi->ptMaxTrackSize.x = (std::max)(mmi->ptMinTrackSize.x,
-                                                   fx.right - fx.left);
-                mmi->ptMaxTrackSize.y = (std::max)(mmi->ptMinTrackSize.y,
-                                                   fx.bottom - fx.top);
+                const int width = (std::max)(self->fit_w, chrome_px(kHostMinClientW));
+                self->layout_tabs(width);
+                mmi->ptMaxTrackSize.x = width;
+                mmi->ptMaxTrackSize.y = (std::max<LONG>)(mmi->ptMinTrackSize.y,
+                    self->fit_h + chrome_px(kCaptionH) + self->strip_h());
             }
         }
         return 0;
@@ -984,7 +1042,7 @@ void draw_preset_button(HDC dc, RECT r, const wchar_t* text, bool hover) {
     if (hover) FillRect(dc, &r, tab_active_brush());
     const HGDIOBJ old_pen = SelectObject(dc, btn_border_pen());
     const HGDIOBJ old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
-    RoundRect(dc, r.left, r.top, r.right, r.bottom, 3, 3);
+    RoundRect(dc, r.left, r.top, r.right, r.bottom, chrome_px(3), chrome_px(3));
     SelectObject(dc, old_pen);
     SelectObject(dc, old_brush);
     SelectObject(dc, label_font());
@@ -1008,13 +1066,14 @@ LRESULT CALLBACK tabs_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
     case WM_PAINT: {
         PAINTSTRUCT ps;
         HDC dc = BeginPaint(h, &ps);
+        const int saved_dc = SaveDC(dc);
         RECT rc{};
         GetClientRect(h, &rc);
         const int cw = rc.right - rc.left;
         // 換行版面(列數隨寬度);整條帶列平面填 --flat-0
-        const int rows = self->layout_tabs(cw);
-        const int ty = kTabH * rows;  // 帶1/帶2 分界
-        const int sh = ty + kBand2H;
+        self->layout_tabs(cw);
+        const int ty = self->band2_y();
+        const int sh = self->strip_h();
         const RECT bandfill{0, 0, cw, sh};
         FillRect(dc, &bandfill, dark_brush());
         SetBkMode(dc, TRANSPARENT);
@@ -1027,7 +1086,7 @@ LRESULT CALLBACK tabs_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
         for (int i = 0; i < static_cast<int>(tabs.size()); ++i) {
             const auto& t = tabs[static_cast<size_t>(i)];
             if (t.id == self->active_id) active_idx = i;
-            RECT tr{t.x, t.y, t.x + t.w, t.y + kTabH};
+            RECT tr{t.x, t.y, t.x + t.w, t.y + chrome_px(kTabH)};
             if (active_idx == i) {
                 FillRect(dc, &tr, tab_active_brush());
                 SetTextColor(dc, kAccent);
@@ -1045,7 +1104,7 @@ LRESULT CALLBACK tabs_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
         FillRect(dc, &div, hairline_brush());
         if (active_idx >= 0) {
             const auto& t = tabs[static_cast<size_t>(active_idx)];
-            RECT line{t.x, t.y + kTabH - 2, t.x + t.w, t.y + kTabH};
+            RECT line{t.x, t.y + chrome_px(kTabH) - chrome_px(2), t.x + t.w, t.y + chrome_px(kTabH)};
             FillRect(dc, &line, accent_brush());
         }
         if (self->active_id != 0) {
@@ -1055,7 +1114,7 @@ LRESULT CALLBACK tabs_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
             const RECT pr = power_rect(self->band2_y());
             if (self->hover_btn == 1) FillRect(dc, &pr, tab_active_brush());  // hover 淡底
             draw_power_icon(dc, (pr.left + pr.right) / 2, (pr.top + pr.bottom) / 2,
-                            (pr.bottom - pr.top) / 2.0 - 4.0, bypassed);
+                            (pr.bottom - pr.top) / 2.0 - chrome_px(4), bypassed);
             const int by = self->band2_y();
             if (save_btn_rect(by).right < cw)
                 draw_preset_button(dc, save_btn_rect(by), L"儲存 Preset", self->hover_btn == 2);
@@ -1067,6 +1126,7 @@ LRESULT CALLBACK tabs_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
             DrawTextW(dc, self->preset_name.c_str(), -1, &nr,
                       DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         }
+        RestoreDC(dc, saved_dc);
         EndPaint(h, &ps);
         return 0;
     }
@@ -1083,7 +1143,7 @@ LRESULT CALLBACK tabs_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
             int hit = -1;
             for (int i = 0; i < static_cast<int>(tabs.size()); ++i) {
                 const auto& t = tabs[static_cast<size_t>(i)];
-                if (x >= t.x && x < t.x + t.w && y >= t.y && y < t.y + kTabH) {
+                if (x >= t.x && x < t.x + t.w && y >= t.y && y < t.y + chrome_px(kTabH)) {
                     hit = i;
                     break;
                 }
@@ -1141,7 +1201,7 @@ LRESULT CALLBACK tabs_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
         if (y < self->band2_y() && !tabs.empty()) {
             for (int i = 0; i < static_cast<int>(tabs.size()); ++i) {
                 const auto& t = tabs[static_cast<size_t>(i)];
-                if (x >= t.x && x < t.x + t.w && y >= t.y && y < t.y + kTabH) {
+                if (x >= t.x && x < t.x + t.w && y >= t.y && y < t.y + chrome_px(kTabH)) {
                     if (!t.dim && t.id != self->active_id) ntab = i;  // 可點才回饋
                     break;
                 }

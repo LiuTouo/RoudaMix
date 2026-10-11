@@ -38,6 +38,8 @@ public:
 
     void set_engine(AudioEngine* engine) noexcept;   // main() 接線一次
     void set_command_target(HWND post_to) noexcept;  // EditorHostCmd 投遞目標
+    // 僅縮放自繪 caption/tabs/控制項(75–150%)，保留插件 view 的原生尺寸。
+    void set_ui_scale(int percent) noexcept;
     // 舊版曾掛 UI 主視窗當跨進程 owner —— 會接合兩 process 的 input queue,
     // 關彈出視窗時 close 手勢可能誤落主視窗。已改為獨立視窗(見 editor_host.cpp
     // 檔頭);此命令保留接受、引擎端 no-op,協定不變。

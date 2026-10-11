@@ -1,4 +1,5 @@
 #include "public.sdk/source/main/pluginfactory.h"
+#include "public.sdk/source/common/pluginview.h"
 #include "public.sdk/source/vst/vstaudioeffect.h"
 #include "public.sdk/source/vst/vsteditcontroller.h"
 #include "pluginterfaces/base/ibstream.h"
@@ -172,6 +173,65 @@ private:
     std::size_t write_{};
 };
 
+// 只有 editor 測試開啟此 view；其他音訊/複製 fixture 行為維持不變。
+class EditorFixtureView final : public CPluginView {
+public:
+    explicit EditorFixtureView(int mode) : mode_(mode) { rect = {0, 0, 300, 180}; }
+    ~EditorFixtureView() override { if (child_ != nullptr) removed(); }
+
+    tresult PLUGIN_API isPlatformTypeSupported(FIDString type) override {
+        return std::strcmp(type, kPlatformTypeHWND) == 0 ? kResultOk : kResultFalse;
+    }
+    tresult PLUGIN_API attached(void* parent, FIDString type) override {
+        if (isPlatformTypeSupported(type) != kResultOk) return kResultFalse;
+        WNDCLASSW wc{};
+        wc.lpfnWndProc = &wnd_proc;
+        wc.hInstance = GetModuleHandleW(nullptr);
+        wc.lpszClassName = L"RmxEditorScaleFixture";
+        wc.hbrBackground = static_cast<HBRUSH>(GetStockObject(GRAY_BRUSH));
+        RegisterClassW(&wc);
+        child_ = CreateWindowExW(0, wc.lpszClassName, L"Plugin content: never zoomed",
+            WS_CHILD | WS_VISIBLE, 0, 0, mode_ == 3 ? 360 : 300, mode_ == 3 ? 220 : 180,
+            static_cast<HWND>(parent), nullptr, wc.hInstance, this);
+        if (child_ == nullptr) return kResultFalse;
+        return CPluginView::attached(parent, type);
+    }
+    tresult PLUGIN_API removed() override {
+        if (child_ != nullptr) DestroyWindow(child_);
+        child_ = nullptr;
+        UnregisterClassW(L"RmxEditorScaleFixture", GetModuleHandleW(nullptr));
+        return CPluginView::removed();
+    }
+    tresult PLUGIN_API canResize() override { return mode_ == 2 ? kResultOk : kResultFalse; }
+    tresult PLUGIN_API onSize(ViewRect* size) override {
+        if (size == nullptr) return kInvalidArgument;
+        ++resize_count_;
+        if (child_ != nullptr) {
+            SetPropW(child_, L"resize-count", reinterpret_cast<HANDLE>(resize_count_));
+            SetWindowPos(child_, nullptr, 0, 0, size->getWidth(), size->getHeight(),
+                         SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+        return CPluginView::onSize(size);
+    }
+
+private:
+    static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+        if (msg == WM_NCCREATE) {
+            const auto* cs = reinterpret_cast<CREATESTRUCTW*>(lp);
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(cs->lpCreateParams));
+        }
+        auto* self = reinterpret_cast<EditorFixtureView*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+        if (msg == WM_APP + 1 && self != nullptr && self->plugFrame != nullptr) {
+            ViewRect size{0, 0, static_cast<int32>(wp), static_cast<int32>(lp)};
+            return self->plugFrame->resizeView(self, &size);
+        }
+        return DefWindowProcW(hwnd, msg, wp, lp);
+    }
+    int mode_;
+    HWND child_ = nullptr;
+    std::uintptr_t resize_count_ = 0;
+};
+
 class LatencyFixtureController final : public EditController {
 public:
     ~LatencyFixtureController() override {
@@ -191,6 +251,14 @@ public:
         parameters.addParameter(STR16("Fail"), nullptr, 1, 0.0,
                                 ParameterInfo::kCanAutomate, kFailParam);
         return kResultOk;
+    }
+
+    IPlugView* PLUGIN_API createView(FIDString name) override {
+        wchar_t mode[2]{};
+        if (std::strcmp(name, ViewType::kEditor) != 0 ||
+            GetEnvironmentVariableW(L"ROUDAMIX_TEST_EDITOR_MODE", mode, 2) != 1 ||
+            mode[0] < L'1' || mode[0] > L'3') return nullptr;
+        return new EditorFixtureView(mode[0] - L'0');
     }
 
     tresult PLUGIN_API setComponentHandler(IComponentHandler* handler) override {

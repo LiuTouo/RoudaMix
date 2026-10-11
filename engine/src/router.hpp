@@ -91,6 +91,7 @@ private:
     using SaveSessionRequest = router_request::SaveSession;
     using LoadSessionRequest = router_request::LoadSession;
     using EditorOwnerRequest = router_request::EditorOwner;
+    using EditorScaleRequest = router_request::EditorScale;
 
     using Route = Outcome (*)(Router& router, const nlohmann::json& payload);
 
@@ -167,6 +168,7 @@ private:
     Outcome handle_load_session(const LoadSessionRequest& request);
     Outcome handle_ensure_system_outputs(const EmptyRequest& request);
     Outcome handle_set_editor_owner(const EditorOwnerRequest& request);
+    Outcome handle_set_editor_scale(const EditorScaleRequest& request);
     Outcome handle_shutdown_engine(const EmptyRequest& request);
     Outcome handle_bypass(const BypassRequest& request, bool monitor);
 

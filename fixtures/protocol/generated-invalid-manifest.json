@@ -327,6 +327,14 @@
       "missing": [],
       "wrongType": []
     },
+    "set_editor_scale": {
+      "missing": [
+        "percent"
+      ],
+      "wrongType": [
+        "percent"
+      ]
+    },
     "set_editor_owner": {
       "missing": [
         "hwnd"

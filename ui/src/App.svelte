@@ -111,9 +111,10 @@
   let tab = $state<"audio" | "general" | "scenes" | "hotkeys" | "about">("audio");
   let appSettings = $state<AppSettings | null>(null);
   let uiScale = $state(100);
-  let appliedUiScale = 100;
+  let appliedUiScale = $state(100);
   let uiScaleRequest = 0;
   let uiScaleError = $state("");
+  let editorScaleError = $state("");
   let autostartEnabled = $state<boolean | null>(null);
   let autostartBusy = $state(false);
   let startMinimizedBusy = $state(false);
@@ -1448,6 +1449,22 @@
 
   // ---------- 通用設定 ----------
 
+  $effect(() => {
+    if (!conn.connected) return;
+    const epoch = conn.epoch;
+    const percent = appliedUiScale;
+    let current = true;
+    editorScaleError = "";
+    void mutations.run("app:editor-scale", "scale", () =>
+      engineCommand("set_editor_scale", { percent }),
+    ).then((result) => {
+      if (current && result.status === "failed" && conn.connected &&
+          conn.epoch === epoch && appliedUiScale === percent)
+        editorScaleError = `VST 視窗工具列縮放套用失敗：${errorText(result.error)}`;
+    });
+    return () => { current = false; };
+  });
+
   async function updateUiScale(scale: number, persist = false): Promise<void> {
     const request = ++uiScaleRequest;
     uiScale = scale;
@@ -2105,7 +2122,7 @@
           disabled={!appSettings}
           aria-valuetext={`${uiScale}%`}
           aria-describedby="uiscale-hint"
-          data-tooltip="等比例縮放整個主介面；可拖動或使用方向鍵調整，每次 5%。"
+          data-tooltip="等比例縮放 RoudaMix 介面與 VST 視窗工具列，不改變插件內容；可拖動或使用方向鍵調整，每次 5%。"
           oninput={(e) => void updateUiScale(e.currentTarget.valueAsNumber)}
           onchange={(e) => void updateUiScale(e.currentTarget.valueAsNumber, true)}
         />
@@ -2117,8 +2134,8 @@
         >
       </div>
     </div>
-    <p id="uiscale-hint" class="dim indent">75%–150%，即時生效；不影響 VST 插件視窗。</p>
-    {#if uiScaleError}<p class="err indent" role="alert">{uiScaleError}</p>{/if}
+    <p id="uiscale-hint" class="dim indent">75%–150%，縮放 RoudaMix 介面與 VST 視窗工具列，不改變插件內容大小。</p>
+    {#if uiScaleError || editorScaleError}<p class="err indent" role="alert">{uiScaleError || editorScaleError}</p>{/if}
     <div class="formrow">
       <label class="formlabel" for="closebehavior">關閉視窗時</label>
       <select
@@ -2422,11 +2439,26 @@
     min-width: 0;
   }
   .scale-controls input {
+    appearance: none;
     flex: 1;
     min-width: 0;
     width: 0;
+    height: 24px;
     margin: 0;
-    accent-color: var(--accent);
+    background: transparent;
+  }
+  :global(#app) .scale-controls input::-webkit-slider-runnable-track {
+    height: 4px;
+    border: 0;
+    background: var(--text-dim);
+  }
+  :global(#app) .scale-controls input::-webkit-slider-thumb {
+    appearance: none;
+    width: 12px;
+    height: 16px;
+    margin-top: -6px;
+    border: 1px solid var(--text);
+    background: var(--accent);
   }
   .scale-controls output {
     min-width: 4ch;

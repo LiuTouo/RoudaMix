@@ -318,7 +318,7 @@ add_library(rmx_latency_fixture MODULE
     ${VST3_SDK_DIR}/public.sdk/source/vst/vsteditcontroller.cpp
     ${VST3_SDK_DIR}/public.sdk/source/vst/vstparameters.cpp)
 target_include_directories(rmx_latency_fixture SYSTEM PRIVATE ${VST3_SDK_DIR})
-target_link_libraries(rmx_latency_fixture PRIVATE vst3_sdk)
+target_link_libraries(rmx_latency_fixture PRIVATE vst3_sdk user32 gdi32)
 set_target_properties(rmx_latency_fixture PROPERTIES PREFIX "" SUFFIX ".vst3")
 if(MSVC)
     target_compile_options(rmx_latency_fixture PRIVATE /W0 /utf-8 /Zc:char8_t-)
@@ -345,6 +345,17 @@ if(MSVC)
     target_compile_options(plugin_copy_test PRIVATE /W4 /utf-8)
 endif()
 add_test(NAME plugin_copy COMMAND plugin_copy_test $<TARGET_FILE:rmx_latency_fixture>)
+
+# 原生 editor chrome 縮放：固定/可調整/回報尺寸不符的測試 view，不使用音訊裝置。
+add_executable(editor_host_scale_test tests/editor_host_scale_test.cpp ${RMX_COPY_TEST_SOURCES})
+target_include_directories(editor_host_scale_test PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/generated")
+target_include_directories(editor_host_scale_test SYSTEM PRIVATE third_party)
+target_link_libraries(editor_host_scale_test PRIVATE asio_sdk vst3_sdk user32 ole32 gdi32 gdiplus dwmapi mmdevapi psapi)
+add_dependencies(editor_host_scale_test rmx_latency_fixture roudamix-worker)
+if(MSVC)
+    target_compile_options(editor_host_scale_test PRIVATE /W4 /utf-8)
+endif()
+add_test(NAME editor_host_scale COMMAND editor_host_scale_test $<TARGET_FILE:rmx_latency_fixture>)
 
 # Real engine/Router/pumps, deterministic Windows audio endpoints, no physical devices.
 add_executable(wasapi_runtime_test tests/wasapi_runtime_test.cpp tests/fake_wasapi.cpp ${RMX_COPY_TEST_SOURCES})

@@ -236,6 +236,7 @@ const std::unordered_map<std::string, Router::Route>& Router::routes() {
         {"load_session", &Router::route<LoadSessionRequest, &Router::handle_load_session>},
         {"ensure_system_outputs", &Router::route<EmptyRequest, &Router::handle_ensure_system_outputs>},
         {"set_editor_owner", &Router::route<EditorOwnerRequest, &Router::handle_set_editor_owner>},
+        {"set_editor_scale", &Router::route<EditorScaleRequest, &Router::handle_set_editor_scale>},
         {"shutdown_engine", &Router::route<EmptyRequest, &Router::handle_shutdown_engine>},
     };
     return value;
@@ -864,6 +865,13 @@ Router::Outcome Router::handle_set_editor_owner(const EditorOwnerRequest& reques
     EditorHost::instance().set_owner(
         reinterpret_cast<HWND>(request.hwnd));
     return success();
+}
+
+Router::Outcome Router::handle_set_editor_scale(const EditorScaleRequest& request) {
+    if (request.percent < 75 || request.percent > 150)
+        return failure(Err::kBadCommand, "editor scale must be between 75 and 150 percent");
+    EditorHost::instance().set_ui_scale(request.percent);
+    return success(); // 顯示偏好不改 Session revision，也不重建音訊 graph。
 }
 
 Router::Outcome Router::handle_shutdown_engine(const EmptyRequest&) {

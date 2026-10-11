@@ -5,10 +5,16 @@ import { flushSync, mount, tick, unmount } from "svelte";
 import App from "../../App.svelte";
 import type { AppSettings } from "../ipc";
 
-const { invoke, setZoom } = vi.hoisted(() => ({ invoke: vi.fn(), setZoom: vi.fn() }));
+const { invoke, setZoom, listeners } = vi.hoisted(() => ({
+  invoke: vi.fn(), setZoom: vi.fn(),
+  listeners: new Map<string, (event: { payload: unknown }) => void>(),
+}));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 vi.mock("@tauri-apps/api/app", () => ({ getVersion: vi.fn(async () => "0.1.0") }));
-vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async () => () => {}) }));
+vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async (name, callback) => {
+  listeners.set(name, callback);
+  return () => listeners.delete(name);
+}) }));
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({ onCloseRequested: async () => () => {} }),
 }));
@@ -23,6 +29,8 @@ vi.mock("@tauri-apps/plugin-updater", () => ({ check: vi.fn(async () => null) })
 let component: ReturnType<typeof mount> | undefined;
 let settings: AppSettings;
 let saveError: Error | undefined;
+let editorError: Error | undefined;
+let editorWait: Promise<void> | undefined;
 const originalAnimate = Element.prototype.animate;
 const originalShowModal = HTMLDialogElement.prototype.showModal;
 const originalClose = HTMLDialogElement.prototype.close;
@@ -30,6 +38,9 @@ beforeEach(() => {
   settings = { startupMode: "blank", sessionDir: null, startupFile: null,
     lastSessionPath: null, startMinimizedOnAutostart: false, checkUpdatesOnStartup: false };
   saveError = undefined;
+  editorError = undefined;
+  editorWait = undefined;
+  listeners.clear();
   setZoom.mockReset().mockResolvedValue(undefined);
   invoke.mockReset().mockImplementation(async (command, args) => {
     if (command === "get_settings") return { settings: { ...settings }, warnings: [] };
@@ -38,6 +49,12 @@ beforeEach(() => {
       Object.assign(settings, args.patch);
       return { settings: { ...settings }, warnings: [] };
     }
+    if (command === "engine_command" && args.kind === "set_editor_scale") {
+      await editorWait;
+      if (editorError) throw editorError;
+      return {};
+    }
+    if (command === "engine_command" && args.kind === "list_devices") return { devices: [] };
     // 引擎一直未完成連線也必須能載入與套用介面偏好。
     if (command === "connect_status") return new Promise(() => {});
     return undefined;
@@ -84,6 +101,79 @@ function change(slider: HTMLInputElement, value: number, type = "input") {
 function savedPatches() {
   return invoke.mock.calls.filter(([command]) => command === "set_settings").map(([, args]) => args.patch);
 }
+
+function connection(connected: boolean, epoch: number) {
+  listeners.get("connection")!({ payload: { connected, epoch, engineVersion: "test" } });
+}
+function editorScales() {
+  return invoke.mock.calls.filter(([command, args]) =>
+    command === "engine_command" && args.kind === "set_editor_scale",
+  ).map(([, args]) => args.payload.percent);
+}
+
+it("連線時同步已還原的比例，離線可預覽，重連與 engine 換代會重送最新值", async () => {
+  settings.uiScale = 125;
+  const slider = await openGeneral();
+  expect(editorScales()).toEqual([]);
+  connection(true, 1);
+  await settle();
+  expect(editorScales()).toEqual([125]);
+  connection(false, 1);
+  change(slider, 150);
+  await settle();
+  expect(setZoom).toHaveBeenLastCalledWith(1.5);
+  expect(editorScales()).toEqual([125]);
+  connection(true, 2);
+  await settle();
+  connection(true, 3);
+  await settle();
+  expect(editorScales()).toEqual([125, 150, 150]);
+});
+
+it("VST 外層縮放依序合併快速調整，不阻塞主介面預覽", async () => {
+  const slider = await openGeneral();
+  connection(true, 1);
+  await settle();
+  let release!: () => void;
+  editorWait = new Promise<void>(resolve => { release = resolve; });
+  change(slider, 125);
+  await settle();
+  change(slider, 130);
+  await settle();
+  change(slider, 150);
+  await settle();
+  expect(slider.value).toBe("150");
+  expect(setZoom).toHaveBeenLastCalledWith(1.5);
+  expect(editorScales()).toEqual([100, 125]);
+  release();
+  await settle();
+  expect(editorScales()).toEqual([100, 125, 150]);
+});
+
+it("VST 外層套用失敗不回滾主介面，改比例後可恢復", async () => {
+  const slider = await openGeneral();
+  editorError = new Error("engine rejected scale");
+  connection(true, 1);
+  await settle();
+  expect(document.querySelector('.settingsdlg [role="alert"]')?.textContent).toContain("VST 視窗工具列縮放套用失敗");
+  expect(slider.value).toBe("100");
+  editorError = undefined;
+  change(slider, 125);
+  await settle();
+  expect(editorScales()).toEqual([100, 125]);
+  expect(document.querySelector('.settingsdlg [role="alert"]')).toBeNull();
+});
+
+it("主介面套用失敗時不把未生效比例傳給 VST 外層", async () => {
+  const slider = await openGeneral();
+  connection(true, 1);
+  await settle();
+  setZoom.mockRejectedValueOnce(new Error("zoom denied"));
+  change(slider, 150);
+  await settle();
+  expect(slider.value).toBe("100");
+  expect(editorScales()).toEqual([100]);
+});
 
 it("主視窗有原生 WebView 縮放權限", () => {
   expect(capability.windows).toContain("main");

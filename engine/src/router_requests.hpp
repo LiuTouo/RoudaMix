@@ -261,6 +261,12 @@ struct LoadSession {
         : path(payload.at("path").get<std::string>()) {}
 };
 
+struct EditorScale {
+    int percent;
+    explicit EditorScale(const nlohmann::json& payload)
+        : percent(payload.at("percent").get<int>()) {}
+};
+
 struct EditorOwner {
     std::uint64_t hwnd;
     explicit EditorOwner(const nlohmann::json& payload)

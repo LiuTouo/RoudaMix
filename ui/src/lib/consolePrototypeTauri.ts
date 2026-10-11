@@ -196,7 +196,7 @@ function engine(kind: string, payload: Record<string, any>): unknown {
     case 'open_editor':
       previewNotice('VST 原生編輯器僅能在桌面版開啟；目前為風格預覽');
       return { instanceId: payload.instanceId, editor: false };
-    case 'close_editor': case 'set_editor_owner': return {};
+    case 'close_editor': case 'set_editor_owner': case 'set_editor_scale': return {};
     default:
       previewNotice(`此操作不在風格預覽範圍：${kind}`);
       throw { code: 'prototype_unsupported', message: `僅供外觀比較，未執行 ${kind}` };

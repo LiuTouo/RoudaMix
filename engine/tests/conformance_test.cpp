@@ -125,6 +125,7 @@ void check_command_result_schemas() {
         {"ensure_system_outputs",
          {{"tracks", nlohmann::json::array()}, {"revision", 1}}},
         {"set_editor_owner", nlohmann::json::object()},
+        {"set_editor_scale", nlohmann::json::object()},
         {"shutdown_engine", nlohmann::json::object()},
     };
 

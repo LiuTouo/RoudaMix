@@ -790,6 +790,16 @@
       "errors": []
     },
     {
+      "kind": "set_editor_scale",
+      "payload": {
+        "type": "object",
+        "required": ["percent"],
+        "properties": { "percent": { "type": "integer", "minimum": 75, "maximum": 150 } }
+      },
+      "result": { "$ref": "#/definitions/emptyObject" },
+      "errors": ["bad_command"]
+    },
+    {
       "kind": "set_editor_owner",
       "payload": {
         "type": "object",

@@ -127,6 +127,7 @@ render 裝置,`list_render_devices` 列 endpoints)。每軌一條 VST 鏈
 | `get_params` | — |
 | `open_editor` | 開 plugin 自帶 GUI(engine process 的獨立浮動視窗，topmost、無工作列項；tab 標籤 = 軌名·plugin 名)。無 editor 回 `plugin_no_editor`。editor 內改參數 = `set_param` 語意(不廣播 status)；UI 想同步權威值輪詢 `get_params` |
 | `close_editor` | 關 editor 視窗(plugin 視窗自帶 X 關掉也同效) |
+| `set_editor_scale` | `percent` 為 75–150 的整數。只縮放 RoudaMix 自繪標題列、分頁與 Preset 控制項；不改插件內容尺寸或 DPI awareness。即時套用目前視窗並供之後開窗使用；重連由 UI 重送。純顯示偏好，不增加 epoch/revision、不廣播 status、不影響音訊。 |
 | `save_preset` | 寫 `.vstpreset`(VST3 容器:`Comp`=component state + `Cont`=controller state + `RmxP`=host 權威表私有 chunk,其他 host 會略過;class ID 為 32 hex 大寫 ASCII);非 mutation(不動 epoch/不廣播) |
 | `load_preset` | 讀 `.vstpreset` 套用(component setState → controller setComponentState);成功 = mutation(廣播 status)。host 端 param 權威值重同步:檔案帶 `RmxP` chunk 時優先採用;無 `RmxP`(外部 host 存的)且 controller 同步成功時自 controller;皆無 = 保持現值。容器缺 `Comp` chunk 或 class ID 不符回 `preset_io` |
 | `save_session` | path null = `%APPDATA%\RoudaMix\default.rmsession`;deviceKey/sampleRate/bufferSize 帶了就蓋寫進檔;寫 §8 SessionFile;非 mutation(不動 epoch/不廣播)。**P1-F 原子寫入**:同目錄 `.tmp` 完整寫入+落盤 → 舊檔搬 `.bak` → rename 替換;任何一步失敗 = 原檔不動、err 帶原因(成功保留一份 `.bak` = 上一版,手動恢復用)。revision 隨回(UI 以此定 clean 基準;失敗 = dirty 不清) |

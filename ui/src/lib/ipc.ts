@@ -50,7 +50,7 @@ export type AppSettings = {
   /** 僅由 Windows 登入自動啟動時，讓主視窗保持在系統匣。 */
   startMinimizedOnAutostart: boolean;
   checkUpdatesOnStartup?: boolean;
-  /** 主介面縮放百分比(75–150)，舊設定預設 100。 */
+  /** RoudaMix 介面與 VST 視窗工具列縮放百分比(75–150)，舊設定預設 100。 */
   uiScale?: number;
   /** 監聽系統輸出軌靜音的全域快捷鍵(Tauri Shortcut 字串,如 "Ctrl+Shift+M");null = 未綁定 */
   monitorHotkey?: string | null;

@@ -52,7 +52,7 @@ pub struct Settings {
     /// 僅由 Windows 登入自動啟動時，讓主視窗保持隱藏並常駐系統匣。
     pub start_minimized_on_autostart: bool,
     pub check_updates_on_startup: bool,
-    /// 主介面縮放百分比(75–150)，不影響 VST 原生視窗。
+    /// RoudaMix 介面與 VST 視窗工具列縮放百分比(75–150)，不縮放插件內容。
     pub ui_scale: u32,
     /// 監聽系統輸出軌靜音的全域快捷鍵(Tauri Shortcut 字串,如 "Ctrl+Shift+M");
     /// None = 未綁定。註冊與觸發由前端 global-shortcut plugin 處理。
