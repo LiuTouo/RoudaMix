@@ -1168,7 +1168,7 @@
   <!-- 標題列在機架盒子外(正上方);右鍵仍可開機架選單(button 已在 rackMenu 內過濾)。 -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="vsthead" oncontextmenu={rackMenu}>
-    <span>INSERTS ({track.plugins.length})</span>
+    <span>VST ({track.plugins.length})</span>
     {#if $pluginTransfer.busy}<span class="dim" role="status">處理中…</span>{/if}
   </div>
   {#snippet renameBox()}
@@ -1336,7 +1336,7 @@
         class="mini add"
         onclick={() => { pluginPickerOpen = true; }}
         data-tooltip="開啟共用的 VST plugin 清單；不會自動重新掃描。"
-        >+ INSERT</button
+        >+ 加入</button
       >
     </div>
   </div>
