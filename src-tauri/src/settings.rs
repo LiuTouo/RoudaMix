@@ -13,6 +13,7 @@ use serde_json::Value;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use tauri::AppHandle;
 
 pub const SCHEMA_VERSION: u32 = 3;
@@ -79,6 +80,11 @@ fn path(app: &AppHandle) -> Option<PathBuf> {
         .ok()
         .map(|d| d.join("settings.json"))
 }
+
+/// set_settings 是 read-merge-write;Tauri command 併發執行,不互斥會互相
+/// 覆蓋(如存 Session 的 rememberLastSession 撞上使用者改設定)。寫入路徑共用
+/// 這把鎖(毒鎖照舊解,寫壞檔不該永久卡死設定)
+static SETTINGS_IO: Mutex<()> = Mutex::new(());
 
 /// 版本 migration 階梯:vN → vN+1。目前為 v3；未來欄位搬移
 /// 在這裡加階段,`normalize` 拿到的永遠是當版形狀的原始 JSON。
@@ -298,6 +304,7 @@ pub fn get_settings(app: AppHandle) -> SettingsReply {
 /// 淺合併:只覆蓋 patch 帶的鍵;寫入前重 normalize(known field 壞值回預設+warning)
 #[tauri::command]
 pub fn set_settings(app: AppHandle, patch: Value) -> Result<SettingsReply, String> {
+    let _io = SETTINGS_IO.lock().unwrap_or_else(|e| e.into_inner());
     let p = path(&app).ok_or("no app data dir")?;
     let (mut raw, _, mut warnings) = load_raw(&app);
     // patch 先進 raw(未知鍵保留、known 鍵覆蓋),再一次 normalize 全量驗證

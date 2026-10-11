@@ -146,8 +146,6 @@ void WasapiClock::pump() {
     auto* client = static_cast<IAudioClient*>(audio_client_);
     auto* render = static_cast<IAudioRenderClient*>(render_client_);
     auto ev = static_cast<HANDLE>(event_);
-    std::vector<float> inter;
-    inter.resize(static_cast<std::size_t>(channels_) * kMaxBlockFrames);
     bool device_error = false;
 
     while (running_.load(std::memory_order_acquire)) {
@@ -163,7 +161,10 @@ void WasapiClock::pump() {
         if (FAILED(render->GetBuffer(need, &dst))) { device_error = true; break; }
         auto* out = reinterpret_cast<float*>(dst);
         std::uint32_t written = 0;
-        while (written < need && running_.load(std::memory_order_acquire)) {
+        // 填完當前 GetBuffer 區段才檢查停止:中途退出會留下未寫尾段,
+        // ReleaseBuffer 把垃圾送進裝置(停止瞬間爆音)。running_ 已翻 false 時
+        // engine graph 為 null,callback 對預清零的 scratch 不寫 = 填靜音。
+        while (written < need) {
             const std::uint32_t slice =
                 need - written > kMaxBlockFrames ? kMaxBlockFrames : need - written;
             std::memset(scratch_[0], 0, sizeof(float) * slice);

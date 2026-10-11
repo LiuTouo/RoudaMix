@@ -269,6 +269,9 @@ private:
     bool swap_graph() noexcept;         // candidate 合法才 atomic commit
     bool swap_safety_graph() noexcept;  // 複製目前 RT routing，只暫停 plugin process
     void retire_graph() noexcept;           // graph 退場(RT 改讀 nullptr)
+    // 等 swap 後在飛的舊圖 block 跑完(reader 歸零 = RT 不再持舊鏈);
+    // VST3 state 存取前必等。逾時回 false(呼叫端自行回滾)
+    bool wait_rt_blocks_drained(std::uint32_t timeout_ms) noexcept;
     // grace 期滿「且」reader 歸零才刪;reader 未退 = 留佇列下輪再試(含 force)
     void reap_retired_graphs(bool force) noexcept;
     // 跑著時軌道動了 ASIO pair:以最新 source/output 聯集重建裝置 buffer

@@ -64,7 +64,7 @@ std::shared_ptr<RenderSink> RenderSink::create(const std::string& device_id,
     const std::uint32_t dst_rate = mix->nSamplesPerSec;
     const std::uint32_t channels = mix->nChannels;
 
-    // shared + event 驅動;200ms 緩衝上限(實際由 engine period 決定)
+    // shared + event 驅動;20ms 緩衝上限(實際由 engine period 決定)
     HRESULT ihr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
                                      200000, 0, mix, nullptr);
     CoTaskMemFree(mix);
@@ -135,11 +135,9 @@ void RenderSink::pump() {
     auto* client = static_cast<IAudioClient*>(audio_client_);
     auto* render = static_cast<IAudioRenderClient*>(render_client_);
     auto ev = static_cast<HANDLE>(event_);
-    std::vector<float> frame;      // 交錯緩衝(1 dst frame * channels)
-    frame.resize(static_cast<std::size_t>(channels_) * 2);
+    bool device_error = false;
     std::vector<float> deint;      // DriftReader 輸出(L/R)
     deint.resize(2 * 8192);
-    bool device_error = false;
 
     while (running_.load(std::memory_order_acquire)) {
         if (WaitForSingleObject(ev, 500) != WAIT_OBJECT_0) continue;

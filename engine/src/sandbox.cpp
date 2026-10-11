@@ -214,13 +214,18 @@ bool verify_module(const std::filesystem::path& module_path, const std::string& 
         err = "plugin failed in sandbox worker (exit " + std::to_string(r.exit_code) + ")";
         if (!r.output.empty()) {
             // 只帶最後一行 stderr 摘要,別把 crash dump 塞進 reply
-            std::string last;
-            for (const char c : r.output)
+            std::string line, last;
+            for (const char c : r.output) {
                 if (c == '\n' || c == '\r') {
-                    if (!last.empty()) break;
+                    if (!line.empty()) {
+                        last = std::move(line);
+                        line.clear();
+                    }
                 } else {
-                    last.push_back(c);
+                    line.push_back(c);
                 }
+            }
+            if (!line.empty()) last = std::move(line);
             if (!last.empty()) err += ": " + last;
         }
         return false;

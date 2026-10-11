@@ -1185,7 +1185,9 @@ std::optional<Failure> AudioEngine::prepare_monitor_variants() {
         if (!swap_safety_graph())
             return failure(Err::kPluginStateFailed,
                            "cannot prepare monitor shadow safety graph");
-        Sleep(60);
+        if (!wait_rt_blocks_drained(2000))
+            return failure(Err::kPluginStateFailed,
+                           "timed out waiting for plugin processing to finish");
     }
     if (auto fail = ensure_monitor_shadows()) {
         if (stream_running()) (void)swap_graph();
@@ -1203,8 +1205,25 @@ void AudioEngine::retire_graph() noexcept {
     }
 }
 
+bool AudioEngine::wait_rt_blocks_drained(std::uint32_t timeout_ms) noexcept {
+    // swap 後舊圖的 in-flight block 仍持有 reader 門閂;歸零 = RT 不再持舊鏈,
+    // 之後的新 block 拿到的是新圖(plugin 已 bypass,不再呼叫 process)
+    const auto deadline = GetTickCount64() + timeout_ms;
+    while (retired_graphs_.readers_active()) {
+        if (GetTickCount64() >= deadline) return false;
+        Sleep(1);
+    }
+    return true;
+}
+
 bool AudioEngine::rebuild_asio_channels(std::string& err) {
     if (!device_.running()) return true;
+    // 與 start() 同款:硬體面板(detach thread)還在 driver 內時禁重開 driver,
+    // 否則 close() 刪 impl_ 會踩使用後釋放
+    if (panel_open_.load(std::memory_order_acquire) > 0) {
+        err = "hardware panel is open; close it first";
+        return false;
+    }
     // 與 start() 同款:從所有軌收 ASIO channel 聯集
     std::vector<std::uint32_t> in_chans, out_chans;
     asio_channel_union(tracks_, in_chans, out_chans);
@@ -1349,6 +1368,8 @@ std::optional<Failure> AudioEngine::track_remove(std::uint32_t track_id) {
                                             t.sidechain_dests.end(), track_id),
                                 t.sidechain_dests.end());
     }
+    // 同 remove_plugin:軌整個移除也會讓某些 shadow 失去存在意義
+    (void)ensure_monitor_shadows();
     swap_graph();
     return std::nullopt;
 }
@@ -1803,12 +1824,9 @@ std::optional<Failure> AudioEngine::with_quiescent_plugin_graph(
         }
     } restore{*this, original, chains};
     // 新 reader 只取得安全圖；觀察 reader 歸零才保證旧圖的 process 已退出。
-    const auto deadline = GetTickCount64() + 2000;
-    while (retired_graphs_.readers_active()) {
-        if (GetTickCount64() >= deadline)
-            return failure(Err::kPluginStateFailed, "timed out waiting for plugin processing to finish");
-        Sleep(1);
-    }
+    if (!wait_rt_blocks_drained(2000))
+        return failure(Err::kPluginStateFailed,
+                       "timed out waiting for plugin processing to finish");
     if (auto fail = action()) return fail;
     if (publish) {
         if (!swap_graph())
@@ -1999,6 +2017,9 @@ std::optional<Failure> AudioEngine::remove_plugin(std::uint32_t instance_id) {
                 // thread,無並發——performEdit 回呼不會同時跑)
                 if (it->plugin && it->plugin->editor_open()) it->plugin->close_editor();
                 t.chain.erase(it);
+                // 順手回收已無用的 monitor shadow(plan 標 kRelease,但沒有
+                // ensure 就要等下一個 monitor 操作才清)
+                (void)ensure_monitor_shadows();
                 swap_graph();
                 return std::nullopt;
             }
@@ -2114,7 +2135,11 @@ std::optional<Failure> AudioEngine::save_preset(std::uint32_t instance_id,
     const bool orig_bypass = mut->bypass;
     mut->bypass = true;
     swap_graph();
-    Sleep(60);  // > 2 個最大 ASIO block:RT 不再持舊鏈
+    if (!wait_rt_blocks_drained(2000)) {
+        mut->bypass = orig_bypass;
+        swap_graph();
+        return failure(Err::kPresetIo, "timed out waiting for plugin processing to finish");
+    }
     std::string err;
     const bool ok = mut->plugin->save_preset(file, mut->param_values, err);
     mut->bypass = orig_bypass;
@@ -2153,7 +2178,12 @@ std::optional<Failure> AudioEngine::load_preset(std::uint32_t instance_id,
     const auto original_monitor_state = s->monitor_state;
     s->bypass = true;
     (void)swap_graph();
-    Sleep(60);
+    if (!wait_rt_blocks_drained(2000)) {
+        s->bypass = orig_bypass;
+        (void)swap_graph();
+        result.message = "timed out waiting for plugin processing to finish";
+        return result;
+    }
     Vst3RuntimeState original_primary;
     Vst3RuntimeState original_shadow;
     if (!s->plugin->capture_runtime_state(original_primary, err)) {
