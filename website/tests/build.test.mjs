@@ -48,7 +48,8 @@ test('built files serve both language entries and their assets without SPA fallb
       await page.reload();
       await page.waitForSelector('.scene[data-stage="5"]');
       assert.equal(await page.locator('[title]').count(), 0);
-      assert.equal(await page.locator('.download-actions a').count(), 1);
+      assert.equal(await page.locator('.download-actions a').count(), 2);
+      assert.equal(await page.locator('.download-actions a[href$="/releases/latest"]').count(), 1);
       assert.equal(await page.locator('.brand img').first().evaluate(image => image.naturalWidth > 0), true);
     }
     assert.deepEqual(failures, []);

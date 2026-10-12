@@ -10,7 +10,8 @@ test('both language routes work on direct open and refresh; no fake controls', a
     await page.reload();
     await expect(page.locator('html')).toHaveAttribute('lang', route ? 'en' : 'zh-Hant');
     await expect(page.locator('a[download], [title], audio[autoplay]')).toHaveCount(0);
-    await expect(page.locator('.download-actions a')).toHaveCount(1);
+    await expect(page.locator('.download-actions a')).toHaveCount(2);
+    await expect(page.locator('.download-actions a[href$="/releases/latest"]')).toContainText(route ? 'Download latest release' : '前往最新版本下載');
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   }
   expect(errors).toEqual([]);
@@ -30,6 +31,8 @@ test('download section resolves the latest GitHub release with a portable link',
   await expect(page.locator('.download-actions .button')).toHaveAttribute('href', 'https://example.com/setup.exe');
   await expect(page.locator('.download-actions .button')).toHaveText(/v0\.9\.9/);
   await expect(page.locator('.download-actions .text-link').first()).toHaveAttribute('href', 'https://example.com/portable.zip');
+  await expect(page.locator('.download-actions a[href$="/releases/latest"]')).toHaveCount(1);
+  await expect(page.locator('.release-status')).toHaveText('');
 });
 
 test('seven chapters support reverse, fast jumps and language preservation', async ({ page }, info) => {

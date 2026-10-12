@@ -51,12 +51,14 @@ Get the latest build from [Releases](https://github.com/LiuTouo/RoudaMix/release
 
 Follow the [interactive guide](https://liutouo.github.io/RoudaMix/en/) — six steps to your first streamed setup:
 
-1. Extract and launch `RoudaMix.exe`
-2. Settings → Audio / Session: select System audio (WASAPI), add an Audio track and pick your microphone
+1. Run `setup.exe` for the installer, or extract the whole portable archive and launch `RoudaMix.exe`
+2. Settings → Audio (`音訊`): select System audio (WASAPI), add an Audio track and pick your microphone
 3. Install and scan your VST3 plugins, then add effects from the track's plugin list
-4. Route the input to both monitor (headphones, Low Latency) and stream (Full PDC)
+4. On Audio/App tracks, check MON (monitor) and STR (stream). Select headphones on the monitor output and check Low Latency (`低延遲`); leave it unchecked on the stream for Full PDC. FX tracks use the destinations (`送至`) menu instead
 5. Install VB-CABLE and set the stream output to CABLE Input
 6. In OBS, add an Audio Input Capture source on CABLE Output and check the meter
+
+Save or load configurations in Settings → Scenes / Session (`場景 / Session`); use `Ctrl+S` to save quickly.
 
 ## 🧱 Tech stack
 

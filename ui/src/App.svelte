@@ -1629,6 +1629,19 @@
     return () => window.removeEventListener("keydown", onKey, true);
   });
 
+  function onSettingsTabKeydown(event: KeyboardEvent) {
+    if (event.altKey || event.ctrlKey || event.metaKey ||
+        !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    const tabs = [...(event.currentTarget as HTMLElement).querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+    const index = tabs.indexOf(event.target as HTMLButtonElement);
+    if (index < 0) return;
+    event.preventDefault();
+    const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1
+      : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+    tabs[next].focus();
+    tabs[next].click();
+  }
+
   function openGeneral() {
     tab = "general";
     void refreshAutostartState();
@@ -1686,6 +1699,14 @@
   const cv = $derived(connView(conn, connProbeErr));
   const connTip = $derived(cv.detail ? `連線診斷：${cv.detail}` : `引擎連線狀態：${cv.label}`);
   const selDev = $derived(devices.find((d) => d.deviceKey === selected) ?? null);
+  const activeDeviceKey = $derived(running ? status?.deviceKey : selected);
+  const startDeviceLabel = $derived(activeDeviceKey === WASAPI_DEVICE_KEY
+    ? "系統音訊 (WASAPI)"
+    : devices.find((device) => device.deviceKey === activeDeviceKey)?.name ?? "尚未選擇（可使用系統音訊 WASAPI）");
+  const systemOutputsCreated = $derived(
+    outputTracks.some((track) => track.systemRole === "monitor") &&
+    outputTracks.some((track) => track.systemRole === "stream"),
+  );
   /** 膠囊通知 view-model(警示→通知,最新在下) */
   const capsuleList = $derived(
     capsuleItems({
@@ -1793,6 +1814,8 @@
     <div
       class="capsule"
       class:iserr={c.kind === "error"}
+      role={c.kind === "error" ? "alert" : "status"}
+      aria-atomic="true"
       in:fly={{ y: -12, duration: 180, easing: cubicOut }}
       out:fly={{ y: -8, duration: 120, easing: cubicIn }}
     >
@@ -1868,8 +1891,9 @@
         {:else}
           <!-- P1-L:空輸入帶的起始區(中性入口:最近 session、裝置狀態、加入軌) -->
           <div class="startcard">
-            <p class="dim">還沒有輸入軌 —— 加入 Audio(App 軌抓程式聲音)、或從上次的 Session 恢復。</p>
+            <p>尚未加入輸入來源。先確認音訊設定，再新增麥克風或 App 軌，也可載入 Session。</p>
             <div class="startrow">
+              <button class="mini" onclick={() => { tab = "audio"; settingsOpen = true; }}>設定音訊…</button>
               <button class="mini" onclick={() => addTrack("audio")}>＋ Audio 軌(麥克風/樂器)</button>
               <button class="mini" onclick={() => addTrack("app")}>＋ App 軌(抓程式聲音)</button>
               <button class="mini" onclick={loadSession}>載入 Session…</button>
@@ -1883,9 +1907,12 @@
               {/if}
             </div>
             <p class="dim startinfo">
-              裝置:{selDev?.name ?? (devices.length ? "選擇中" : "無 ASIO 裝置")} ·
-              {running ? `執行中 ${Math.round(status!.sampleRate)} Hz` : "音訊未啟動"} ·
-              監聽/串流輸出軌已就緒
+              裝置：{startDeviceLabel} ·
+              {running ? `引擎執行中 ${Math.round(status!.sampleRate)} Hz` : "引擎未啟動"}
+            </p>
+            <p class="dim startinfo">
+              {systemOutputsCreated ? "監聽／串流輸出軌已建立" : "監聽／串流輸出軌尚未建立"}。
+              請確認各軌輸出裝置，並在 OBS 等接收程式檢查電平。
             </p>
           </div>
         {/each}
@@ -1961,11 +1988,12 @@
 <dialog
   bind:this={settingsDlg}
   class="settingsdlg"
+  aria-labelledby="settings-title"
   use:backdropClose={() => settingsDlg?.close()}
   onclose={() => (settingsOpen = false)}
 >
   <div class="dialog-head">
-    <span class="dialog-title">設定</span>
+    <span class="dialog-title" id="settings-title">設定</span>
     <button
       class="dialog-close"
       type="button"
@@ -1974,13 +2002,14 @@
       onclick={() => settingsDlg?.close()}>×</button
     >
   </div>
-  <div class="tabs">
-    <button class:on={tab === "audio"} onclick={() => (tab = "audio")}>音訊 / Session</button>
-    <button class:on={tab === "general"} onclick={openGeneral}>通用</button>
-    <button class:on={tab === "scenes"} onclick={openScenes}>場景</button>
-    <button class:on={tab === "hotkeys"} onclick={() => (tab = "hotkeys")}>快捷鍵</button>
-    <button class:on={tab === "about"} onclick={() => (tab = "about")}>關於 / 更新</button>
+  <div class="tabs" role="tablist" tabindex="-1" aria-label="設定分類" onkeydown={onSettingsTabKeydown}>
+    <button id="settings-tab-audio" role="tab" aria-controls="settings-panel" aria-selected={tab === "audio"} tabindex={tab === "audio" ? 0 : -1} class:on={tab === "audio"} onclick={() => (tab = "audio")}>音訊</button>
+    <button id="settings-tab-general" role="tab" aria-controls="settings-panel" aria-selected={tab === "general"} tabindex={tab === "general" ? 0 : -1} class:on={tab === "general"} onclick={openGeneral}>通用</button>
+    <button id="settings-tab-scenes" role="tab" aria-controls="settings-panel" aria-selected={tab === "scenes"} tabindex={tab === "scenes" ? 0 : -1} class:on={tab === "scenes"} onclick={openScenes}>場景 / Session</button>
+    <button id="settings-tab-hotkeys" role="tab" aria-controls="settings-panel" aria-selected={tab === "hotkeys"} tabindex={tab === "hotkeys" ? 0 : -1} class:on={tab === "hotkeys"} onclick={() => (tab = "hotkeys")}>快捷鍵</button>
+    <button id="settings-tab-about" role="tab" aria-controls="settings-panel" aria-selected={tab === "about"} tabindex={tab === "about" ? 0 : -1} class:on={tab === "about"} onclick={() => (tab = "about")}>關於 / 更新</button>
   </div>
+  <div class="settings-content" id="settings-panel" role="tabpanel" aria-labelledby={`settings-tab-${tab}`} tabindex="0">
   {#if tab === "audio"}
     <div class="tabpane" in:fade={{ duration: 120 }}>
     <div class="formrow">
@@ -2264,19 +2293,21 @@
     onPreference={updateCheckPreference}
     onAvailable={(version) => addNotice("info", `有新版本 v${version} 可供下載，請至「設定 → 關於 / 更新」查看。`)}
   />
+  </div>
 </dialog>
 
 <!-- 首次按主視窗關閉按鈕時選擇；偏好會寫入通用設定。Esc 僅取消本次關閉。 -->
 <dialog
   bind:this={closeBehaviorDlg}
   class="dirtydlg"
+  aria-labelledby="close-behavior-title"
   use:backdropClose={() => answerCloseBehavior(null)}
   oncancel={(e) => {
     e.preventDefault();
     answerCloseBehavior(null);
   }}
 >
-  <p class="dirtyq">按下關閉按鈕時要執行哪個動作？</p>
+  <p class="dirtyq" id="close-behavior-title">按下關閉按鈕時要執行哪個動作？</p>
   <p class="dim">之後可在「設定 → 通用」變更。</p>
   <div class="dirtyrow">
     <button class="primary" onclick={() => answerCloseBehavior("tray")}>縮小到系統匣</button>
@@ -2285,8 +2316,8 @@
 </dialog>
 
 <!-- B:未儲存變更三分支。取消 = 不關窗/不載入;儲存失敗 = 視同取消(不得覆蓋) -->
-<dialog bind:this={dirtyDlg} class="dirtydlg" use:backdropClose={() => answerDirty("cancel")}>
-  <p class="dirtyq">有未儲存的變更 — 要先儲存嗎?</p>
+<dialog bind:this={dirtyDlg} class="dirtydlg" aria-labelledby="unsaved-title" use:backdropClose={() => answerDirty("cancel")}>
+  <p class="dirtyq" id="unsaved-title">有未儲存的變更 — 要先儲存嗎?</p>
   <div class="dirtyrow">
     <button class="primary" onclick={() => answerDirty("save")}>儲存</button>
     <button class="danger" onclick={() => answerDirty("discard")}>捨棄變更</button>
@@ -2354,6 +2385,7 @@
   }
   /* 分頁內容容器:承接 settingsdlg 的 flex gap(原本 formrow 是直接子層);
    * in:fade 120ms 只進不出的分頁切換過場(motion 政策見 motion.css 頂部註解) */
+  .settings-content,
   .tabpane {
     display: flex;
     flex-direction: column;
@@ -2402,6 +2434,7 @@
   }
   .tabs {
     display: flex;
+    flex-wrap: wrap;
     gap: 4px;
     border-bottom: 1px solid var(--border);
     margin: 0 -16px;

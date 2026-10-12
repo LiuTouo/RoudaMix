@@ -24,6 +24,8 @@ vi.mock("@tauri-apps/plugin-autostart", () => ({ isEnabled: vi.fn(async () => fa
 let component: ReturnType<typeof mount>;
 let status: EngineStatus;
 const originalAnimate = Element.prototype.animate;
+const originalShowModal = HTMLDialogElement.prototype.showModal;
+const originalClose = HTMLDialogElement.prototype.close;
 beforeEach(() => {
   status = { running: true, deviceKey: "wasapi", sampleRate: 48000, bufferSize: 128,
     inputLatency: 0, outputLatency: 128, xruns: 0, trackCount: 0, pluginFails: 0,
@@ -43,6 +45,11 @@ beforeEach(() => {
     ? { connected: true, epoch: 1, engineVersion: "test" } : { settings, warnings: [] });
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} unobserve() {} });
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+  HTMLDialogElement.prototype.showModal = function () { this.open = true; };
+  HTMLDialogElement.prototype.close = function () {
+    this.open = false;
+    this.dispatchEvent(new Event("close"));
+  };
   Element.prototype.animate = vi.fn(() => ({ cancel() {}, finish() {}, currentTime: 0,
     finished: Promise.resolve(), effect: null })) as unknown as typeof Element.prototype.animate;
 });
@@ -51,6 +58,10 @@ afterEach(async () => {
   document.body.replaceChildren(); listeners.clear(); vi.restoreAllMocks(); vi.unstubAllGlobals();
   if (originalAnimate) Element.prototype.animate = originalAnimate;
   else Reflect.deleteProperty(Element.prototype, "animate");
+  if (originalShowModal) HTMLDialogElement.prototype.showModal = originalShowModal;
+  else Reflect.deleteProperty(HTMLDialogElement.prototype, "showModal");
+  if (originalClose) HTMLDialogElement.prototype.close = originalClose;
+  else Reflect.deleteProperty(HTMLDialogElement.prototype, "close");
 });
 async function settle() { for (let i = 0; i < 30; ++i) { await tick(); flushSync(); } }
 function button(text: string) {
@@ -62,7 +73,7 @@ it.each([false, true])("ASIO 清單空白，running=%s 載入 WASAPI Session 會
   component = mount(App, { target: document.body }); await settle();
   listeners.get("engine-event")!({ payload: { kind: "status", payload: { ...status, running } } });
   await settle(); command.mockClear();
-  button("場景").click(); await settle(); // 儲存/載入 Session 已移至設定 → 場景分頁
+  button("場景 / Session").click(); await settle();
   button("載入 Session").click(); await settle();
   expect(command.mock.calls.filter(([name]) => name === "start" || name === "stop").map(([name]) => name))
     .toEqual(running ? ["stop", "start"] : ["start"]);
@@ -86,8 +97,59 @@ it("主裝置失效會顯示通知，手動 Start 使用 WASAPI 格式並可再�
 it("Session 載入失敗不啟動或停止目前串流", async () => {
   component = mount(App, { target: document.body }); await settle(); command.mockClear();
   command.mockRejectedValueOnce({ code: "session_io", message: "invalid session" });
-  button("場景").click(); await settle(); // 儲存/載入 Session 已移至設定 → 場景分頁
+  button("場景 / Session").click(); await settle();
   button("載入 Session").click(); await settle();
   expect(command).toHaveBeenCalledExactlyOnceWith("load_session", { path: "test.rmsession" });
-  expect(document.querySelector(".capsules")?.textContent).toContain("Session 載入失敗");
+  expect(document.querySelector('.capsules [role="alert"]')?.textContent).toContain("Session 載入失敗");
+});
+
+it("設定分頁支援方向鍵、首尾跳轉與單一 Tab 入口，面板標題隨選取同步", async () => {
+  component = mount(App, { target: document.body }); await settle();
+  document.querySelector<HTMLButtonElement>('[aria-label="設定"]')!.click(); await settle();
+  const dialog = document.querySelector<HTMLDialogElement>(".settingsdlg")!;
+  expect(dialog.open).toBe(true);
+  expect(document.getElementById(dialog.getAttribute("aria-labelledby")!)?.textContent).toBe("設定");
+  button("音訊").focus();
+  for (const [key, id] of [["ArrowRight", "general"], ["ArrowRight", "scenes"], ["End", "about"],
+    ["ArrowRight", "audio"], ["ArrowLeft", "about"], ["Home", "audio"]]) {
+    document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+    await settle();
+    const selected = document.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]')!;
+    expect(selected.id).toBe(`settings-tab-${id}`);
+    expect(document.activeElement).toBe(selected);
+    expect(selected.tabIndex).toBe(0);
+    expect(document.querySelectorAll('[role="tab"][tabindex="0"]')).toHaveLength(1);
+    expect(document.querySelector('[role="tabpanel"]')?.getAttribute("aria-labelledby")).toBe(selected.id);
+    expect(selected.getAttribute("aria-controls")).toBe("settings-panel");
+  }
+  button("場景 / Session").click(); await settle();
+  expect(button("儲存 Session").closest('[role="tabpanel"]')).not.toBeNull();
+});
+
+it.each([false, true])("空工作區正確說明 WASAPI 與引擎狀態 running=%s，不宣稱整條路徑就緒", async (running) => {
+  component = mount(App, { target: document.body }); await settle();
+  listeners.get("engine-event")!({ payload: { kind: "status", payload: { ...status, running } } });
+  await settle();
+  const card = document.querySelector(".startcard")!;
+  expect(card.textContent).toContain("系統音訊 (WASAPI)");
+  expect(card.textContent).toContain(running ? "引擎執行中" : "引擎未啟動");
+  expect(card.textContent).toContain("輸出軌尚未建立");
+  expect(card.textContent).not.toMatch(/無 ASIO 裝置|已就緒/);
+  button("場景 / Session").click(); await settle();
+  button("設定音訊…").click(); await settle();
+  expect(document.querySelector<HTMLDialogElement>(".settingsdlg")!.open).toBe(true);
+  expect(button("音訊").getAttribute("aria-selected")).toBe("true");
+});
+
+it("已建立系統輸出仍提示確認裝置與接收端電平", async () => {
+  component = mount(App, { target: document.body }); await settle();
+  const tracks: EngineStatus["tracks"] = ["monitor", "stream"].map((role, i) => ({
+    trackId: i + 1, kind: "output", name: role, systemRole: role as "monitor" | "stream",
+    dests: [], plugins: [], source: null, output: null, gain: 1, mute: false, color: 0,
+  }));
+  listeners.get("engine-event")!({ payload: { kind: "status", payload: { ...status, tracks, trackCount: 2 } } });
+  await settle();
+  expect(document.querySelector(".startcard")?.textContent).toContain("輸出軌已建立");
+  expect(document.querySelector(".startcard")?.textContent).toContain("接收程式檢查電平");
+  expect(document.querySelector(".startcard")?.textContent).not.toContain("已就緒");
 });

@@ -51,12 +51,14 @@ Windows 音訊混音與 VST3 外掛宿主
 
 跟著官網的[互動式教學](https://liutouo.github.io/RoudaMix/)走一遍，六步完成第一場直播的音訊設定：
 
-1. 解壓並開啟 `RoudaMix.exe`
-2. 設定 → 音訊 / Session：選擇「系統音訊 (WASAPI)」，新增 Audio 軌並指定麥克風
+1. 安裝版執行 `setup.exe` 完成安裝；可攜版完整解壓後開啟 `RoudaMix.exe`
+2. 設定 → 音訊：選擇「系統音訊 (WASAPI)」，新增 Audio 軌並指定麥克風
 3. 安裝並掃描你的 VST3 外掛，從音軌加入效果鏈
-4. 輸入軌同時接監聽（耳機、Low Latency）與串流（Full PDC）
+4. 在 Audio／App 軌勾選 MON（監聽）與 STR（串流）；監聽輸出指定耳機並勾選「低延遲」，串流取消勾選以使用 Full PDC（FX 軌則使用「送至」選單）
 5. 安裝 VB-CABLE，串流輸出指定 CABLE Input
 6. OBS 新增「音訊輸入擷取」選 CABLE Output，確認電平
+
+在「設定 → 場景 / Session」儲存或載入配置；`Ctrl+S` 可快速儲存。
 
 ## 🧱 技術棧
 

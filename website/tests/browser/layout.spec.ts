@@ -28,7 +28,8 @@ test('desktop wheel has a short inertial tail and then settles at the intended p
   test.skip(info.project.name !== 'desktop');
   await page.goto('./');
   await page.mouse.move(600, 300);
-  await expect(page.locator('.cursor')).toBeVisible();
+  await expect(page.locator('.cursor')).toHaveCount(0);
+  expect(await page.locator('body').evaluate(element => getComputedStyle(element).cursor)).not.toBe('none');
   await page.mouse.wheel(0, 800);
   await page.waitForTimeout(160);
   const early = await page.evaluate(() => scrollY);
@@ -40,6 +41,6 @@ test('desktop wheel has a short inertial tail and then settles at the intended p
   const settled = await page.evaluate(() => scrollY);
   expect(settled).toBeGreaterThan(790);
   expect(settled).toBeLessThan(805);
-  const progress = await page.locator('.cursor').getAttribute('style');
-  expect(progress).not.toContain('--page-progress:0deg');
+  await expect(page.locator('.chapter-nav [aria-current] i')).toHaveCount(1);
+  expect(await page.locator('.chapter-nav [aria-current] i').getAttribute('style')).not.toBe('--fill:0');
 });

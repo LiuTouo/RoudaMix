@@ -12,11 +12,31 @@
   let scrubbing = false;
   let scrubTarget = 0;
   let visible = false;
-  let userTookOver = false;
+  let userTookOver = $state(false);
+  let paused = $state(false);
   let hold = 0;
   let sceneAnimation: Animation | undefined;
   const raw = $derived(storyState(progress));
   $effect(() => { onphase?.(phase); });
+
+  function pausePlayback() {
+    paused = true;
+    userTookOver = true;
+    scrubbing = false;
+    hold = 0;
+    if (sceneAnimation?.playState === 'running') sceneAnimation.pause();
+    window.dispatchEvent(new Event('roudamix:takeover'));
+  }
+
+  function togglePlayback() {
+    if (!paused) { pausePlayback(); return; }
+    paused = false;
+    userTookOver = false;
+    scrubbing = false;
+    manualUntil = 0;
+    hold = 0;
+    if (sceneAnimation?.playState === 'paused') sceneAnimation.play();
+  }
 
   $effect(() => {
     const next = storyState(progress);
@@ -36,6 +56,7 @@
             { transform: `translate3d(0,${direction * -4}px,0) scale(1) rotateX(0deg)`, opacity: 1, offset: 0.82 },
             { transform: 'translate3d(0,0,0) scale(1) rotateX(0deg)', opacity: 1, offset: 1 },
           ], { duration: 960, easing: 'cubic-bezier(.22,1,.36,1)' });
+          if (paused) sceneAnimation.finish();
         }
       } else if (scrubbing) {
         scrubTarget = next.local;
@@ -49,7 +70,7 @@
     const tick = (now: number) => {
       const delta = Math.min(500, now - last);
       last = now;
-      if (visible && !covered && !document.hidden) {
+      if (visible && !covered && !document.hidden && !paused) {
         if (scrubbing) {
           const gap = scrubTarget - phase;
           // Lag behind the scroll for a smooth feel, then settle exactly on target.
@@ -61,7 +82,7 @@
           // Auto-tour: after a chapter finishes, hold on the result briefly,
           // then advance to the next chapter (looping 07 back to 01) by
           // scrolling — the chapter reset replays it from its start. Any
-          // manual scroll or navigation hands control back for good.
+          // manual scroll or navigation hands control back until Continue.
           if (phase >= 0.98 && !userTookOver) {
             hold += delta;
             if (hold >= 1800) {
@@ -86,7 +107,8 @@
       if (!scene || !window) return;
       const style = getComputedStyle(scene);
       const available = scene.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
-      const ratio = innerWidth <= 760 ? Math.min(1, Math.max(0.5, available / window.scrollHeight)) : 1;
+      const compact = innerWidth <= 760 || (innerWidth > innerHeight && innerHeight <= 550);
+      const ratio = compact ? Math.min(1, Math.max(0.5, available / window.scrollHeight)) : 1;
       presentation.style.setProperty('--window-fit', String(ratio));
     };
     const size = new ResizeObserver(fit);
@@ -95,23 +117,39 @@
     fit();
     const scrub = () => { userTookOver = true; scrubbing = true; manualUntil = performance.now() + 450; };
     const arrive = () => { phase = 0; scrubTarget = 0; scrubbing = false; manualUntil = 0; };
-    const stopTour = () => { userTookOver = true; };
+    const stopTour = () => { userTookOver = true; hold = 0; };
+    const keyboard = (event: KeyboardEvent) => {
+      if (event.key === 'Tab') stopTour();
+      else if (['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'Home', 'End', ' '].includes(event.key)
+        && !(event.key === ' ' && event.target instanceof Element && event.target.closest('.playback-toggle'))) pausePlayback();
+    };
+    const focus = (event: FocusEvent) => {
+      const target = event.target;
+      // The playback button owns its click; focusing it must not invert that action.
+      if (!(target instanceof Element) || target.closest('.playback-toggle')) return;
+      if (target.closest('.audio-demo, .scene-presentation') && target.matches('button, input, select, textarea, a[href]')) pausePlayback();
+      else if (target.matches('a[href], button, input, select, textarea')) stopTour();
+    };
     window.addEventListener('wheel', scrub, { passive: true });
     window.addEventListener('touchmove', scrub, { passive: true });
     window.addEventListener('roudamix:chapter-ready', arrive);
     window.addEventListener('roudamix:navigate', stopTour);
+    window.addEventListener('keydown', keyboard);
+    window.addEventListener('focusin', focus);
     frame = requestAnimationFrame(tick);
     return () => {
       cancelAnimationFrame(frame); observer.disconnect(); size.disconnect(); sceneAnimation?.cancel();
+      window.removeEventListener('keydown', keyboard); window.removeEventListener('focusin', focus);
       window.removeEventListener('wheel', scrub); window.removeEventListener('touchmove', scrub); window.removeEventListener('roudamix:chapter-ready', arrive); window.removeEventListener('roudamix:navigate', stopTour);
     };
   });
 </script>
 
-<div class="scene-presentation" bind:this={presentation} data-phase={phase.toFixed(3)}>
-  <Scene progress={(raw.stage + phase) / 7} {locale} {covered} overviewPhase={raw.stage === 0 ? phase : undefined} />
+<div class="scene-presentation" bind:this={presentation} data-phase={phase.toFixed(3)} data-paused={paused} data-auto-advance={!userTookOver}>
+  <Scene progress={(raw.stage + phase) / 7} {locale} {covered} {paused} overviewPhase={raw.stage === 0 ? phase : undefined} />
   <div class="playback-toolbar">
     <span class="playback-status"><i></i>{locale === 'zh' ? '操作示範' : 'Workflow demo'}</span>
+    <button class="playback-toggle" type="button" aria-label={paused ? (locale === 'zh' ? '繼續操作示範' : 'Continue workflow demo') : (locale === 'zh' ? '暫停操作示範' : 'Pause workflow demo')} aria-pressed={paused} onclick={togglePlayback}>{paused ? (locale === 'zh' ? '繼續' : 'Continue') : (locale === 'zh' ? '暫停' : 'Pause')}</button>
     <span class="playback-progress" aria-hidden="true" style={`transform:scaleX(${phase})`}></span>
   </div>
 </div>

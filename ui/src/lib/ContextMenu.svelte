@@ -18,12 +18,35 @@
 
   let dlg = $state<HTMLDialogElement | null>(null);
   $effect(() => {
-    if (menu) {
-      if (!dlg?.open) dlg?.showModal();
-    } else if (dlg?.open) {
-      dlg.close();
-    }
+    const dialog = dlg;
+    if (!menu || !dialog) return;
+    const opener = document.activeElement;
+    if (!dialog.open) dialog.showModal();
+    dialog.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
+    return () => {
+      const restore = dialog.contains(document.activeElement) || document.activeElement === document.body;
+      dialog.close();
+      if (restore && opener instanceof HTMLElement && opener.isConnected) opener.focus();
+    };
   });
+
+  function onMenuKeydown(event: KeyboardEvent) {
+    if (event.key === "Tab") {
+      dlg?.close();
+      onClose();
+      return;
+    }
+    if (event.altKey || event.ctrlKey || event.metaKey ||
+        !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const items = [...(dlg?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [])];
+    if (!items.length) return;
+    const index = items.indexOf(document.activeElement as HTMLButtonElement);
+    const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1
+      : index < 0 ? (event.key === "ArrowUp" ? items.length - 1 : 0)
+      : (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+    items[next].focus();
+  }
 
   function fire(item: { run: () => void }) {
     onClose();
@@ -31,27 +54,27 @@
   }
 </script>
 
-<svelte:window
-  onkeydown={(e) => e.key === "Escape" && onClose()}
-/>
-
 {#if menu}
   <dialog
     bind:this={dlg}
     class="ctxdlg"
+    aria-label={menu.label}
+    tabindex="-1"
     style:left={Math.min(menu.x, window.innerWidth - 170) + "px"}
     style:top={Math.min(menu.y, window.innerHeight - 40 - (menu.items.length + 1) * 30) + "px"}
     onclose={onClose}
+    oncancel={(event) => { event.preventDefault(); onClose(); }}
     onmousedown={(e) => e.target === dlg && onClose()}
   >
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <!-- 選單本體 140ms 微下上浮淡入(純 CSS,見 .ctx);離場瞬間(桌面選單慣例)。
          一律播放,不連動 OS 動畫設定(ADR 0007) -->
-    <div class="ctx" role="menu" aria-label={menu.label}>
+    <div class="ctx" role="menu" tabindex="-1" aria-label={menu.label} onkeydown={onMenuKeydown}>
       {#each menu.items as item, i (i)}
         <button
           class="ctxitem"
           role="menuitem"
+          tabindex="-1"
           disabled={item.disabled}
           onclick={() => fire(item)}
           >{item.label}</button

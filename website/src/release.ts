@@ -5,10 +5,10 @@ export interface LatestRelease { version: string; setupUrl: string; portableUrl:
 // Release workflow uploads RoudaMix-<version>-windows-x64-{setup.exe,portable.zip}; keep suffixes in sync with .github/workflows/release.yml.
 export function latestFromApi(data: unknown): LatestRelease | null {
   const release = data as { tag_name?: unknown; assets?: Array<{ name?: unknown; state?: unknown; browser_download_url?: unknown }> } | null;
-  if (!release || typeof release.tag_name !== 'string') return null;
+  if (!release || typeof release.tag_name !== 'string' || !release.tag_name.replace(/^v/, '').trim() || !Array.isArray(release.assets)) return null;
   const pick = (suffix: string) => {
-    const asset = (release.assets ?? []).find(asset => asset.state === 'uploaded' && typeof asset.name === 'string'
-      && typeof asset.browser_download_url === 'string' && asset.name.endsWith(suffix));
+    const asset = release.assets!.find(asset => asset && asset.state === 'uploaded' && typeof asset.name === 'string'
+      && typeof asset.browser_download_url === 'string' && /^https:\/\/[^\s/]+\//.test(asset.browser_download_url) && asset.name.endsWith(suffix));
     return asset ? asset.browser_download_url as string : null;
   };
   const setupUrl = pick('-windows-x64-setup.exe');

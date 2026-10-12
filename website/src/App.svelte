@@ -15,16 +15,10 @@
   const locale: Locale = /\/en\/?$/.test(location.pathname) ? 'en' : 'zh';
   const t = content[locale];
   let progress = $state(0);
-  let pageProgress = $state(0);
-  let cursorX = $state(-100);
-  let cursorY = $state(-100);
-  let cursorActive = $state(false);
-  let cursorVisible = $state(false);
   let currentSection = $state('top');
   let chapterCovered = $state(false);
   let storyCovered = $state(false);
   let storyElement: HTMLElement;
-  let cursorElement: HTMLDivElement;
   let lenis: Lenis | undefined;
   let trigger: ScrollTrigger | undefined;
   let navigationTween: gsap.core.Tween | undefined;
@@ -33,8 +27,10 @@
   let copyElement = $state<HTMLDivElement>();
   let lastCopyStage = -1;
   let navigationVersion = 0;
+  let focusVersion = 0;
   let latestNavigation = 'top';
   let latest = $state<LatestRelease | null>(null);
+  let releaseLoading = $state(true);
   const sceneState = $derived(storyState(progress));
   const chapterIndex = $derived(sceneState.stage);
   let demoPhase = $state(0);
@@ -58,7 +54,7 @@
     const element = document.getElementById(index >= 0 ? 'story' : id);
     if (!element) return;
     ++navigationVersion;
-    const requestVersion = navigationVersion;
+    const requestVersion = ++focusVersion;
     latestNavigation = id;
     const anchor = document.getElementById(`${id}-start`) ?? element;
     let target = anchor.getBoundingClientRect().top + window.scrollY - 84;
@@ -81,7 +77,7 @@
       // The visible audio controls are only usable after the page and text settle.
       const entrances = copyElement?.getAnimations({ subtree: true }) ?? [];
       void Promise.allSettled(entrances.map(animation => animation.finished)).then(() => {
-        if (requestVersion !== navigationVersion) return;
+        if (requestVersion !== focusVersion) return;
         navigating = false;
         focus?.focus({ preventScroll: true });
       });
@@ -93,13 +89,20 @@
   }
 
   onMount(() => {
-    fetchLatestRelease().then(release => { latest = release; });
+    const releaseRequest = new AbortController();
+    const releaseTimeout = window.setTimeout(() => releaseRequest.abort(), 8000);
+    let mounted = true;
+    fetchLatestRelease(releaseRequest.signal).then(release => {
+      clearTimeout(releaseTimeout);
+      if (mounted) { latest = release; releaseLoading = false; }
+    });
     gsap.registerPlugin(ScrollTrigger);
     const media = gsap.matchMedia();
-    const interruptScroll = () => { navigationTween?.kill(); navigationDestination = null; navigating = false; };
+    const interruptScroll = () => { ++focusVersion; navigationTween?.kill(); navigationDestination = null; navigating = false; };
     window.addEventListener('wheel', interruptScroll, { passive: true });
     window.addEventListener('touchstart', interruptScroll, { passive: true });
     window.addEventListener('keydown', interruptScroll);
+    window.addEventListener('roudamix:takeover', interruptScroll);
     const reveals: Animation[] = [];
     const revealObserver = new IntersectionObserver(entries => {
       for (const entry of entries) {
@@ -126,19 +129,12 @@
       return () => { gsap.ticker.remove(frame); lenis?.destroy(); lenis = undefined; trigger?.kill(); };
     });
     const updatePage = () => {
-      pageProgress = Math.max(0, Math.min(1, window.scrollY / Math.max(1, document.documentElement.scrollHeight - innerHeight)));
       const guide = document.getElementById('guide')!.getBoundingClientRect().top;
       const download = document.getElementById('download')!.getBoundingClientRect().top;
       chapterCovered = guide < innerHeight;
       storyCovered = guide <= 88;
       currentSection = download < innerHeight * 0.5 ? 'download' : guide < innerHeight * 0.5 ? 'guide' : window.scrollY > 60 ? 'story' : 'top';
     };
-    const pointer = (event: PointerEvent) => {
-      cursorX = event.clientX; cursorY = event.clientY;
-      cursorVisible = event.pointerType === 'mouse';
-      cursorActive = !!(event.target as HTMLElement).closest('a,button,summary');
-    };
-    const leave = () => { cursorVisible = false; };
     const hash = () => { if (location.hash) navigateTo(decodeURIComponent(location.hash.slice(1)), false); };
     let resizeTimer = 0;
     let resizeChapter: number | null = null;
@@ -167,18 +163,19 @@
     window.addEventListener('scroll', updatePage, { passive: true });
     window.addEventListener('resize', resize);
     window.addEventListener('orientationchange', rememberOrientation);
-    window.addEventListener('pointermove', pointer, { passive: true });
-    document.documentElement.addEventListener('pointerleave', leave);
     window.addEventListener('hashchange', hash);
     const ready = requestAnimationFrame(() => { ScrollTrigger.refresh(); hash(); updatePage(); });
     return () => {
+      mounted = false; releaseRequest.abort(); clearTimeout(releaseTimeout);
+      ++focusVersion;
+      window.removeEventListener('roudamix:takeover', interruptScroll);
       cancelAnimationFrame(ready); clearTimeout(resizeTimer); media.revert();
       navigationTween?.kill();
       revealObserver.disconnect(); reveals.forEach(animation => animation.cancel());
       disposeStack();
       window.removeEventListener('wheel', interruptScroll); window.removeEventListener('touchstart', interruptScroll); window.removeEventListener('keydown', interruptScroll);
       window.removeEventListener('orientationchange', rememberOrientation);
-      window.removeEventListener('scroll', updatePage); window.removeEventListener('resize', resize); window.removeEventListener('pointermove', pointer); document.documentElement.removeEventListener('pointerleave', leave); window.removeEventListener('hashchange', hash);
+      window.removeEventListener('scroll', updatePage); window.removeEventListener('resize', resize); window.removeEventListener('hashchange', hash);
     };
   });
 </script>
@@ -204,7 +201,7 @@
             <p class="eyebrow"><span class="live-dot"></span>{t.eyebrow}</p>
             <h1>{t.hero[0]}<br /><span>{t.hero[1]}</span></h1>
             <p class="lead">{t.intro}</p>
-            <div class="hero-actions"><a class="button primary" href="#download" onclick={(event) => { event.preventDefault(); navigateTo('download'); }}>{t.cta}<span aria-hidden="true">↗</span></a></div>
+            <div class="hero-actions"><a class="button primary" href="#download" onclick={(event) => { event.preventDefault(); navigateTo('download'); }}>{t.cta}<span aria-hidden="true">↗</span></a><a class="text-link hero-guide" href="#guide" onclick={(event) => { event.preventDefault(); navigateTo('guide'); }}>{locale === 'zh' ? t.skip : t.nav[1]}</a></div>
             <p class="platform mono">WINDOWS x64 <span>/</span> VST3 HOST <span>/</span> YOUR MIX</p>
           {:else}
             <p class="eyebrow"><span class="chapter-number mono">0{sceneState.stage + 1} / 07</span>{t.scenes[sceneState.stage][2]}</p>
@@ -235,7 +232,8 @@
   <section class="download section-wrap stack-surface cover-panel" id="download" tabindex="-1">
     <div class="download-top"><span class="eyebrow">MAKE IT YOUR MIX</span><span class="mono">ROUDAMIX / WINDOWS</span></div>
     <h2>{t.downloadTitle}</h2><p class="lead">{t.downloadBody}</p>
-    <div class="download-actions">{#if latest}<a class="button primary" href={latest.setupUrl}>{t.nav[2]} v{latest.version} ↗</a><a class="text-link" href={latest.portableUrl}>{t.portable} ↗</a>{/if}<a class="text-link" href={publication.repository}>{t.github} ↗</a></div>
+    <div class="download-actions">{#if latest}<a class="button primary" href={latest.setupUrl}>{t.nav[2]} v{latest.version} ↗</a><a class="text-link" href={latest.portableUrl}>{t.portable} ↗</a>{/if}<a class="text-link" href={`${publication.repository}/releases/latest`}>{t.releases} ↗</a><a class="text-link" href={publication.repository}>{t.github} ↗</a></div>
+    <p class="requirements release-status" aria-live="polite">{releaseLoading ? t.releaseLoading : !latest ? t.releaseFailure : ''}</p>
     <p class="requirements">{t.requirements}</p>
   </section>
 
@@ -244,4 +242,3 @@
 </main>
 
 <footer class="section-wrap"><div><a class="brand" href="#top" onclick={(event) => { event.preventDefault(); navigateTo('top'); }}><img src={`${import.meta.env.BASE_URL}brand.png`} alt="" />RoudaMix.</a><p>{t.footer}</p></div><span class="mono">GPL-3.0-only · 2026</span><a href="#top" onclick={(event) => { event.preventDefault(); navigateTo('top'); }}>{t.back} ↑</a></footer>
-<div class="cursor" bind:this={cursorElement} class:active={cursorActive} class:visible={cursorVisible} aria-hidden="true" style={`transform:translate3d(${cursorX}px,${cursorY}px,0); --page-progress:${pageProgress * 360}deg`}><span></span></div>

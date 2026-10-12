@@ -28,7 +28,7 @@
 <svelte:window onkeydown={(e) => e.key === "Escape" && confirm && onAnswer(false)} />
 
 {#if confirm}
-  <dialog bind:this={dlg} class="confirmdlg" use:backdropClose={() => dlg?.close()} onclose={() => onAnswer(false)}>
+  <dialog bind:this={dlg} class="confirmdlg" aria-label={confirm.title} use:backdropClose={() => dlg?.close()} onclose={() => onAnswer(false)}>
     <p class="q">{confirm.title}</p>
     {#if confirm.impact.length > 0}
       <ul class="impact">

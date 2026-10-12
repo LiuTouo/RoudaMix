@@ -121,6 +121,16 @@ test("渲染輸出的提示一律走 data-tooltip，不出現原生 title 屬性
   assert.doesNotMatch(stripBody, /\stitle="/);
 });
 
+test("Monitor Bypass 使用耳機圖示，不與軌道靜音 M 混淆，提示包含真實插件名稱", () => {
+  const body = render(TrackStrip, { props: stripProps(true) }).body;
+  const monitorButton = body.match(/<button[^>]*aria-label="啟用 Synth 的 Monitor Bypass"[^>]*>([\s\S]*?)<\/button>/)?.[1];
+  assert.ok(monitorButton);
+  assert.match(monitorButton, /<svg[^>]*aria-hidden="true"/);
+  assert.doesNotMatch(monitorButton, />M<|^M$/);
+  assert.match(body, /data-tooltip="Synth — 單擊開啟 plugin/);
+  assert.doesNotMatch(body, /\{s\.name\}/);
+});
+
 test("靜態 index.html 同樣不出現原生 title 屬性（<title> 元素除外）", () => {
   const html = readFileSync(new URL("../../index.html", import.meta.url), "utf8");
   assert.match(html, /<title>/);

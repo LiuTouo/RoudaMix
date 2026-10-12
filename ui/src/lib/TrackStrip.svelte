@@ -1273,7 +1273,7 @@
                 tabindex="0"
                 data-tooltip={s.displayName
                   ? `自訂名稱：${s.displayName}\n檔案：${s.pluginPath}`
-                  : "{s.name} — 單擊開啟 plugin 操作介面；按右鍵可開啟操作選單。"}
+                  : `${s.name} — 單擊開啟 plugin 操作介面；按右鍵可開啟操作選單。`}
                 onclick={() => openEditor(s)}
                 onkeydown={(e) => {
                   if (e.key === "Enter" || e.key === " ") {
@@ -1312,8 +1312,15 @@
                     : shownMonitorBypass(s)
                     ? "Monitor Bypass 已啟用：Low-Latency Outputs 略過此 plugin；右鍵選單也可取消。"
                     : "只讓 Low-Latency Outputs 略過此 plugin；Stream 的完整處理不受影響，右鍵選單也可切換。"}
-                  >{isMonitorBypassPending(monitorBypassState, s.instanceId) ? "…" : "M"}</button
                 >
+                  {#if isMonitorBypassPending(monitorBypassState, s.instanceId)}…{:else}
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                      <path d="M3 14v-3a9 9 0 0 1 18 0v3" />
+                      <rect x="3" y="12" width="4" height="9" rx="1" />
+                      <rect x="17" y="12" width="4" height="9" rx="1" />
+                    </svg>
+                  {/if}
+                </button>
               {/if}
               <button
                 class="mini plugicon danger del"

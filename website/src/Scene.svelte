@@ -4,7 +4,7 @@
   import { content, type Locale } from './content';
   import MotionPointer from './MotionPointer.svelte';
   import { heroMotion } from './heroMotion';
-  let { progress, locale, covered = false, overviewPhase }: { progress: number; locale: Locale; covered?: boolean; overviewPhase?: number } = $props();
+  let { progress, locale, covered = false, paused = false, overviewPhase }: { progress: number; locale: Locale; covered?: boolean; paused?: boolean; overviewPhase?: number } = $props();
   const m = $derived(overviewPhase === undefined ? workflowMotion(progress) : heroMotion(overviewPhase));
   const t = $derived(content[locale]);
   const zh = $derived(locale === 'zh');
@@ -21,7 +21,7 @@
   });
 </script>
 
-<div bind:this={root} class="scene animated-workflow" class:is-active={sceneVisible && !covered} class:started={m.stage > 0} data-stage={m.stage}
+<div bind:this={root} class="scene animated-workflow" class:is-active={sceneVisible && !covered && !paused} class:started={m.stage > 0} data-stage={m.stage}
   style={`--signal-offset:${-progress * 1800}px; --launch-scale:${0.82 + m.launch * 0.18}; --launch-rotate:${(1 - m.launch) * -5}deg; --focus:${m.focus}; --monitor-route:${m.monitorRoute}; --stream-route:${m.streamRoute}; --bypass:${m.bypassMix}; --input-reveal:${m.inputReveal}`}>
   <div class="signal-orbit" aria-hidden="true"></div>
   <div class="source-cloud" aria-hidden="true">
@@ -40,18 +40,18 @@
       : m.stage === 1 ? (m.input ? (zh ? '麥克風已進入 Audio 軌' : 'Microphone connected to the Audio track') : (zh ? '選擇裝置，再加入麥克風' : 'Select a device, then add your microphone'))
       : m.stage === 2 ? (m.plugin ? (zh ? '混響已加入效果鏈' : 'Reverb is now in the effect chain') : (zh ? '打開清單，加入已安裝的 VST3' : 'Open the list and add your installed VST3'))
       : m.stage === 3 ? (m.routed ? (zh ? '兩路連線完成' : 'Both destinations connected') : (zh ? '先接監聽，再接串流' : 'Connect the monitor, then the stream'))
-      : m.stage === 4 ? (m.bypass ? (zh ? '青色略過混響，紫色保留效果' : 'Cyan skips reverb. Purple keeps it.') : (zh ? '按 M，改變監聽的處理路徑' : 'Press M to change the monitor path'))
+      : m.stage === 4 ? (m.bypass ? (zh ? '青色略過混響，紫色保留效果' : 'Cyan skips reverb. Purple keeps it.') : (zh ? '按監聽略過，改變監聽路徑' : 'Press Monitor Bypass to change the monitor path'))
       : m.stage === 5 ? (m.obs ? (zh ? '訊號已到達 OBS' : 'Audio is reaching OBS') : (zh ? '將 CABLE Output 設為 OBS 的輸入' : 'Choose CABLE Output as the OBS input'))
       : (m.voice ? (zh ? '同一份串流混音，也能用來聊天' : 'Use the same stream mix for voice chat') : (zh ? '在 Discord 選擇相同輸入裝置' : 'Choose the same input in Discord'))}</span>
   </div>
   <div class="mix-window">
-    <div class="window-bar"><span class="window-brand"><img src={`${import.meta.env.BASE_URL}brand.png`} alt="" /> RoudaMix</span><span class="window-session">Creator session</span><span class="window-dots" aria-hidden="true">— &nbsp; □ &nbsp; ×</span></div>
+    <div class="window-bar"><span class="window-brand"><img src={`${import.meta.env.BASE_URL}brand.png`} alt="" /> RoudaMix</span><span class="window-session">{zh ? '創作場景' : 'Creator Session'}</span><span class="window-dots" aria-hidden="true">— &nbsp; □ &nbsp; ×</span></div>
     <div class="workspace">
       <div class="workspace-sidebar" aria-hidden="true"><span class="sidebar-active">≋</span><span>＋</span><span>·</span><span class="sidebar-bottom">01</span></div>
       <div class="mix-main">
         <div class="workspace-heading"><span>{zh ? '音訊工作區' : 'Audio workspace'}</span><span class="engine-status"><i></i> 48 kHz</span></div>
         <div class="settings-card" class:highlight={m.stage === 1}>
-          <span class="tiny-label">{zh ? '設定 / 音訊 / Session' : 'Settings / Audio / Session'}</span>
+          <span class="tiny-label">{zh ? '設定 / 音訊' : 'Settings / Audio'}</span>
           <span>{m.deviceSelected > 0.5 ? (zh ? '系統音訊 (WASAPI)' : 'System audio (WASAPI)') : (zh ? '選擇音訊裝置' : 'Choose an audio device')} <span class="chevron">⌄</span></span>
           <div class="device-menu demonstration-menu" style={`opacity:${m.deviceMenu};transform:translateY(${(1 - m.deviceMenu) * -12}px) scale(${0.96 + m.deviceMenu * 0.04});visibility:${m.deviceMenu > 0 ? 'visible' : 'hidden'}`} aria-hidden="true">
             <span>ASIO</span><strong class:selected={m.deviceSelected > 0.1}>{zh ? '系統音訊 (WASAPI)' : 'System audio (WASAPI)'}<b>✓</b><MotionPointer phase={m.devicePointer} label={zh ? '選擇裝置' : 'Select device'} /></strong>
@@ -68,7 +68,7 @@
           <span class="empty-plugin" style={`opacity:${1 - m.pluginInsert}`}>＋ {zh ? '加入 VST3 外掛' : 'Add VST3 plugin'}</span>
           <div class="plugin-installed" style={`opacity:${m.pluginInsert};transform:translateY(${(1 - m.pluginInsert) * -32}px) scale(${0.9 + m.pluginInsert * 0.1})`} aria-hidden={!m.plugin}>
             <span class="plugin-power" aria-hidden="true">⏻</span><div><strong>{zh ? '混響' : 'Reverb'}</strong><span class="tiny-label">VST3 / {zh ? '自行安裝的外掛' : 'Separately installed plugin'}</span></div>
-            <span class="bypass-chip" class:enabled={m.bypass}><span class="bypass-switch"><i style={`transform:translateX(${m.bypassMix * 12}px)`}></i></span>M <span>Monitor Bypass {m.bypass ? 'ON' : 'OFF'}</span></span>
+            <span class="bypass-chip" class:enabled={m.bypass}><span class="bypass-switch"><i style={`transform:translateX(${m.bypassMix * 12}px)`}></i></span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 14v-3a9 9 0 0 1 18 0v3M3 13h4v8H3zM17 13h4v8h-4z" /></svg> <span>Monitor Bypass {m.bypass ? 'ON' : 'OFF'}</span></span>
           </div>
           <div class="plugin-picker-illustration demonstration-menu" style={`opacity:${m.pluginMenu};transform:translateY(${(1 - m.pluginMenu) * 20}px) scale(${0.94 + m.pluginMenu * 0.06});visibility:${m.pluginMenu > 0 ? 'visible' : 'hidden'}`} aria-hidden="true">
             <span class="tiny-label">{zh ? '外掛清單 / 已安裝' : 'Plugin list / Installed'}</span><div><strong>{zh ? '混響 / Reverb' : 'Reverb'}</strong><span>VST3</span><b>{zh ? '加入 →' : 'Add →'}</b><MotionPointer phase={m.pluginPointer} label={zh ? '加入外掛' : 'Add plugin'} /></div>
@@ -99,7 +99,7 @@
             <MotionPointer phase={m.streamPointer} label={zh ? '連到串流' : 'Connect stream'} />
           </div>
         </div>
-        <div class="window-footer"><span><i></i> {m.routed ? '2 routes connected' : 'Creator session'}</span><span>VST3 HOST</span></div>
+        <div class="window-footer"><span><i></i> {m.routed ? (zh ? '已連接兩路輸出' : '2 routes connected') : (zh ? '創作場景' : 'Creator Session')}</span><span>VST3 HOST</span></div>
       </div>
     </div>
   </div>
