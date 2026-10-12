@@ -1,7 +1,7 @@
 {
   "name": "roudamix",
   "private": true,
-  "version": "0.1.36",
+  "version": "0.1.37",
   "scripts": {
     "tauri": "tauri",
     "build:engine": "cmake --build engine/build --config Release",
