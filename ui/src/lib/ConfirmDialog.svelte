@@ -23,12 +23,16 @@
       dlg.close();
     }
   });
+  function answer(yes: boolean) {
+    dlg?.close();
+    onAnswer(yes);
+  }
 </script>
 
-<svelte:window onkeydown={(e) => e.key === "Escape" && confirm && onAnswer(false)} />
-
 {#if confirm}
-  <dialog bind:this={dlg} class="confirmdlg" aria-label={confirm.title} use:backdropClose={() => dlg?.close()} onclose={() => onAnswer(false)}>
+  <dialog bind:this={dlg} class="confirmdlg" aria-label={confirm.title} use:backdropClose={() => answer(false)}
+    oncancel={(event) => { event.preventDefault(); answer(false); }}
+    onclose={(event) => { if (event.currentTarget === dlg && !event.currentTarget.open) onAnswer(false); }}>
     <p class="q">{confirm.title}</p>
     {#if confirm.impact.length > 0}
       <ul class="impact">
@@ -39,8 +43,8 @@
     {/if}
     <div class="row">
       <span style="flex:1"></span>
-      <button onclick={() => onAnswer(false)}>取消</button>
-      <button class="danger" onclick={() => onAnswer(true)}>{confirm.confirmLabel}</button>
+      <button onclick={() => answer(false)}>取消</button>
+      <button class="danger" onclick={() => answer(true)}>{confirm.confirmLabel}</button>
     </div>
   </dialog>
 {/if}

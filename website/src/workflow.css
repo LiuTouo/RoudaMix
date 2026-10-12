@@ -53,10 +53,6 @@
 .animated-workflow .empty-plugin { display:flex;align-items:center;min-height:36px; }
 .plugin-installed { position:absolute;inset:10px;display:flex;align-items:center;gap:9px;transform-origin:center; }
 .animated-workflow .plugin-picker-illustration { left:0;right:0;bottom:calc(100% - 10px);width:auto; }
-.bypass-switch { display:inline-block;width:26px;height:14px;border-radius:10px;background:#171e29;border:1px solid #6d6c82;position:relative;flex-shrink:0; }
-.bypass-switch i { position:absolute;left:2px;top:2px;width:8px;height:8px;background:var(--muted);border-radius:50%; }
-.enabled .bypass-switch { border-color:var(--cyan);background:#24534a; }
-.enabled .bypass-switch i { background:var(--cyan); }
 
 .demo-pointer { position:absolute;right:20px;top:55%;z-index:25;pointer-events:none;display:block;width:23px;height:28px;transform-origin:2px 2px; }
 .demo-pointer svg { width:23px;height:28px;fill:#e1dbff;stroke:#14111e;stroke-width:1.5;filter:drop-shadow(0 2px 3px #0009); }
@@ -90,7 +86,6 @@
   .animated-workflow .plugin-slot { min-height:48px; }
   .animated-workflow .plugin-installed { inset:7px;gap:6px; }
   .animated-workflow .bypass-chip { gap:4px;padding:4px; }
-  .animated-workflow .bypass-switch { display:none; }
   .animated-workflow .empty-plugin { min-height:30px; }
   .animated-workflow .routing { height:30px; }
   .animated-workflow .routing.explaining-bypass { height:60px; }

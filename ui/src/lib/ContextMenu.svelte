@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { PluginMenuItem } from "./pluginMenu";
   // P2-M:右鍵選單(移到最前/最後/上移/下移)。原生 contextmenu 不全域攔 —— 只在
   // 有選單項的元素上開;空白處/錯誤文字的右鍵照常(可複製)。
   // 進場動畫用純 CSS @keyframes(.ctx 樣式),不用 Svelte transition —— 後者走 WAAPI,
@@ -11,7 +12,7 @@
       x: number;
       y: number;
       label: string;
-      items: Array<{ label: string; disabled?: boolean; run: () => void }>;
+      items: PluginMenuItem[];
     } | null;
     onClose: () => void;
   } = $props();
@@ -19,11 +20,19 @@
   let dlg = $state<HTMLDialogElement | null>(null);
   $effect(() => {
     const dialog = dlg;
-    if (!menu || !dialog) return;
+    const request = menu;
+    if (!request || !dialog) return;
     const opener = document.activeElement;
     if (!dialog.open) dialog.showModal();
+    const place = () => {
+      dialog.style.left = `${Math.max(4, Math.min(request.x, window.innerWidth - dialog.offsetWidth - 4))}px`;
+      dialog.style.top = `${Math.max(4, Math.min(request.y, window.innerHeight - dialog.offsetHeight - 4))}px`;
+    };
+    place();
+    window.addEventListener("resize", place);
     dialog.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
     return () => {
+      window.removeEventListener("resize", place);
       const restore = dialog.contains(document.activeElement) || document.activeElement === document.body;
       dialog.close();
       if (restore && opener instanceof HTMLElement && opener.isConnected) opener.focus();
@@ -49,6 +58,7 @@
   }
 
   function fire(item: { run: () => void }) {
+    dlg?.close(); // 先還原焦點，避免下一個 dialog 記住即將移除的選單項。
     onClose();
     item.run();
   }
@@ -60,9 +70,7 @@
     class="ctxdlg"
     aria-label={menu.label}
     tabindex="-1"
-    style:left={Math.min(menu.x, window.innerWidth - 170) + "px"}
-    style:top={Math.min(menu.y, window.innerHeight - 40 - (menu.items.length + 1) * 30) + "px"}
-    onclose={onClose}
+    onclose={(event) => { if (event.currentTarget === dlg && !event.currentTarget.open) onClose(); }}
     oncancel={(event) => { event.preventDefault(); onClose(); }}
     onmousedown={(e) => e.target === dlg && onClose()}
   >
@@ -73,11 +81,12 @@
       {#each menu.items as item, i (i)}
         <button
           class="ctxitem"
-          role="menuitem"
+          role={item.checked === undefined ? "menuitem" : "menuitemcheckbox"}
+          aria-checked={item.checked}
           tabindex="-1"
           disabled={item.disabled}
           onclick={() => fire(item)}
-          >{item.label}</button
+          ><span class="menu-check" aria-hidden="true">{item.checked ? "✓" : ""}</span>{item.label}</button
         >
       {/each}
     </div>
@@ -90,12 +99,12 @@
     border: none;
     padding: 0;
     margin: 0;
-    overflow: visible;
+    overflow: auto;
     position: fixed;
     transform: none;
     inset: auto;
-    max-width: none;
-    max-height: none;
+    max-width: calc(100vw - 8px);
+    max-height: calc(100vh - 8px);
   }
   .ctxdlg[open] {
     display: block;
@@ -126,7 +135,11 @@
       translate: 0 4px;
     }
   }
+  .menu-check { width: 14px; flex: none; }
   .ctxitem {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     background: none;
     border: none;
     text-align: left;

@@ -29,8 +29,6 @@
 .latency-row:first-child { border-top: 0; }
 .latency-header { color: var(--dim, #9aa3af); font-size: 12px; }
 .latency-path { display: block; color: var(--text-dim); }
-.monitor-bypass.on { color: #75d7ff; border-color: #3b94b8; }
-.monitor-bypass.pending { color: var(--warn); border-color: var(--warn); }
 @font-face {
   font-family: "IBM Plex Sans TC";
   src: url("/fonts/IBMPlexSansTC-SemiBold.ttf") format("truetype");

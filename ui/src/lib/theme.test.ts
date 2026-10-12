@@ -15,3 +15,19 @@ test("D uses neutral surfaces and separates toggled, dangerous and warning state
   assert.match(danger, /color: var\(--err\)/);
   assert.match(css, /\.plug\.placeholder \{ border-left-color: var\(--warn\); \}/);
 });
+
+test("console racks size to plugin content instead of filling the column", () => {
+  const consoleCss = readFileSync(new URL("../console.css", import.meta.url), "utf8");
+  const rack = consoleCss.match(/& \.vst \{([^}]+)\}/)![1];
+  assert.match(rack, /flex: 0 1 auto;/);
+  assert.match(rack, /height: auto;/);
+  assert.match(rack, /min-height: 72px;/);
+});
+
+test("console plugin rows reserve only the bypass control, and add a badge column only when MB is enabled", () => {
+  const consoleCss = readFileSync(new URL("../console.css", import.meta.url), "utf8");
+  const row = consoleCss.match(/& \.plug \{([^}]+)\}/)![1];
+  assert.match(row, /grid-template-columns: 24px minmax\(0, 1fr\);/);
+  assert.match(consoleCss, /\.plug:not\(\.placeholder\):has\(\.monitor-badge\) \{ grid-template-columns: 24px minmax\(0, 1fr\) auto;/);
+  assert.doesNotMatch(consoleCss, /counter-(?:increment|reset): insert|counter\(insert|\.plug::before/);
+});

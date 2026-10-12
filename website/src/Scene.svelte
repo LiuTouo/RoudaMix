@@ -40,7 +40,7 @@
       : m.stage === 1 ? (m.input ? (zh ? '麥克風已進入 Audio 軌' : 'Microphone connected to the Audio track') : (zh ? '選擇裝置，再加入麥克風' : 'Select a device, then add your microphone'))
       : m.stage === 2 ? (m.plugin ? (zh ? '混響已加入效果鏈' : 'Reverb is now in the effect chain') : (zh ? '打開清單，加入已安裝的 VST3' : 'Open the list and add your installed VST3'))
       : m.stage === 3 ? (m.routed ? (zh ? '兩路連線完成' : 'Both destinations connected') : (zh ? '先接監聽，再接串流' : 'Connect the monitor, then the stream'))
-      : m.stage === 4 ? (m.bypass ? (zh ? '青色略過混響，紫色保留效果' : 'Cyan skips reverb. Purple keeps it.') : (zh ? '按監聽略過，改變監聽路徑' : 'Press Monitor Bypass to change the monitor path'))
+      : m.stage === 4 ? (m.bypass ? (zh ? '青色略過混響，紫色保留效果' : 'Cyan skips reverb. Purple keeps it.') : (zh ? '右鍵選單啟用監聽略過' : 'Enable Monitor Bypass from the right-click menu'))
       : m.stage === 5 ? (m.obs ? (zh ? '訊號已到達 OBS' : 'Audio is reaching OBS') : (zh ? '將 CABLE Output 設為 OBS 的輸入' : 'Choose CABLE Output as the OBS input'))
       : (m.voice ? (zh ? '同一份串流混音，也能用來聊天' : 'Use the same stream mix for voice chat') : (zh ? '在 Discord 選擇相同輸入裝置' : 'Choose the same input in Discord'))}</span>
   </div>
@@ -68,12 +68,12 @@
           <span class="empty-plugin" style={`opacity:${1 - m.pluginInsert}`}>＋ {zh ? '加入 VST3 外掛' : 'Add VST3 plugin'}</span>
           <div class="plugin-installed" style={`opacity:${m.pluginInsert};transform:translateY(${(1 - m.pluginInsert) * -32}px) scale(${0.9 + m.pluginInsert * 0.1})`} aria-hidden={!m.plugin}>
             <span class="plugin-power" aria-hidden="true">⏻</span><div><strong>{zh ? '混響' : 'Reverb'}</strong><span class="tiny-label">VST3 / {zh ? '自行安裝的外掛' : 'Separately installed plugin'}</span></div>
-            <span class="bypass-chip" class:enabled={m.bypass}><span class="bypass-switch"><i style={`transform:translateX(${m.bypassMix * 12}px)`}></i></span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 14v-3a9 9 0 0 1 18 0v3M3 13h4v8H3zM17 13h4v8h-4z" /></svg> <span>Monitor Bypass {m.bypass ? 'ON' : 'OFF'}</span></span>
+            {#if m.bypass}<span class="bypass-chip enabled" role="img" aria-label={zh ? '監聽略過（Monitor Bypass）已啟用' : 'Monitor Bypass enabled'}>MB</span>{/if}
           </div>
           <div class="plugin-picker-illustration demonstration-menu" style={`opacity:${m.pluginMenu};transform:translateY(${(1 - m.pluginMenu) * 20}px) scale(${0.94 + m.pluginMenu * 0.06});visibility:${m.pluginMenu > 0 ? 'visible' : 'hidden'}`} aria-hidden="true">
             <span class="tiny-label">{zh ? '外掛清單 / 已安裝' : 'Plugin list / Installed'}</span><div><strong>{zh ? '混響 / Reverb' : 'Reverb'}</strong><span>VST3</span><b>{zh ? '加入 →' : 'Add →'}</b><MotionPointer phase={m.pluginPointer} label={zh ? '加入外掛' : 'Add plugin'} /></div>
           </div>
-          <MotionPointer phase={m.bypassPointer} label={zh ? '啟用 Monitor Bypass' : 'Enable Monitor Bypass'} />
+          <MotionPointer phase={m.bypassPointer} label={zh ? '右鍵 → 監聽略過' : 'Right-click → Monitor Bypass'} />
         </div>
         <div class="routing" class:connected={m.monitorRoute > 0} class:explaining-bypass={m.stage >= 4} aria-hidden="true">
           <svg viewBox="0 0 500 110" preserveAspectRatio="none">

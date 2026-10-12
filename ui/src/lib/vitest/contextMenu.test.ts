@@ -112,3 +112,70 @@ it("刪除確認視窗有可辨識名稱，保留影響清單及取消入口", (
   dialog.querySelector("button")!.click();
   expect(answer).toHaveBeenCalledWith(false);
 });
+
+it.each([false, true])("確認視窗回答 %s 前先關閉原生 dialog，保留焦點還原", (yes) => {
+  const answer = vi.fn();
+  component = mount(ConfirmDialog, { target: document.body, props: {
+    confirm: { title: "移除混響？", impact: [], confirmLabel: "移除" }, onAnswer: answer,
+  } });
+  flushSync();
+  const dialog = document.querySelector("dialog")!;
+  dialog.querySelector<HTMLButtonElement>(yes ? "button.danger" : "button:not(.danger)")!.click();
+  expect(dialog.open).toBe(false);
+  expect(answer).toHaveBeenCalledExactlyOnceWith(yes);
+});
+
+it("原生 Escape cancel 路徑只回覆取消並先關閉確認視窗", () => {
+  const answer = vi.fn();
+  component = mount(ConfirmDialog, { target: document.body, props: {
+    confirm: { title: "移除混響？", impact: [], confirmLabel: "移除" }, onAnswer: answer,
+  } });
+  flushSync();
+  const dialog = document.querySelector("dialog")!;
+  const event = new Event("cancel", { cancelable: true });
+  dialog.dispatchEvent(event);
+  expect(event.defaultPrevented).toBe(true);
+  expect(dialog.open).toBe(false);
+  expect(answer).toHaveBeenCalledExactlyOnceWith(false);
+});
+
+it("先關閉原生選單，再執行動作，讓確認視窗保留正確的焦點來源", () => {
+  let openDuringRun: boolean | undefined;
+  component = mount(ContextMenu, { target: document.body, props: {
+    menu: { x: 10, y: 10, label: "插件操作", items: [
+      { label: "移除插件…", run: () => { openDuringRun = document.querySelector("dialog")!.open; } },
+    ] }, onClose: () => {},
+  } });
+  flushSync();
+  document.querySelector<HTMLButtonElement>('[role="menuitem"]')!.click();
+  expect(openDuringRun).toBe(false);
+});
+
+it.each([false, true])("勾選式選單呈現 checked=%s，啟動時仍先關閉再執行", (checked) => {
+  const calls: string[] = [];
+  component = mount(ContextMenu, { target: document.body, props: {
+    menu: { x: 10, y: 10, label: "插件操作", items: [
+      { label: "監聽略過", checked, run: () => calls.push("run") },
+    ] }, onClose: () => calls.push("close"),
+  } });
+  flushSync();
+  const item = document.querySelector<HTMLButtonElement>('[role="menuitemcheckbox"]')!;
+  expect(item.getAttribute("aria-checked")).toBe(String(checked));
+  expect(item.querySelector('[aria-hidden="true"]')?.textContent).toBe(checked ? "✓" : "");
+  item.click();
+  expect(calls).toEqual(["close", "run"]);
+});
+
+it("選單依實際尺寸留在視窗內，不以固定寬高猜測長標籤的位置", () => {
+  vi.spyOn(HTMLDialogElement.prototype, "offsetWidth", "get").mockReturnValue(280);
+  vi.spyOn(HTMLDialogElement.prototype, "offsetHeight", "get").mockReturnValue(340);
+  component = mount(ContextMenu, { target: document.body, props: {
+    menu: { x: 2000, y: 2000, label: "插件操作", items: [
+      { label: "監聽略過（Monitor Bypass）", checked: false, run: () => {} },
+    ] }, onClose: () => {},
+  } });
+  flushSync();
+  const dialog = document.querySelector("dialog")!;
+  expect(dialog.style.left).toBe(`${innerWidth - 284}px`);
+  expect(dialog.style.top).toBe(`${innerHeight - 344}px`);
+});

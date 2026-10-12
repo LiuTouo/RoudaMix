@@ -15,6 +15,7 @@
   import { resetPluginTransfer } from "./lib/pluginTransfer";
   import LatencyDrawer from "./lib/LatencyDrawer.svelte";
   import ContextMenu from "./lib/ContextMenu.svelte";
+  import type { PluginMenuItem } from "./lib/pluginMenu";
   import { backdropClose } from "./lib/backdropClose";
   import { mountDragGhost, removeDragGhost, settleDragGhost } from "./lib/ghost";
   import {
@@ -344,13 +345,13 @@
     x: number;
     y: number;
     label: string;
-    items: Array<{ label: string; disabled?: boolean; run: () => void }>;
+    items: PluginMenuItem[];
   } | null>(null);
   function openMenu(
     x: number,
     y: number,
     label: string,
-    items: Array<{ label: string; disabled?: boolean; run: () => void }>,
+    items: PluginMenuItem[],
   ): void {
     menu = { x, y, label, items };
   }

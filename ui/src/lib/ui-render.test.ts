@@ -40,9 +40,9 @@ const track: Track = {
   latencyPolicy: "fullPdc",
 };
 
-const stripProps = (latencyEnabled: boolean) => ({
-  track,
-  tracks: [track],
+const stripProps = (latencyEnabled: boolean, plugins = track.plugins) => ({
+  track: { ...track, plugins },
+  tracks: [{ ...track, plugins }],
   devices: [],
   selectedDeviceKey: "",
   meterView: {},
@@ -72,12 +72,13 @@ test("膠囊通知層獨立於頂欄之外，警示不再擠在頂欄", () => {
   assert.doesNotMatch(body.slice(0, headerEnd), /class="notice/);
 });
 
-test("TrackStrip 依 capability 顯示 Monitor Bypass 與 Output Latency Policy", () => {
-  const disabled = render(TrackStrip, { props: stripProps(false) }).body;
-  const enabled = render(TrackStrip, { props: stripProps(true) }).body;
+test("TrackStrip 依 capability 顯示 Monitor Bypass 狀態與 Output Latency Policy", () => {
+  const plugins = [{ ...slot, monitorBypassed: true }];
+  const disabled = render(TrackStrip, { props: stripProps(false, plugins) }).body;
+  const enabled = render(TrackStrip, { props: stripProps(true, plugins) }).body;
 
-  assert.doesNotMatch(disabled, /aria-label="啟用 Synth 的 Monitor Bypass"/);
-  assert.match(enabled, /aria-label="啟用 Synth 的 Monitor Bypass"/);
+  assert.doesNotMatch(disabled, /class="monitor-badge/);
+  assert.match(enabled, /class="monitor-badge/);
   assert.match(enabled, /aria-label="輸出軌 Stream 低延遲"/);
   assert.doesNotMatch(enabled, /<option value="fullPdc">/);
 });
@@ -121,14 +122,16 @@ test("渲染輸出的提示一律走 data-tooltip，不出現原生 title 屬性
   assert.doesNotMatch(stripBody, /\stitle="/);
 });
 
-test("Monitor Bypass 使用耳機圖示，不與軌道靜音 M 混淆，提示包含真實插件名稱", () => {
-  const body = render(TrackStrip, { props: stripProps(true) }).body;
-  const monitorButton = body.match(/<button[^>]*aria-label="啟用 Synth 的 Monitor Bypass"[^>]*>([\s\S]*?)<\/button>/)?.[1];
-  assert.ok(monitorButton);
-  assert.match(monitorButton, /<svg[^>]*aria-hidden="true"/);
-  assert.doesNotMatch(monitorButton, />M<|^M$/);
-  assert.match(body, /data-tooltip="Synth — 單擊開啟 plugin/);
-  assert.doesNotMatch(body, /\{s\.name\}/);
+test("插件列只在 Monitor Bypass 已啟用時顯示非按鈕 MB 標記，不再常駐移除或 MB 按鈕", () => {
+  const off = render(TrackStrip, { props: stripProps(true) }).body;
+  const on = render(TrackStrip, { props: stripProps(true, [{ ...slot, monitorBypassed: true }]) }).body;
+  assert.doesNotMatch(off, /class="monitor-badge/);
+  assert.match(on, /<span[^>]*class="monitor-badge[^>]*role="img"[^>]*aria-label="監聽略過（Monitor Bypass）已啟用"[^>]*>MB<\/span>/);
+  for (const body of [off, on]) {
+    assert.doesNotMatch(body, /<button[^>]*(?:monitor-bypass|移除 plugin)/);
+    assert.match(body, /data-tooltip="Synth — 單擊開啟 plugin/);
+    assert.doesNotMatch(body, /\{s\.name\}/);
+  }
 });
 
 test("靜態 index.html 同樣不出現原生 title 屬性（<title> 元素除外）", () => {

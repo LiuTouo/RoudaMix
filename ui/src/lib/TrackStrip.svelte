@@ -11,7 +11,7 @@
   import { MutationQueue, mutKey } from "./mutations";
   import { reorderLane } from "./laneOrder";
   import { dragShift as laneShift, dropPosFromY } from "./laneView";
-  import { pluginMenuItems } from "./pluginMenu";
+  import { pluginMenuItems, type PluginMenuItem } from "./pluginMenu";
   import { pluginTransfer, PLUGIN_DRAG_TYPE, beginPluginDrag, endPluginDrag,
     copyPlugin, pastePlugin, duplicatePlugin } from "./pluginTransfer";
   import {
@@ -90,7 +90,7 @@
     scanReady?: boolean;
     onCancelScan: () => void;
     /** P2-M:請求右鍵選單(App 持有全域 ContextMenu;{x,y} + items) */
-    openMenu: (x: number, y: number, label: string, items: Array<{ label: string; disabled?: boolean; run: () => void }>) => void;
+    openMenu: (x: number, y: number, label: string, items: PluginMenuItem[]) => void;
     dragShift?: number;
     dragActive?: boolean;
     dragging?: boolean;
@@ -139,6 +139,7 @@
     monitorBypassValue(monitorBypassState, slot.instanceId, slot.monitorBypassed ?? false);
   const shownLatencyPolicy = () =>
     latencyPolicyValue(latencyPolicyState, track.latencyPolicy ?? "fullPdc");
+  const monitorBypassBusy = $derived(track.plugins.some((slot) => isMonitorBypassPending(monitorBypassState, slot.instanceId)));
 
   // ASIO pair 選項:基底偶數 ch,顯示「1/2 名稱」
   function pairOptions(names: string[], dir: "in" | "out") {
@@ -728,7 +729,7 @@
       return;
     }
     if (e.key !== "ContextMenu" && !(e.shiftKey && e.key === "F10")) return;
-    if (e.target !== e.currentTarget) return;
+    if (e.target instanceof HTMLInputElement) return;
     if (slot) {
       e.preventDefault(); e.stopPropagation();
       const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -762,7 +763,7 @@
   }
 
   // VST box 高度:預設自適應內容,拖底部把手拉長;雙擊把手還原自適應。
-  // 拉過的高度存 localStorage(key 綁 trackId;session 還原同序 → id 穩定),重開保持
+  // 手動高度存 localStorage;CSS 限制可見高度,不因視窗暫時縮小而覆寫偏好。
   let vstBox = $state<HTMLDivElement | null>(null);
   // trackId 在此元件生命週期不變(App 以 trackId 為 key each),取初始值即可
   // svelte-ignore state_referenced_locally
@@ -791,20 +792,6 @@
     const gap = parseFloat(getComputedStyle(col).rowGap) || 0;
     return col.clientHeight - others - gap * (n - 1);
   }
-
-  // 舊 session 可能存過超過上限的高度:掛載量測後夾回,避免蓋住底部 colorbar。
-  $effect(() => {
-    const box = vstBox;
-    const col = box?.parentElement;
-    if (!box || !col || boxH === null) return;
-    const max = maxBoxH(col, box);
-    if (boxH > max) {
-      boxH = max;
-      try {
-        if (persistRackHeight) localStorage.setItem(hKey, String(max));
-      } catch {}
-    }
-  });
 
   function onGripDown(e: PointerEvent) {
     const box = vstBox;
@@ -908,6 +895,7 @@
     );
   }
   function plugMenu(e: { clientX: number; clientY: number }, slot: RackSlot) {
+    const currentSlot = () => track.plugins.find((s) => s.instanceId === slot.instanceId) ?? slot;
     const i = track.plugins.findIndex((s) => s.instanceId === slot.instanceId);
     openMenu(
       e.clientX,
@@ -918,7 +906,8 @@
         index: i,
         chainLength: track.plugins.length,
         latencyEnabled,
-        monitorBypassShown: shownMonitorBypass(slot),
+        get monitorBypassShown() { return shownMonitorBypass(currentSlot()); },
+        get monitorBypassPending() { return isMonitorBypassPending(monitorBypassState, slot.instanceId); },
         rename: { run: () => startRename(slot) },
         copy: pluginCopyEnabled ? { disabled: $pluginTransfer.busy,
           run: () => void runPluginTransfer(() => copyPlugin(slot.instanceId)) } : undefined,
@@ -927,7 +916,8 @@
         run: {
           editor: () => void openEditor(slot),
           move: (to) => plugMove(slot, to),
-          monitorBypass: () => monitorBypass(slot),
+          monitorBypass: () => monitorBypass(currentSlot()),
+          remove: () => removePlugin(slot.instanceId),
         },
       }),
     );
@@ -1169,7 +1159,7 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="vsthead" oncontextmenu={rackMenu}>
     <span>VST ({track.plugins.length})</span>
-    {#if $pluginTransfer.busy}<span class="dim" role="status">處理中…</span>{/if}
+    {#if $pluginTransfer.busy || monitorBypassBusy}<span class="dim" role="status">處理中…</span>{/if}
   </div>
   {#snippet renameBox()}
     <!-- 插件自訂名稱行內編輯(Enter 套用、Esc 取消;空白 = 恢復原名) -->
@@ -1192,10 +1182,10 @@
 
   <!-- 機架是可聚焦的右鍵選單入口，保留 group 語意及內部控制項。 -->
   <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
-  <div class="vst" bind:this={vstBox} style={boxH !== null ? `flex:0 0 auto; height:${boxH}px` : ""}
+  <div class="vst" bind:this={vstBox} style={boxH !== null ? `height:${boxH}px` : ""}
     role="group" aria-label={`${track.name} 的 VST 機架`}
     tabindex={pluginCopyEnabled ? 0 : undefined}
-    aria-busy={$pluginTransfer.busy}
+    aria-busy={$pluginTransfer.busy || monitorBypassBusy}
     class:emptydrop={plugDropAt === 0 && track.plugins.length === 0}
     oncontextmenu={rackMenu} onkeydown={(e) => pluginMenuKey(e)}
     ondragover={onPlugDragOver} ondragleave={onPlugDragLeave} ondrop={onPlugDrop}>
@@ -1256,12 +1246,6 @@
                 data-tooltip="指定替代的 plugin 檔案，並嘗試恢復此插槽。"
                 >定位</button
               >
-              <button
-                class="mini plugicon danger del"
-                onclick={() => removePlugin(s.instanceId)}
-                aria-label="移除 plugin {s.name}(會先確認)"
-                data-tooltip="從效果鏈移除此 plugin；執行前會要求確認。">×</button
-              >
             </div>
           {:else}
             {#if renamingId === s.instanceId}
@@ -1296,39 +1280,13 @@
               >
                 <img class="picon" src={s.bypassed ? powerOff : powerOn} alt="" draggable="false" />
               </button>
-              {#if latencyEnabled}
-                <button
-                  class="mini plugicon monitor-bypass"
-                  class:on={shownMonitorBypass(s)}
-                  class:pending={isMonitorBypassPending(monitorBypassState, s.instanceId)}
-                  disabled={isMonitorBypassPending(monitorBypassState, s.instanceId)}
-                  onclick={() => void monitorBypass(s)}
-                  aria-pressed={shownMonitorBypass(s)}
-                  aria-label={shownMonitorBypass(s)
-                    ? `取消 ${s.name} 的 Monitor Bypass`
-                    : `啟用 ${s.name} 的 Monitor Bypass`}
-                  data-tooltip={isMonitorBypassPending(monitorBypassState, s.instanceId)
-                    ? "正在建立或同步 Monitor Shadow；engine 確認前不改變目前狀態。"
-                    : shownMonitorBypass(s)
-                    ? "Monitor Bypass 已啟用：Low-Latency Outputs 略過此 plugin；右鍵選單也可取消。"
-                    : "只讓 Low-Latency Outputs 略過此 plugin；Stream 的完整處理不受影響，右鍵選單也可切換。"}
-                >
-                  {#if isMonitorBypassPending(monitorBypassState, s.instanceId)}…{:else}
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                      <path d="M3 14v-3a9 9 0 0 1 18 0v3" />
-                      <rect x="3" y="12" width="4" height="9" rx="1" />
-                      <rect x="17" y="12" width="4" height="9" rx="1" />
-                    </svg>
-                  {/if}
-                </button>
-              {/if}
-              <button
-                class="mini plugicon danger del"
-                onclick={() => removePlugin(s.instanceId)}
-                aria-label="移除 plugin {s.name}(會先確認)"
-                data-tooltip="從效果鏈移除此 plugin；執行前會要求確認。">×</button
-              >
             </div>
+          {/if}
+          {#if latencyEnabled && shownMonitorBypass(s)}
+            <span class="monitor-badge" role="img" aria-label="監聽略過（Monitor Bypass）已啟用"
+              data-tooltip={isMonitorBypassPending(monitorBypassState, s.instanceId)
+                ? "監聽略過已啟用；正在同步變更，確認前保留目前狀態。"
+                : "監聽略過（Monitor Bypass）已啟用：低延遲輸出略過此插件；Full PDC 輸出仍正常處理。右鍵選單可取消。"}>MB</span>
           {/if}
         </div>
       {:else}
@@ -1351,7 +1309,7 @@
   <button
     type="button"
     class="vstgrip"
-    aria-label="調整插件清單高度(拖曳;雙擊或 Enter 還原)"
+    aria-label="調整插件清單高度(拖曳固定;雙擊或 Enter 恢復自動)"
     onpointerdown={(e) => {
       // button 的 pointerdown 預設行為(焦點/後續 click)不影響拖曳
       onGripDown(e);
@@ -1360,7 +1318,9 @@
     onkeydown={(e) => {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onGripDbl(); }
     }}
-    data-tooltip="拖曳調整 plugin 區域高度；雙擊或按 Enter 還原預設高度。"
+    data-tooltip={boxH === null
+      ? "目前自動依插件內容調整高度；拖曳可固定高度。"
+      : "目前使用手動高度（會記住）；雙擊或按 Enter 恢復自動高度。"}
   ></button>
   </div>
 

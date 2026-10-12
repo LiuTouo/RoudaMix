@@ -47,7 +47,7 @@
     {#if details}
       <section id="console-study-details" class="study-details" aria-label="控制台設計規格與模擬狀態">
         <p>C 已套用正式介面：軌名只留底部識別色帶，上方保留來源、路由、側鏈、低延遲與 M/B。</p>
-        <p>此處直接使用正式 App 與 console.css，維持左側推桿／音頻錶、右側全高 VST 機架；只有資料及測試工具列不同。</p>
+        <p>此處直接使用正式 App 與 console.css，維持左側推桿／音頻錶、右側自適應高度 VST 機架；只有資料及測試工具列不同。</p>
         <p>檔案、VST 編輯器、硬體與系統操作維持隔離。</p>
         <pre>{JSON.stringify({ channels, ...previewState }, null, 2)}</pre>
       </section>

@@ -68,33 +68,30 @@ body { background: var(--flat-0); }
   & .lower { display: flex; flex-direction: row; gap: 8px; min-height: 327px; }
   & .vstcol { order: 2; flex: 1; min-height: 0; gap: 0; }
   & .vsthead { height: 18px; padding: 2px 0; background: transparent; border: 0; color: var(--text-dim); font: 11px var(--mono); letter-spacing: .04em; }
-  & .vst { height: auto; min-height: 72px; max-height: 100%; flex: 1 1 0; border: 0; background: transparent; }
-  & .vstlist { padding: 0; gap: 0; background: transparent; counter-reset: insert; }
-  & .plug { display: grid; grid-template-columns: 14px 24px minmax(0, 1fr) 24px 24px; align-items: center; gap: 2px; min-height: 28px; flex: none; padding: 1px 0; border: 0; background: transparent; counter-increment: insert; }
-  & .plug::before { content: counter(insert, decimal-leading-zero); grid-column: 1; grid-row: 1; color: var(--text-dim); font: 10px var(--mono); }
-  /* 拖曳幽靈(clone)不在 .vstlist 計數器鏈上,序號會永遠顯示 01 —— 直接不畫 */
-  & .drag-ghost::before { content: none; }
-  & .plug:not(.placeholder) > .plugname { grid-column: 3; grid-row: 1; font-size: 12px; padding: 0; line-height: 24px; }
+  & .vst { height: auto; min-height: 72px; max-height: 100%; flex: 0 1 auto; border: 0; background: transparent; }
+  & .vstlist { padding: 0; gap: 0; background: transparent; }
+  & .plug { display: grid; grid-template-columns: 24px minmax(0, 1fr); align-items: center; gap: 2px; min-height: 28px; flex: none; padding: 1px 0; border: 0; background: transparent; }
+  & .plug:not(.placeholder):has(.monitor-badge) { grid-template-columns: 24px minmax(0, 1fr) auto; }
+  & .plug:not(.placeholder) > .plugname { grid-column: 2; grid-row: 1; font-size: 12px; padding: 0; line-height: 24px; }
   /* 改名輸入框:非 placeholder 直接是 grid child(佔名稱格);placeholder 時深埋 .plugtitle 內,grid 語不生效 */
-  & .plugrename { grid-column: 3; grid-row: 1; width: 100%; min-width: 0; background: var(--flat-2); color: var(--text); text-align: left; border: 0; border-bottom: 1px solid var(--accent); font-size: 11px; }
+  & .plugrename { grid-column: 2; grid-row: 1; width: 100%; min-width: 0; background: var(--flat-2); color: var(--text); text-align: left; border: 0; border-bottom: 1px solid var(--accent); font-size: 11px; }
   & .plug:not(.placeholder) .plugactions { display: contents; }
-  & .plug .power { grid-column: 2; grid-row: 1; }
-  & .plug .monitor-bypass { grid-column: 4; grid-row: 1; color: var(--text-dim); font: 10px var(--mono); }
-  & .plug:not(.placeholder) .del { grid-column: 5; grid-row: 1; color: var(--text-dim); }
+  & .plug .power { grid-column: 1; grid-row: 1; }
+  & .monitor-badge { grid-column: 3; grid-row: 1; color: var(--warn); font: 10px var(--mono); }
   & .plug .power .picon { display: none; }
   & .plug .power::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
   & .plug .power.off { opacity: 1; }
   & .plug .power.off::before { background: var(--warn); }
   & .plug:has(.power.off) .plugname { color: var(--text-dim); }
-  & .plug:has(.power.off)::before { color: var(--warn); }
   & .plug:hover { background: var(--flat-2); }
   & .plug:focus-within { background: var(--flat-4); }
   & .plug .plugicon { width: 24px; min-width: 24px; height: 24px; border: 0; border-radius: 3px; }
   & .plug .plugicon:hover { background: var(--flat-4); opacity: 1; }
-  & .plug .monitor-bypass.on { color: var(--warn); background: #332A1B; border: 0; }
-  & .plug.placeholder { opacity: 1; border-left: 2px solid var(--warn); grid-template-columns: 18px minmax(0, 1fr); }
-  & .plug.placeholder .plugtitle { grid-column: 2; }
-  & .plug.placeholder .plugactions { grid-column: 2; height: auto; }
+  & .plug.placeholder { opacity: 1; border-left: 2px solid var(--warn); grid-template-columns: minmax(0, 1fr); }
+  & .plug.placeholder:has(.monitor-badge) { grid-template-columns: minmax(0, 1fr) auto; }
+  & .plug.placeholder .plugtitle { grid-column: 1; }
+  & .plug.placeholder .monitor-badge { grid-column: 2; align-self: start; }
+  & .plug.placeholder .plugactions { grid-column: 1 / -1; height: auto; }
   & .vstfoot { border: 0; border-top: 1px solid var(--divider); background: transparent; padding: 2px 0; }
   & .vstfoot .add { min-height: 24px; width: 100%; text-align: left; padding: 2px 0; font: 12px var(--mono); color: var(--text-dim); letter-spacing: .05em; }
   & .empty-slot { justify-content: flex-start; min-height: 28px; padding: 4px 0; border: 0; font-size: 11px; color: var(--text-dim); }
