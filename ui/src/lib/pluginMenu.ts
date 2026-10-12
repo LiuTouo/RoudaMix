@@ -3,7 +3,7 @@ import type { RackSlot } from "./types";
 /** Plugin 右鍵選單項目:純計算,run 由呼叫端接線。與 row 控制同一組規則
  *  (placeholder 不可編輯、鏈端不可再移、Monitor Bypass 隨 capability 出現)。 */
 export type PluginMenuTo = "first" | "last" | "up" | "down";
-export type PluginMenuItem = { label: string; disabled?: boolean; checked?: boolean; run: () => void };
+export type PluginMenuItem = { label: string; disabled?: boolean; checked?: boolean; destructive?: boolean; run: () => void };
 
 export function pluginMenuItems(input: {
   slot: Pick<RackSlot, "name" | "availability">;
@@ -37,6 +37,6 @@ export function pluginMenuItems(input: {
           get disabled() { return input.monitorBypassPending; },
           run: run.monitorBypass }]
       : []),
-    { label: "移除插件…", run: run.remove },
+    { label: "移除插件…", destructive: true, run: run.remove },
   ];
 }

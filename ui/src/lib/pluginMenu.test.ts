@@ -66,6 +66,8 @@ test("正常與缺失插件都保留移除確認入口，不依賴 latency capab
     assert.equal(items.at(-1)?.label, "移除插件…");
     assert.equal(items.at(-1)?.run, base.run.remove);
     assert.equal(items.at(-1)?.disabled, undefined);
+    assert.equal(items.at(-1)?.destructive, true);
+    assert.equal(items.filter((item) => item.destructive).length, 1);
   }
 });
 

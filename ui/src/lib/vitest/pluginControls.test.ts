@@ -148,7 +148,10 @@ it.each([false, true])("MB 切換失敗保留原狀態 %s 並顯示錯誤", asyn
 it.each(["ok", "missing", "loadFailed"] as const)("%s 插件從選單移除，仍可取消且確認前不送命令", async (availability) => {
   show({ availability });
   expect(row().querySelector(".del")).toBeNull();
-  openMenu(); menuItem("移除插件…").click(); await settle();
+  openMenu();
+  expect(menuItem("移除插件…").classList.contains("destructive")).toBe(true);
+  expect(document.querySelectorAll(".ctxitem.destructive")).toHaveLength(1);
+  menuItem("移除插件…").click(); await settle();
   expect(document.querySelector(".confirmdlg")?.getAttribute("aria-label")).toBe("移除 plugin?");
   expect(document.querySelector(".confirmdlg")?.textContent).toContain("FabFilter Pro-Q 3");
   expect(command).not.toHaveBeenCalled();

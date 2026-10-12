@@ -81,6 +81,7 @@
       {#each menu.items as item, i (i)}
         <button
           class="ctxitem"
+          class:destructive={item.destructive}
           role={item.checked === undefined ? "menuitem" : "menuitemcheckbox"}
           aria-checked={item.checked}
           tabindex="-1"
@@ -147,6 +148,8 @@
     font-size: 13px;
     border-radius: 4px;
   }
+  /* 提亮既有危險色，維持 hover 底色上的文字對比。 */
+  :global(#app) .ctxitem.destructive { color: color-mix(in srgb, var(--err) 90%, var(--text)); }
   .ctxitem:hover:not(:disabled) {
     background: var(--bg);
     border-color: transparent;
