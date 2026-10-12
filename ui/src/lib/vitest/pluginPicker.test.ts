@@ -24,6 +24,8 @@ const modules: ScanModule[] = [
   { path: "C:\\VST\\Synth.vst3", classes: [plugin("synth", "Keys", "Echo", "Instrument|Synth|Stereo")] },
 ];
 
+const rackHeightKey = "rmix.vsth.42";
+const rack = () => document.querySelector<HTMLElement>(".vst")!;
 const mounted: ReturnType<typeof mount>[] = [];
 // 尚未提供 dialog methods 的 jsdom 版本也使用相同的最小替身。
 for (const method of ["showModal", "close"] as const) {
@@ -32,6 +34,8 @@ for (const method of ["showModal", "close"] as const) {
   }
 }
 beforeEach(() => {
+  vi.stubEnv("VITE_CONSOLE_PREVIEW", undefined);
+  localStorage.clear();
   command.mockReset().mockResolvedValue({});
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
   // jsdom 不模擬原生 modal 的 top layer、焦點圈限或 Escape 預設操作。
@@ -46,7 +50,9 @@ beforeEach(() => {
 afterEach(async () => {
   for (const component of mounted.splice(0)) await unmount(component);
   document.body.replaceChildren();
+  localStorage.clear();
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 function show(overrides: Partial<ComponentProps<typeof PluginPicker>> = {}) {
@@ -243,7 +249,9 @@ describe("插件選擇器", () => {
   });
 });
 
-it.each(["audio", "app", "fx", "output"] as const)("%s 軌道接線：正確目標、關閉返回焦點、重新開啟重設", async (kind) => {
+function showTrack(kind: Track["kind"] = "audio") {
+  localStorage.setItem(rackHeightKey, "240");
+  localStorage.setItem("rmix.vsth.99", "320");
   const track: Track = {
     trackId: 42, kind, name: "測試軌", color: 0, source: null, dests: [], output: null,
     gain: 1, mute: false, plugins: [], latencyPolicy: "fullPdc",
@@ -254,7 +262,12 @@ it.each(["audio", "app", "fx", "output"] as const)("%s 軌道接線：正確目�
   } });
   mounted.push(component);
   flushSync();
-  const opener = button("+ 加入");
+  return button("+ 加入");
+}
+
+it.each(["audio", "app", "fx", "output"] as const)("%s 軌道接線：新增成功恢復自動高度、關閉返回焦點、重新開啟重設", async (kind) => {
+  const opener = showTrack(kind);
+  expect(rack().style.height).toBe("240px");
   opener.focus();
   opener.click();
   flushSync();
@@ -267,6 +280,9 @@ it.each(["audio", "app", "fx", "output"] as const)("%s 軌道接線：正確目�
   });
   await vi.waitFor(() => expect(document.activeElement).toBe(opener));
   expect(document.querySelector('[aria-label="插件搜尋結果"]')).toBeNull();
+  expect(rack().style.height).toBe("");
+  expect(localStorage.getItem(rackHeightKey)).toBeNull();
+  expect(localStorage.getItem("rmix.vsth.99")).toBe("320");
   opener.click();
   flushSync();
   expect(document.querySelector('input[type="search"]')?.getAttribute("placeholder")).toContain("名稱");
@@ -276,4 +292,38 @@ it.each(["audio", "app", "fx", "output"] as const)("%s 軌道接線：正確目�
   document.querySelector<HTMLButtonElement>('[aria-label="關閉插件選擇器"]')!.click();
   flushSync();
   expect(document.activeElement).toBe(opener);
+});
+
+it("等待加入完成期間保留手動高度，成功才恢復自動", async () => {
+  let finish!: () => void;
+  command.mockImplementationOnce(() => new Promise((resolve) => { finish = () => resolve({}); }));
+  showTrack().click(); flushSync(); search("room");
+  rows()[0].click(); await tick();
+  expect(rows()[0].disabled).toBe(true);
+  expect(rack().style.height).toBe("240px");
+  expect(localStorage.getItem(rackHeightKey)).toBe("240");
+  finish(); await tick();
+  await vi.waitFor(() => expect(rack().style.height).toBe(""));
+  expect(localStorage.getItem(rackHeightKey)).toBeNull();
+});
+
+it("加入失敗不改高度，重試成功才清除手動偏好", async () => {
+  command.mockRejectedValueOnce({ code: "plugin_load_failed", message: "測試載入失敗" });
+  showTrack().click(); flushSync(); search("room");
+  rows()[0].click(); await tick();
+  await vi.waitFor(() => expect(document.querySelector('[role="alert"]')?.textContent).toContain("測試載入失敗"));
+  expect(rack().style.height).toBe("240px");
+  expect(localStorage.getItem(rackHeightKey)).toBe("240");
+  rows()[0].click(); await tick();
+  await vi.waitFor(() => expect(rack().style.height).toBe(""));
+  expect(localStorage.getItem(rackHeightKey)).toBeNull();
+});
+
+it("未選取插件就取消，不清除手動高度", () => {
+  showTrack().click(); flushSync();
+  document.querySelector<HTMLButtonElement>('[aria-label="關閉插件選擇器"]')!.click(); flushSync();
+  expect(command).not.toHaveBeenCalled();
+  expect(document.querySelector(".plugin-picker")).toBeNull();
+  expect(rack().style.height).toBe("240px");
+  expect(localStorage.getItem(rackHeightKey)).toBe("240");
 });

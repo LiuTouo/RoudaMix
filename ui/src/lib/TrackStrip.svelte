@@ -762,7 +762,7 @@
     }
   }
 
-  // VST box 高度:預設自適應內容,拖底部把手拉長;雙擊把手還原自適應。
+  // VST box 高度:預設自適應內容,拖曳固定;成功加入插件或雙擊把手還原自適應。
   // 手動高度存 localStorage;CSS 限制可見高度,不因視窗暫時縮小而覆寫偏好。
   let vstBox = $state<HTMLDivElement | null>(null);
   // trackId 在此元件生命週期不變(App 以 trackId 為 key each),取初始值即可
@@ -825,6 +825,7 @@
     err = "";
     // 選擇器保留搜尋狀態並呈現錯誤，成功才關閉；registry 仍由 App 共用。
     await engineCommand("add_plugin", { trackId: track.trackId, path, classId });
+    onGripDbl();
   }
 
   // ---- P2-M:右鍵選單(移到最前/最後/上移/下移;拖曳之外的可發現路徑)----
@@ -1320,7 +1321,7 @@
     }}
     data-tooltip={boxH === null
       ? "目前自動依插件內容調整高度；拖曳可固定高度。"
-      : "目前使用手動高度（會記住）；雙擊或按 Enter 恢復自動高度。"}
+      : "目前使用手動高度（會記住）；成功加入插件後恢復自動，也可雙擊或按 Enter 還原。"}
   ></button>
   </div>
 
