@@ -187,6 +187,7 @@
     <a class="explore-link" href="#open" onclick={(event) => { event.preventDefault(); navigateTo('open'); }}>{t.nav[0]}</a>
     <a href="#guide" onclick={(event) => { event.preventDefault(); navigateTo('guide'); }}>{t.nav[1]}</a>
     <a class="language" href={`${import.meta.env.BASE_URL}${locale === 'zh' ? 'en/' : ''}#${languageHash}`} lang={locale === 'zh' ? 'en' : 'zh-Hant'}>{t.language}</a>
+    <a href={publication.repository}>GitHub <span aria-hidden="true">↗</span></a>
     <a class="nav-download" href="#download" onclick={(event) => { event.preventDefault(); navigateTo('download'); }}>{t.nav[2]} <span aria-hidden="true">↗</span></a>
   </nav>
 </header>
@@ -241,4 +242,4 @@
   <section class="faq section-wrap stack-surface cover-panel" id="faq"><p class="eyebrow">GOOD TO KNOW / FAQ</p><h2>{t.faqTitle}</h2><div>{#each t.faq as item}<details><summary>{item[0]}<span aria-hidden="true">＋</span></summary><p>{item[1]}</p></details>{/each}</div></section>
 </main>
 
-<footer class="section-wrap"><div><a class="brand" href="#top" onclick={(event) => { event.preventDefault(); navigateTo('top'); }}><img src={`${import.meta.env.BASE_URL}brand.png`} alt="" />RoudaMix.</a><p>{t.footer}</p></div><span class="mono">GPL-3.0-only · 2026</span><a href="#top" onclick={(event) => { event.preventDefault(); navigateTo('top'); }}>{t.back} ↑</a></footer>
+<footer class="section-wrap"><div><a class="brand" href="#top" onclick={(event) => { event.preventDefault(); navigateTo('top'); }}><img src={`${import.meta.env.BASE_URL}brand.png`} alt="" />RoudaMix.</a><p>{t.footer}</p></div><span class="mono">GPL-3.0-only · 2026</span><a class="mono" href={publication.repository}>GitHub ↗</a><a href="#top" onclick={(event) => { event.preventDefault(); navigateTo('top'); }}>{t.back} ↑</a></footer>
