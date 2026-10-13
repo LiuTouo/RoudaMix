@@ -66,6 +66,7 @@
     scanReady = false,
     onCancelScan,
     openMenu,
+    notify,
     /** 拖曳滑動預覽:本卡位移(px);拖曳中才非 0。transition 由 dragActive 閘門 */
     dragShift = 0,
     dragActive = false,
@@ -91,6 +92,8 @@
     onCancelScan: () => void;
     /** P2-M:請求右鍵選單(App 持有全域 ContextMenu;{x,y} + items) */
     openMenu: (x: number, y: number, label: string, items: PluginMenuItem[]) => void;
+    /** open_editor 失敗(如 plugin 沒有編輯器)走 App 頂層通知泡泡,不留在音軌下的錯誤列 */
+    notify?: (kind: "error" | "info", msg: string, raw?: string) => void;
     dragShift?: number;
     dragActive?: boolean;
     dragging?: boolean;
@@ -551,13 +554,13 @@
     }
   }
 
-  // 開啟即忘:關閉由 plugin 原生視窗自己做(engine 端冪等)
+  // 開啟即忘:關閉由 plugin 原生視窗自己做(engine 端冪等);失敗 = 頂層通知泡泡
   async function openEditor(slot: RackSlot) {
-    err = "";
     try {
       await engineCommand("open_editor", { instanceId: slot.instanceId });
     } catch (e) {
-      err = errorText(e);
+      const f = friendlyError(e);
+      notify?.("error", f.friendly, f.raw);
     }
   }
 

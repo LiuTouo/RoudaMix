@@ -1885,6 +1885,7 @@
             scanReady={conn.connected}
             onCancelScan={cancelScan}
             {openMenu}
+            notify={addNotice}
             dragShift={stripShift("input", i)}
             dragActive={drag?.group === "input"}
             dragging={drag?.id === t.trackId}
@@ -1961,6 +1962,7 @@
             scanReady={conn.connected}
             onCancelScan={cancelScan}
             {openMenu}
+            notify={addNotice}
             dragShift={stripShift("output", i)}
             dragActive={drag?.group === "output"}
             dragging={drag?.id === t.trackId}

@@ -4,7 +4,7 @@ import { flushSync, mount, tick, unmount } from "svelte";
 import PluginTransferHarness from "./PluginTransferHarness.svelte";
 import type { RackSlot, Track } from "../types";
 
-const { command } = vi.hoisted(() => ({ command: vi.fn() }));
+const { command, notify } = vi.hoisted(() => ({ command: vi.fn(), notify: vi.fn() }));
 vi.mock("../protocol-commands.generated", async (original) => ({
   ...await original<typeof import("../protocol-commands.generated")>(), engineCommand: command,
 }));
@@ -21,7 +21,7 @@ const makeTrack = (overrides: Partial<RackSlot> = {}): Track => ({
 });
 function show(overrides: Partial<RackSlot> = {}, latencyEnabled = true) {
   component = mount(PluginTransferHarness, { target: document.body, props: {
-    initialTracks: [makeTrack(overrides)], latencyEnabled,
+    initialTracks: [makeTrack(overrides)], latencyEnabled, notify,
   } });
   flushSync();
 }
@@ -44,6 +44,7 @@ function closeMenu() {
 
 beforeEach(() => {
   command.mockReset().mockResolvedValue({});
+  notify.mockReset();
   HTMLDialogElement.prototype.showModal = function () { this.open = true; };
   HTMLDialogElement.prototype.close = function () { this.open = false; };
   vi.spyOn(console, "info").mockImplementation(() => {});
@@ -193,4 +194,14 @@ it("隱藏機架序號不改 editor 身分；重排後仍以目前列的 instanc
   component!.setTracks([{ ...track, plugins: [second, first] }]); flushSync();
   row().querySelector<HTMLElement>('.plugname[role="button"]')!.click(); await settle();
   expect(command).toHaveBeenLastCalledWith("open_editor", { instanceId: 45 });
+});
+
+it("開編輯器失敗(如無編輯介面)走頂層通知泡泡，不在音軌下留錯誤列", async () => {
+  show();
+  command.mockRejectedValueOnce({ code: "plugin_no_editor", message: "plugin has no editor" });
+  row().querySelector<HTMLElement>('.plugname[role="button"]')!.click(); await settle();
+  expect(notify).toHaveBeenCalledExactlyOnceWith(
+    "error", "此 plugin 沒有可開啟的操作介面", "plugin_no_editor: plugin has no editor",
+  );
+  expect(document.querySelector('[role="alert"]')).toBeNull();
 });
