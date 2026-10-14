@@ -131,6 +131,8 @@ def notices():
           (ROOT / "engine/third_party/asio-sdk/host/pc/asiolist.cpp").read_text().split("#include")[0])])
     add("Steinberg VST 3 SDK", "vendored", "MIT", "https://github.com/steinbergmedia/vst3sdk",
         license_texts(ROOT / "engine/third_party/vst3-sdk"))
+    add("libebur128", "1.2.6", "MIT AND BSD-3-Clause", "https://github.com/jiixyj/libebur128/tree/v1.2.6",
+        license_texts(ROOT / "engine/third_party/libebur128"))
     add("nlohmann/json", "3.12.0", "MIT", "https://github.com/nlohmann/json",
         [("LICENSE.MIT", (ROOT / "packaging/licenses/nlohmann-json-MIT.txt").read_text())])
     add("IBM Plex Sans TC", "vendored", "OFL-1.1", "https://github.com/IBM/plex",

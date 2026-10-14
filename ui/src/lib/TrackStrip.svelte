@@ -56,6 +56,9 @@
     metered = true,
     latencyEnabled = false,
     pluginCopyEnabled = false,
+    loudnessEnabled = false,
+    loudnessOpen = false,
+    onLoudnessOpen,
     // 掃描 job 由 App 統一跑(共用 registry,所有軌同一份清單;進度/取消也在 App)
     scanModules = [],
     scanFailed = [],
@@ -82,6 +85,9 @@
     metered?: boolean;
     latencyEnabled?: boolean;
     pluginCopyEnabled?: boolean;
+    loudnessEnabled?: boolean;
+    loudnessOpen?: boolean;
+    onLoudnessOpen?: (trackId: number, anchor: HTMLElement, trigger: HTMLButtonElement) => void;
     scanModules?: ScanModule[];
     scanFailed?: ScanFailure[];
     scanRunning?: boolean;
@@ -100,6 +106,7 @@
     introMs?: number;
   } = $props();
 
+  let meterAnchor: HTMLDivElement;
   let err = $state("");
   let pluginPickerOpen = $state(false);
   // WASAPI render 裝置清單(focus 時拉,保持常新)
@@ -1366,9 +1373,15 @@
         />
       </div>
     </div>
-    <div class="meterwrap">
+    <div class="meterwrap" bind:this={meterAnchor}>
       {#if metered}
-        <MeterCanvas strip={stripOfTrack(track.trackId, meterView)} />
+        <button type="button" class="meter-trigger" aria-disabled={!loudnessEnabled}
+          aria-label={`開啟 ${track.name} 的響度分析`}
+          aria-haspopup="dialog" aria-expanded={loudnessOpen} aria-controls={loudnessOpen ? "loudness-analysis" : undefined}
+          data-tooltip={loudnessEnabled ? "按一下開啟 LUFS、True Peak 與 LRA 響度分析；右鍵只清除電平錶過載標記。" : "目前引擎不支援響度分析。"}
+          onclick={(event) => { if (loudnessEnabled) onLoudnessOpen?.(track.trackId, meterAnchor, event.currentTarget); }}>
+          <MeterCanvas strip={stripOfTrack(track.trackId, meterView)} />
+        </button>
       {:else}
         <!-- P1-H:telemetry 預算外 = 錶不可用(非靜音);明確顯示狀態 -->
         <div
@@ -1377,6 +1390,11 @@
           ><span>無<br />錶</span></div
         >
       {/if}
+      <button type="button" class="meter-more" disabled={!loudnessEnabled}
+        aria-label={`${track.name} 的更多音頻資訊：響度分析`}
+        aria-haspopup="dialog" aria-expanded={loudnessOpen} aria-controls={loudnessOpen ? "loudness-analysis" : undefined}
+        data-tooltip={loudnessEnabled ? "響度分析：LUFS-M／S／I、True Peak 與 LRA。" : "目前引擎不支援響度分析。"}
+        onclick={(event) => onLoudnessOpen?.(track.trackId, meterAnchor, event.currentTarget)}><span aria-hidden="true">⋯</span></button>
     </div>
   </div>
   </div>
@@ -1978,7 +1996,19 @@
     flex: 0 0 46px;
     min-height: 0;
     display: flex;
+    flex-direction: column;
   }
+  .meter-trigger {
+    display: block; flex: 1; min-height: 0; width: 46px;
+    padding: 0; border: 0; border-radius: 0; background: transparent;
+  }
+  .meter-trigger[aria-disabled="true"] { cursor: default; }
+  .meter-more {
+    flex: 0 0 44px; width: 46px; min-height: 44px; padding: 0;
+    border: 0; background: transparent; color: var(--text-dim); font-size: 16px;
+  }
+  .meter-more:hover:not(:disabled), .meter-more[aria-expanded="true"] { color: var(--accent); }
+  .meterwrap .nometer { flex: 1; }
   .add {
     align-self: flex-start;
   }

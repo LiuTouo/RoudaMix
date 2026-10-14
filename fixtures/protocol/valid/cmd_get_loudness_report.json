@@ -1,0 +1,8 @@
+{
+  "protocolVersion": 2,
+  "id": 501,
+  "kind": "get_loudness_report",
+  "payload": {
+    "measurementId": "opaque-measurement-id"
+  }
+}

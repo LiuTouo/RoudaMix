@@ -75,7 +75,15 @@ void expect_result_invalid(const std::string& kind, const nlohmann::json& result
 }
 
 void check_command_result_schemas() {
+    const nlohmann::json loudness = {{"report", {
+        {"measurementId", "opaque"}, {"trackId", 1}, {"state", "measuring"}, {"error", nullptr},
+        {"elapsedSeconds", 0}, {"momentaryLufs", nullptr}, {"shortTermLufs", nullptr},
+        {"integratedLufs", nullptr}, {"truePeakDbtp", nullptr}, {"loudnessRangeLu", nullptr}}}};
     const std::unordered_map<std::string, nlohmann::json> valid_results = {
+        {"start_loudness", loudness},
+        {"get_loudness_report", loudness},
+        {"reset_loudness", loudness},
+        {"stop_loudness", nlohmann::json::object()},
         {"ping", {{"engineVersion", "0.1.0"}}},
         {"get_snapshot", {{"snapshot", nlohmann::json::object()}}},
         {"get_latency_report",
@@ -146,6 +154,12 @@ void check_command_result_schemas() {
         expect_result_valid(kind, sample->second);
     }
 
+    auto invalid_loudness = loudness;
+    invalid_loudness["report"].erase("truePeakDbtp");
+    expect_result_invalid("get_loudness_report", invalid_loudness, "missing loudness metric");
+    invalid_loudness = loudness;
+    invalid_loudness["report"]["state"] = "warming";
+    expect_result_invalid("get_loudness_report", invalid_loudness, "unknown loudness state");
     expect_result_invalid("ping", nlohmann::json::object(), "missing required field");
     expect_result_invalid("set_param", {{"unexpected", true}}, "unknown field");
     expect_result_invalid("ping", {{"engineVersion", 1}}, "wrong field type");

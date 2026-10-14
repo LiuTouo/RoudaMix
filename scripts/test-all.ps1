@@ -20,6 +20,7 @@ Invoke-TestCommand powershell @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Fi
 Invoke-TestCommand $Python @('-m', 'unittest', 'discover', '-s', 'scripts', '-p', 'release_test.py')
 Invoke-TestCommand ctest @('--test-dir', 'engine/build', '-C', 'Release', '--output-on-failure')
 Invoke-TestCommand npm @('run', 'test:protocol')
+Invoke-TestCommand node @('--test', 'scripts/loudness-packaging.test.mjs')
 Invoke-TestCommand npm @('--prefix', 'ui', 'run', 'check')
 Invoke-TestCommand npm @('--prefix', 'ui', 'test')
 Invoke-TestCommand cargo @('test', '--workspace', '--locked')

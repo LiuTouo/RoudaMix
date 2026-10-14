@@ -19,6 +19,7 @@
 #include "asio_device.hpp"
 #include "failure.hpp"
 #include "graph_retire.hpp"
+#include "loudness.hpp"
 #include "rack.hpp"
 #include "telemetry.hpp"
 #include "track_graph.hpp"
@@ -115,6 +116,11 @@ public:
                                  std::optional<std::uint32_t> sample_rate,
                                  std::optional<std::uint32_t> buffer_size);
     void stop() noexcept;
+    std::optional<Failure> start_loudness(std::uint32_t track_id, LoudnessReport& report);
+    std::optional<Failure> get_loudness_report(const std::string& id, LoudnessReport& report) const;
+    std::optional<Failure> reset_loudness(const std::string& id, LoudnessReport& report);
+    void stop_loudness(const std::string& id) noexcept;
+    void clear_loudness() noexcept;
     std::optional<Failure> open_control_panel();
 
     // ---- tracks(控制面;全部由 Router 的臨界區序列化)----
@@ -261,6 +267,8 @@ private:
     std::uint32_t last_sample_rate_{};
     std::uint32_t last_buffer_size_{};
     std::atomic<TrackGraph*> rt_graph_{nullptr};  // 讀取一律走 acquire_graph(#15)
+    std::shared_ptr<LoudnessCapture> loudness_;
+    void attach_loudness(const std::shared_ptr<LoudnessCapture>& capture);
     GraphRetireQueue retired_graphs_;  // #15:reader 門閂,逾時且無 reader 才刪
 
     // #14:candidate 建構滿是丟例外的配置(new/vector/unordered_set/make_shared),

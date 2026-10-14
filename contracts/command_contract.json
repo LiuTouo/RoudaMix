@@ -4,6 +4,93 @@
   "protocolVersion": 2,
   "description": "RoudaMix control-plane authority. Command payloads, results, errors and event kinds are handwritten only here.",
   "definitions": {
+    "loudnessReport": {
+      "type": "object",
+      "required": [
+        "measurementId",
+        "trackId",
+        "state",
+        "error",
+        "elapsedSeconds",
+        "momentaryLufs",
+        "shortTermLufs",
+        "integratedLufs",
+        "truePeakDbtp",
+        "loudnessRangeLu"
+      ],
+      "properties": {
+        "measurementId": {
+          "type": "string"
+        },
+        "trackId": {
+          "$ref": "#/definitions/u32"
+        },
+        "state": {
+          "enum": [
+            "measuring",
+            "stopped",
+            "error"
+          ]
+        },
+        "error": {
+          "$ref": "#/definitions/nullableString"
+        },
+        "elapsedSeconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "momentaryLufs": {
+          "oneOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "shortTermLufs": {
+          "oneOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "integratedLufs": {
+          "oneOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "truePeakDbtp": {
+          "oneOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "loudnessRangeLu": {
+          "oneOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
     "u32": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
     "u64": { "type": "integer", "minimum": 0 },
     "normalized": { "type": "number", "minimum": 0, "maximum": 1 },
@@ -813,6 +900,113 @@
       "kind": "shutdown_engine",
       "payload": { "$ref": "#/definitions/emptyObject" },
       "result": { "$ref": "#/definitions/emptyObject" },
+      "errors": []
+    },
+    {
+      "kind": "start_loudness",
+      "payload": {
+        "type": "object",
+        "required": [
+          "trackId"
+        ],
+        "properties": {
+          "trackId": {
+            "$ref": "#/definitions/u32"
+          }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": [
+          "report"
+        ],
+        "properties": {
+          "report": {
+            "$ref": "#/definitions/loudnessReport"
+          }
+        }
+      },
+      "errors": [
+        "bad_command",
+        "not_running",
+        "track_not_found",
+        "internal"
+      ]
+    },
+    {
+      "kind": "get_loudness_report",
+      "payload": {
+        "type": "object",
+        "required": [
+          "measurementId"
+        ],
+        "properties": {
+          "measurementId": {
+            "type": "string"
+          }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": [
+          "report"
+        ],
+        "properties": {
+          "report": {
+            "$ref": "#/definitions/loudnessReport"
+          }
+        }
+      },
+      "errors": [
+        "bad_command"
+      ]
+    },
+    {
+      "kind": "reset_loudness",
+      "payload": {
+        "type": "object",
+        "required": [
+          "measurementId"
+        ],
+        "properties": {
+          "measurementId": {
+            "type": "string"
+          }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": [
+          "report"
+        ],
+        "properties": {
+          "report": {
+            "$ref": "#/definitions/loudnessReport"
+          }
+        }
+      },
+      "errors": [
+        "bad_command",
+        "not_running",
+        "internal"
+      ]
+    },
+    {
+      "kind": "stop_loudness",
+      "payload": {
+        "type": "object",
+        "required": [
+          "measurementId"
+        ],
+        "properties": {
+          "measurementId": {
+            "type": "string"
+          }
+        }
+      },
+      "result": {
+        "$ref": "#/definitions/emptyObject"
+      },
       "errors": []
     }
   ],

@@ -346,6 +346,38 @@
     "shutdown_engine": {
       "missing": [],
       "wrongType": []
+    },
+    "start_loudness": {
+      "missing": [
+        "trackId"
+      ],
+      "wrongType": [
+        "trackId"
+      ]
+    },
+    "get_loudness_report": {
+      "missing": [
+        "measurementId"
+      ],
+      "wrongType": [
+        "measurementId"
+      ]
+    },
+    "reset_loudness": {
+      "missing": [
+        "measurementId"
+      ],
+      "wrongType": [
+        "measurementId"
+      ]
+    },
+    "stop_loudness": {
+      "missing": [
+        "measurementId"
+      ],
+      "wrongType": [
+        "measurementId"
+      ]
     }
   }
 }

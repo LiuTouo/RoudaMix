@@ -22,6 +22,7 @@
 
 namespace rmx {
 
+class LoudnessCapture;
 class AppCapture;  // M5b:process loopback capture(app 軌;shared_ptr 跨 snapshot)
 class RenderSink;  // M5c:wasapi render sink(串流軌;shared_ptr 跨 snapshot)
 class MicCapture;  // M6:一般 capture endpoint(mic 來源;shared_ptr 跨 snapshot)
@@ -167,6 +168,7 @@ struct TelemetryStripPlan {
 };
 
 struct TrackGraph {
+    std::shared_ptr<LoudnessCapture> loudness;
     std::vector<TrackNode> nodes;       // master 順序 = UI 欄內順序
     std::vector<std::uint32_t> order;   // 拓撲序的 node index(RT 照跑);有環時 = master 序 fallback
     std::vector<std::uint32_t> id_index;  // trackId → node index(kNoStrip = 無此 id;RT dest sum 查表)

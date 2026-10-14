@@ -5,3 +5,6 @@ fixtures/protocol/generated-invalid-manifest.json text eol=lf
 fixtures/protocol/invalid/generated_*.json text eol=lf
 # Keep upstream legal documents verbatim, including their whitespace.
 packaging/licenses/** -whitespace
+
+# Pinned upstream hashes and license text must survive Windows checkout unchanged.
+engine/third_party/libebur128/** -text -whitespace

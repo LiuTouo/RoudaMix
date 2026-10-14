@@ -11,6 +11,8 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
   import TrackStrip from "./lib/TrackStrip.svelte";
+  import LoudnessPopover from "./lib/LoudnessPopover.svelte";
+  import { LoudnessController, emptyLoudnessView } from "./lib/loudness";
   import UpdatePanel from "./lib/UpdatePanel.svelte";
   import { resetPluginTransfer } from "./lib/pluginTransfer";
   import LatencyDrawer from "./lib/LatencyDrawer.svelte";
@@ -98,6 +100,28 @@
   let status = $state<EngineStatus | null>(null);
   let latencyEnabled = $state(false); // legacy view prop；實際 gate = pluginLatencyPdcV1 capability
   let pluginCopyEnabled = $state(false);
+  let loudnessEnabled = $state(false);
+  let loudnessTarget = $state<{ trackId: number; anchor: HTMLElement; trigger: HTMLButtonElement } | null>(null);
+  let loudnessView = $state(emptyLoudnessView());
+  const loudnessController = new LoudnessController(
+    (view) => { loudnessView = view; },
+    (message) => addNotice("error", message),
+  );
+  function openLoudness(trackId: number, anchor: HTMLElement, trigger: HTMLButtonElement) {
+    if (!loudnessEnabled) return;
+    if (loudnessTarget?.trackId === trackId) {
+      document.getElementById("loudness-analysis")?.focus({ preventScroll: true });
+      return;
+    }
+    loudnessTarget = { trackId, anchor, trigger };
+  }
+  function closeLoudness(restoreFocus = true) {
+    const trigger = loudnessTarget?.trigger;
+    loudnessTarget = null;
+    void loudnessController.close();
+    if (restoreFocus && trigger?.isConnected) trigger.focus({ preventScroll: true });
+  }
+  onMount(() => () => { void loudnessController.close(); });
   let latencyDrawerOpen = $state(false);
   let meters = $state<MetersFrame | null>(null);
   let devices = $state<DeviceInfo[]>([]);
@@ -378,8 +402,10 @@
   const scanNotice = $derived(scanJob.error);
   /** 快照事件、status 事件與主動 get_snapshot 共用的唯一權威縮減入口。 */
   function applyAuthoritativeStatus(payload: AuthoritativeStatusPayload): void {
-    if (payload.capabilities !== undefined)
+    if (payload.capabilities !== undefined) {
       pluginCopyEnabled = payload.capabilities.includes("pluginCopyV1");
+      loudnessEnabled = payload.capabilities.includes("loudnessAnalysisV1");
+    }
     const applied = applyStatus(
       {
         status,
@@ -426,6 +452,12 @@
   });
 
   const tracks = $derived<Track[]>(status?.tracks ?? []);
+  const loudnessTrack = $derived(tracks.find((track) => track.trackId === loudnessTarget?.trackId));
+  $effect(() => {
+    if (!loudnessTarget) return;
+    if (!loudnessTrack || !conn.connected || !loudnessEnabled) { closeLoudness(false); return; }
+    loudnessController.configure(loudnessTarget.trackId, status?.running ?? false, status?.sampleRate ?? 0, conn.epoch);
+  });
   const telemetryStrips = $derived(status?.telemetryStrips ?? []);
   const meterView = $derived.by(() => {
     const view = { table: telemetryStrips, strips: meters?.strips };
@@ -492,6 +524,8 @@
         if (!c.connected || epochChanged(conn.epoch, c.epoch)) {
           resetPluginTransfer();
           pluginCopyEnabled = false;
+          loudnessEnabled = false;
+          closeLoudness(false);
         }
         // P1-A:reconnect epoch 對齊 —— engine 換代重連,本地一次性旗標作廢重跑
         if (epochChanged(conn.epoch, c.epoch)) {
@@ -1397,6 +1431,7 @@
 
   // session 載入後套裝置 + 自動啟用(率跟 driver 現行值);跑著時 = 重建到 session 裝置
   function applyLoadedSession(r: Record<string, unknown>) {
+    closeLoudness(false);
     confirmRevisionBaseline(r.revision); // 載成功才清 dirty
     missing = (r.missing as MissingPlugin[]) ?? [];
     const dk = r.deviceKey as string | null;
@@ -1886,6 +1921,9 @@
             onCancelScan={cancelScan}
             {openMenu}
             notify={addNotice}
+            {loudnessEnabled}
+            loudnessOpen={loudnessTarget?.trackId === t.trackId}
+            onLoudnessOpen={openLoudness}
             dragShift={stripShift("input", i)}
             dragActive={drag?.group === "input"}
             dragging={drag?.id === t.trackId}
@@ -1963,6 +2001,9 @@
             onCancelScan={cancelScan}
             {openMenu}
             notify={addNotice}
+            {loudnessEnabled}
+            loudnessOpen={loudnessTarget?.trackId === t.trackId}
+            onLoudnessOpen={openLoudness}
             dragShift={stripShift("output", i)}
             dragActive={drag?.group === "output"}
             dragging={drag?.id === t.trackId}
@@ -1983,6 +2024,11 @@
     {meters}
     onClose={() => (latencyDrawerOpen = false)}
   />
+{/if}
+
+{#if loudnessTarget && loudnessTrack}
+  <LoudnessPopover track={loudnessTrack} anchor={loudnessTarget.anchor} view={loudnessView}
+    {running} onClose={closeLoudness} onReset={() => loudnessController.reset()} />
 {/if}
 
 <!-- P2-M:右鍵選單(全域一份) -->

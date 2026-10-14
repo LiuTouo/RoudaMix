@@ -2,7 +2,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { AudioApp, CaptureDevice, DeviceInfo, EngineStatus, ParamInfo, RenderDevice, Snapshot, Track } from "./types";
 
-export type CommandKind = "ping" | "get_snapshot" | "get_latency_report" | "list_devices" | "list_audio_apps" | "list_render_devices" | "list_capture_devices" | "start" | "stop" | "open_device_panel" | "track_add" | "track_remove" | "track_set" | "track_set_source" | "track_set_dests" | "track_set_sidechain" | "track_set_output" | "track_set_output_latency_policy" | "track_move" | "start_scan" | "cancel_scan" | "add_plugin" | "copy_plugin" | "paste_plugin" | "duplicate_plugin" | "remove_plugin" | "move_plugin" | "set_plugin_name" | "set_bypass" | "set_monitor_bypass" | "retry_plugin" | "set_param" | "get_params" | "open_editor" | "close_editor" | "save_preset" | "load_preset" | "save_session" | "load_session" | "ensure_system_outputs" | "set_editor_scale" | "set_editor_owner" | "shutdown_engine";
+export type CommandKind = "ping" | "get_snapshot" | "get_latency_report" | "list_devices" | "list_audio_apps" | "list_render_devices" | "list_capture_devices" | "start" | "stop" | "open_device_panel" | "track_add" | "track_remove" | "track_set" | "track_set_source" | "track_set_dests" | "track_set_sidechain" | "track_set_output" | "track_set_output_latency_policy" | "track_move" | "start_scan" | "cancel_scan" | "add_plugin" | "copy_plugin" | "paste_plugin" | "duplicate_plugin" | "remove_plugin" | "move_plugin" | "set_plugin_name" | "set_bypass" | "set_monitor_bypass" | "retry_plugin" | "set_param" | "get_params" | "open_editor" | "close_editor" | "save_preset" | "load_preset" | "save_session" | "load_session" | "ensure_system_outputs" | "set_editor_scale" | "set_editor_owner" | "shutdown_engine" | "start_loudness" | "get_loudness_report" | "reset_loudness" | "stop_loudness";
 export type ErrorCode = "unsupported_version" | "bad_frame" | "bad_command" | "not_running" | "already_running" | "device_open_failed" | "device_lost" | "track_not_found" | "cycle_detected" | "device_busy" | "app_not_found" | "unsupported_windows" | "plugin_not_found" | "plugin_load_failed" | "plugin_no_editor" | "param_not_found" | "session_io" | "preset_io" | "plugin_state_failed" | "internal";
 type EmptyCommandKind = "ping" | "get_snapshot" | "get_latency_report" | "list_devices" | "list_audio_apps" | "list_render_devices" | "list_capture_devices" | "stop" | "open_device_panel" | "cancel_scan" | "ensure_system_outputs" | "shutdown_engine";
 
@@ -64,6 +64,10 @@ export interface CommandPayloads {
   "set_editor_scale": { "percent": number };
   "set_editor_owner": { "hwnd": number };
   "shutdown_engine": Record<string, never>;
+  "start_loudness": { "trackId": number };
+  "get_loudness_report": { "measurementId": string };
+  "reset_loudness": { "measurementId": string };
+  "stop_loudness": { "measurementId": string };
 }
 
 export interface CommandResults {
@@ -110,6 +114,10 @@ export interface CommandResults {
   "set_editor_scale": Record<string, never>;
   "set_editor_owner": Record<string, never>;
   "shutdown_engine": Record<string, never>;
+  "start_loudness": { "report": { "measurementId": string; "trackId": number; "state": "measuring" | "stopped" | "error"; "error": string | null; "elapsedSeconds": number; "momentaryLufs": number | null; "shortTermLufs": number | null; "integratedLufs": number | null; "truePeakDbtp": number | null; "loudnessRangeLu": number | null } };
+  "get_loudness_report": { "report": { "measurementId": string; "trackId": number; "state": "measuring" | "stopped" | "error"; "error": string | null; "elapsedSeconds": number; "momentaryLufs": number | null; "shortTermLufs": number | null; "integratedLufs": number | null; "truePeakDbtp": number | null; "loudnessRangeLu": number | null } };
+  "reset_loudness": { "report": { "measurementId": string; "trackId": number; "state": "measuring" | "stopped" | "error"; "error": string | null; "elapsedSeconds": number; "momentaryLufs": number | null; "shortTermLufs": number | null; "integratedLufs": number | null; "truePeakDbtp": number | null; "loudnessRangeLu": number | null } };
+  "stop_loudness": Record<string, never>;
 }
 
 export interface CommandErrors {
@@ -156,6 +164,10 @@ export interface CommandErrors {
   "set_editor_scale": "bad_command";
   "set_editor_owner": never;
   "shutdown_engine": never;
+  "start_loudness": "bad_command" | "not_running" | "track_not_found" | "internal";
+  "get_loudness_report": "bad_command";
+  "reset_loudness": "bad_command" | "not_running" | "internal";
+  "stop_loudness": never;
 }
 
 export function engineCommand<K extends CommandKind>(

@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -118,7 +119,8 @@ static void router_copy(const std::string& module) {
     std::vector<nlohmann::json> frames;
     std::uint64_t id{};
     router.connect(1, [&](const auto& frame) { frames.push_back(frame); });
-    CHECK(frames[0]["payload"]["capabilities"].get<std::vector<std::string>>().back() == "pluginCopyV1");
+    const auto capabilities = frames[0]["payload"]["capabilities"].get<std::vector<std::string>>();
+    CHECK(std::find(capabilities.begin(), capabilities.end(), "pluginCopyV1") != capabilities.end());
     auto send = [&](const std::string& kind, nlohmann::json payload) {
         frames.clear();
         CHECK(!router.dispatch_guarded(1, {rmx::kProtocolVersion, ++id, kind, std::move(payload)}));

@@ -2053,6 +2053,130 @@
               "$ref": "#/$defs/emptyObject"
             }
           }
+        },
+        {
+          "type": "object",
+          "required": [
+            "protocolVersion",
+            "id",
+            "kind",
+            "payload"
+          ],
+          "properties": {
+            "protocolVersion": {
+              "const": 2
+            },
+            "id": {
+              "$ref": "#/$defs/u64"
+            },
+            "kind": {
+              "const": "start_loudness"
+            },
+            "payload": {
+              "type": "object",
+              "required": [
+                "trackId"
+              ],
+              "properties": {
+                "trackId": {
+                  "$ref": "#/$defs/u32"
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "protocolVersion",
+            "id",
+            "kind",
+            "payload"
+          ],
+          "properties": {
+            "protocolVersion": {
+              "const": 2
+            },
+            "id": {
+              "$ref": "#/$defs/u64"
+            },
+            "kind": {
+              "const": "get_loudness_report"
+            },
+            "payload": {
+              "type": "object",
+              "required": [
+                "measurementId"
+              ],
+              "properties": {
+                "measurementId": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "protocolVersion",
+            "id",
+            "kind",
+            "payload"
+          ],
+          "properties": {
+            "protocolVersion": {
+              "const": 2
+            },
+            "id": {
+              "$ref": "#/$defs/u64"
+            },
+            "kind": {
+              "const": "reset_loudness"
+            },
+            "payload": {
+              "type": "object",
+              "required": [
+                "measurementId"
+              ],
+              "properties": {
+                "measurementId": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "protocolVersion",
+            "id",
+            "kind",
+            "payload"
+          ],
+          "properties": {
+            "protocolVersion": {
+              "const": 2
+            },
+            "id": {
+              "$ref": "#/$defs/u64"
+            },
+            "kind": {
+              "const": "stop_loudness"
+            },
+            "payload": {
+              "type": "object",
+              "required": [
+                "measurementId"
+              ],
+              "properties": {
+                "measurementId": {
+                  "type": "string"
+                }
+              }
+            }
+          }
         }
       ]
     },
@@ -2486,6 +2610,93 @@
         },
         "tracks": {
           "$ref": "#/$defs/trackArray"
+        }
+      }
+    },
+    "loudnessReport": {
+      "type": "object",
+      "required": [
+        "measurementId",
+        "trackId",
+        "state",
+        "error",
+        "elapsedSeconds",
+        "momentaryLufs",
+        "shortTermLufs",
+        "integratedLufs",
+        "truePeakDbtp",
+        "loudnessRangeLu"
+      ],
+      "properties": {
+        "measurementId": {
+          "type": "string"
+        },
+        "trackId": {
+          "$ref": "#/$defs/u32"
+        },
+        "state": {
+          "enum": [
+            "measuring",
+            "stopped",
+            "error"
+          ]
+        },
+        "error": {
+          "$ref": "#/$defs/nullableString"
+        },
+        "elapsedSeconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "momentaryLufs": {
+          "oneOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "shortTermLufs": {
+          "oneOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "integratedLufs": {
+          "oneOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "truePeakDbtp": {
+          "oneOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "loudnessRangeLu": {
+          "oneOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     }

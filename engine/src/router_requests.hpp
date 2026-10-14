@@ -52,6 +52,12 @@ struct TrackAdd {
     }
 };
 
+struct MeasurementId {
+    std::string measurement_id;
+    explicit MeasurementId(const nlohmann::json& payload)
+        : measurement_id(payload.at("measurementId").get<std::string>()) {}
+};
+
 struct TrackId {
     std::uint32_t track_id;
     explicit TrackId(const nlohmann::json& payload)

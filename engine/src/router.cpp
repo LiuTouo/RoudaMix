@@ -62,6 +62,7 @@ Router::~Router() { shutdown(); }
 
 void Router::connect(std::uint64_t generation, FrameSink sink) {
     std::lock_guard<std::mutex> engine_lock(engine_mutex_);
+    engine_.clear_loudness();
     plugin_clipboard_.reset();
     nlohmann::json last_scan;
     {
@@ -79,8 +80,10 @@ void Router::connect(std::uint64_t generation, FrameSink sink) {
 }
 
 void Router::disconnect(std::uint64_t generation) {
+    std::lock_guard<std::mutex> engine_lock(engine_mutex_);
     std::lock_guard<std::mutex> lock(connection_mutex_);
     if (generation != connection_generation_) return;
+    engine_.clear_loudness();
     frame_sink_ = {};
 }
 
@@ -195,6 +198,10 @@ bool Router::dispatch_guarded(std::uint64_t generation, const Command& command) 
 
 const std::unordered_map<std::string, Router::Route>& Router::routes() {
     static const std::unordered_map<std::string, Route> value{
+        {"start_loudness", &Router::route<TrackIdRequest, &Router::handle_start_loudness>},
+        {"get_loudness_report", &Router::route<MeasurementIdRequest, &Router::handle_get_loudness_report>},
+        {"reset_loudness", &Router::route<MeasurementIdRequest, &Router::handle_reset_loudness>},
+        {"stop_loudness", &Router::route<MeasurementIdRequest, &Router::handle_stop_loudness>},
         {"ping", &Router::route<EmptyRequest, &Router::handle_ping>},
         {"get_snapshot", &Router::route<EmptyRequest, &Router::handle_get_snapshot>},
         {"get_latency_report", &Router::route<EmptyRequest, &Router::handle_get_latency_report>},
@@ -439,6 +446,26 @@ void Router::scan_job_thread(std::uint64_t job_id,
     } else {
         send_current(make_event("scan_cancelled", {{"jobId", job_id}}));
     }
+}
+
+Router::Outcome Router::handle_start_loudness(const TrackIdRequest& request) {
+    LoudnessReport report;
+    if (auto fail = engine_.start_loudness(request.track_id, report)) return failure(std::move(*fail));
+    return success({{"report", loudness_report_json(report)}});
+}
+Router::Outcome Router::handle_get_loudness_report(const MeasurementIdRequest& request) {
+    LoudnessReport report;
+    if (auto fail = engine_.get_loudness_report(request.measurement_id, report)) return failure(std::move(*fail));
+    return success({{"report", loudness_report_json(report)}});
+}
+Router::Outcome Router::handle_reset_loudness(const MeasurementIdRequest& request) {
+    LoudnessReport report;
+    if (auto fail = engine_.reset_loudness(request.measurement_id, report)) return failure(std::move(*fail));
+    return success({{"report", loudness_report_json(report)}});
+}
+Router::Outcome Router::handle_stop_loudness(const MeasurementIdRequest& request) {
+    engine_.stop_loudness(request.measurement_id);
+    return success();
 }
 
 Router::Outcome Router::handle_ping(const EmptyRequest&) {

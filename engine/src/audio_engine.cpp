@@ -486,6 +486,7 @@ std::optional<Failure> AudioEngine::start(const std::string& device_key,
                                           std::optional<std::uint32_t> buffer_size) {
     if (device_.running() || (clock_ != nullptr && clock_->running()))
         return failure(Err::kAlreadyRunning, "already running");
+    clear_loudness();  // Restart invalidates the previous sample-rate epoch.
     if (clock_ != nullptr) stop();  // join a failed pump before preparing another stream
     // 面板開著時 driver 不能重開(controlPanel 多為 modal,detach thread 還在裡面)
     if (panel_open_.load(std::memory_order_acquire) > 0)
@@ -713,6 +714,7 @@ std::optional<Failure> AudioEngine::start(const std::string& device_key,
 }
 
 void AudioEngine::stop() noexcept {
+    if (loudness_) loudness_->stop();
     {
         std::lock_guard lock(clock_mutex_);
         if (clock_ != nullptr) {
@@ -735,6 +737,62 @@ void AudioEngine::stop() noexcept {
     reap_retired_graphs(/*force=*/true);
 }
 
+// Capture-only graph transactions never re-plan routes or advance latency generation.
+void AudioEngine::attach_loudness(const std::shared_ptr<LoudnessCapture>& capture) {
+    retired_graphs_.reap(GetTickCount64(), false);
+    auto* active = rt_graph_.load(std::memory_order_seq_cst);
+    if (!active) return;
+    auto fresh = std::make_unique<TrackGraph>(*active);
+    fresh->loudness = capture;
+    // Reserve retirement ownership before publishing; allocation failure leaves active intact.
+    retired_graphs_.retire(active, GetTickCount64());
+    if (active->loudness) active->loudness->deactivate();
+    rt_graph_.store(fresh.release(), std::memory_order_seq_cst);
+}
+
+std::optional<Failure> AudioEngine::start_loudness(std::uint32_t track_id, LoudnessReport& report) {
+    if (!stream_running()) return failure(Err::kNotRunning, "engine is not running");
+    if (!find_track_mut(track_id)) return failure(Err::kTrackNotFound, "unknown trackId");
+    try {
+        GUID guid{};
+        if (FAILED(CoCreateGuid(&guid))) return failure(Err::kInternal, "measurement ID allocation failed");
+        wchar_t text[40]{};
+        if (!StringFromGUID2(guid, text, 40)) return failure(Err::kInternal, "measurement ID formatting failed");
+        std::string id;
+        for (const auto* c = text; *c; ++c) id.push_back(static_cast<char>(*c));
+        auto next = std::make_shared<LoudnessCapture>(std::move(id), track_id,
+            rt_sample_rate_.load(std::memory_order_relaxed), kMaxBlockFrames);
+        report = next->report();
+        attach_loudness(next);
+        auto old = std::move(loudness_);
+        loudness_ = std::move(next);
+        if (old) old->stop();
+        return std::nullopt;
+    } catch (...) {
+        return failure(Err::kInternal, "could not allocate loudness measurement");
+    }
+}
+
+std::optional<Failure> AudioEngine::get_loudness_report(const std::string& id, LoudnessReport& report) const {
+    if (!loudness_ || loudness_->id() != id) return failure(Err::kBadCommand, "obsolete measurementId");
+    report = loudness_->report();
+    return std::nullopt;
+}
+std::optional<Failure> AudioEngine::reset_loudness(const std::string& id, LoudnessReport& report) {
+    if (!loudness_ || loudness_->id() != id) return failure(Err::kBadCommand, "obsolete measurementId");
+    return start_loudness(loudness_->track_id(), report);
+}
+void AudioEngine::stop_loudness(const std::string& id) noexcept {
+    if (loudness_ && loudness_->id() == id) clear_loudness();
+}
+void AudioEngine::clear_loudness() noexcept {
+    if (!loudness_) return;
+    loudness_->stop();
+    loudness_.reset();
+    try { attach_loudness(nullptr); }
+    catch (...) { /* Allocation failure leaves only an inactive, resource-free shell in the graph. */ }
+}
+
 // ---- track graph swap(同舊 rack 的 grace 模式)----
 
 // 建候選圖 + atomic commit。會丟例外:new TrackGraph、各 vector/unordered_set
@@ -742,6 +800,7 @@ void AudioEngine::stop() noexcept {
 bool AudioEngine::commit_graph_candidate() {
     // 深拷貝結構殼:chain 內 plugin/ring shared_ptr、RT buffer shared_ptr 共用
     std::unique_ptr<TrackGraph> fresh{new TrackGraph{}};
+    fresh->loudness = loudness_;
     fresh->nodes = tracks_;
     fresh->order = graph_topo_order(tracks_);
     if (fresh->order.empty()) {
@@ -1353,6 +1412,7 @@ std::optional<Failure> AudioEngine::track_remove(std::uint32_t track_id) {
         return failure(Err::kTrackNotFound,
                        std::string("system ") + system_role_str(it->system_role) +
                            " output cannot be removed (rename or re-route it instead)");
+    if (loudness_ && loudness_->track_id() == track_id) clear_loudness();
     // 該軌的 plugin editor 先收(editor 與 dispatch 同在 main thread,無並發)
     for (auto& slot : it->chain) {
         if (slot.plugin && slot.plugin->editor_open()) slot.plugin->close_editor();
@@ -2319,6 +2379,7 @@ void AudioEngine::set_track_system_role(std::uint32_t track_id, SystemRole role)
 }
 
 void AudioEngine::clear_all_tracks() {
+    clear_loudness();
     for (auto& t : tracks_) {
         for (auto& slot : t.chain)
             if (slot.plugin && slot.plugin->editor_open()) slot.plugin->close_editor();
@@ -2668,6 +2729,10 @@ void AudioEngine::process(const AudioBlock& block) noexcept {
             route_plan.output_bus == RouteBus::kMonitor ? monitor_l : cur_l;
         const float* sink_r =
             route_plan.output_bus == RouteBus::kMonitor ? monitor_r : cur_r;
+
+        if (g->loudness && g->loudness->track_id() == n.track_id)
+            g->loudness->capture(n.kind == TrackKind::kOutput ? sink_l : cur_l,
+                                 n.kind == TrackKind::kOutput ? sink_r : cur_r, frames);
 
         // Sink(ASIO out scratch 已清零,直接 +=)
         if (n.output.type == TrackOutput::kAsioOut) {

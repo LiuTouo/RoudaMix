@@ -211,6 +211,11 @@ Copy-Item -LiteralPath (Join-Path $repoRoot 'engine\third_party\vst3-sdk\LICENSE
 Copy-Item -LiteralPath (Join-Path $repoRoot 'engine\third_party\asio-sdk\LICENSE.txt') `
     -Destination (Join-Path $licenses 'ASIO-LICENSE.txt')
 
+Copy-Item -LiteralPath (Join-Path $repoRoot 'engine\third_party\libebur128\COPYING') `
+    -Destination (Join-Path $licenses 'libebur128-MIT.txt')
+Copy-Item -LiteralPath (Join-Path $repoRoot 'engine\third_party\libebur128\COPYING.queue') `
+    -Destination (Join-Path $licenses 'libebur128-queue-BSD.txt')
+
 $manifestPath = Join-Path $stageRoot 'SHA256SUMS.txt'
 $manifestLines = Get-ChildItem -LiteralPath $stageRoot -File -Recurse |
     Where-Object { $_.FullName -ne $manifestPath } |

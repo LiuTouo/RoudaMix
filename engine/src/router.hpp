@@ -69,6 +69,7 @@ private:
     using EmptyRequest = router_request::Empty;
     using StartRequest = router_request::Start;
     using TrackAddRequest = router_request::TrackAdd;
+    using MeasurementIdRequest = router_request::MeasurementId;
     using TrackIdRequest = router_request::TrackId;
     using TrackSetRequest = router_request::TrackSet;
     using TrackSourceRequest = router_request::TrackSourceSet;
@@ -125,6 +126,10 @@ private:
 
     Outcome handle_ping(const EmptyRequest& request);
     Outcome handle_get_snapshot(const EmptyRequest& request);
+    Outcome handle_start_loudness(const TrackIdRequest& request);
+    Outcome handle_get_loudness_report(const MeasurementIdRequest& request);
+    Outcome handle_reset_loudness(const MeasurementIdRequest& request);
+    Outcome handle_stop_loudness(const MeasurementIdRequest& request);
     Outcome handle_get_latency_report(const EmptyRequest& request);
     Outcome handle_list_devices(const EmptyRequest& request);
     Outcome handle_list_audio_apps(const EmptyRequest& request);
