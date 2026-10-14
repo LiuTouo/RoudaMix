@@ -125,7 +125,7 @@ it("ellipsis and meter open the same unique persistent panel without resetting i
   expect(popup()?.textContent).toContain("LUFS-S");
   expect(popup()?.textContent).toContain("LUFS-I");
   expect(popup()?.textContent).toContain("最高 True Peak");
-  expect(popup()?.textContent).toContain("Loudness Range");
+  expect(popup()?.textContent).toContain("響度範圍（LRA）");
   expect(document.activeElement).toBe(popup());
   document.querySelector<HTMLButtonElement>(".meter-trigger")!.click(); await settle();
   expect(starts()).toHaveLength(1);
@@ -136,7 +136,7 @@ it("ellipsis and meter open the same unique persistent panel without resetting i
   more(1).click(); await settle();
   expect(document.querySelectorAll("#loudness-analysis")).toHaveLength(1);
   expect(popup()?.textContent).toContain("監聽");
-  expect(popup()?.textContent).toContain("實際輸出 bus");
+  expect(popup()?.textContent).toContain("實際輸出（含監聽）");
   expect(starts()).toHaveLength(2);
   expect(observers[0].disconnected).toBe(true);
   expect(observers.at(-1)?.target).toBe(more(1).parentElement);
@@ -172,6 +172,39 @@ it("shows live numbers and reset returns to warmup without changing the Session"
   expect(status.revision).toBe(0);
 });
 
+it("shows purpose-specific finished-mix references without changing measured values or gain", async () => {
+  await show(); more().click(); await settle();
+  const reference = popup()!.querySelector(".reference")!;
+  expect(reference.textContent).toContain("成品輸出參考");
+  expect(reference.textContent).toContain("LUFS-I");
+  expect(reference.textContent).toContain("Apple Podcasts");
+  expect(reference.textContent).toContain("−16 ±1 LUFS");
+  expect(reference.textContent).toContain("Spotify 音樂");
+  expect(reference.textContent).toContain("−14 LUFS");
+  expect(reference.textContent).toContain("≤ −1 dBTP");
+  expect(reference.textContent).toContain("低於 −2 dBTP");
+  expect(reference.textContent).toContain("非單軌目標");
+  expect(reference.textContent).toContain("M／S、LRA 不設固定值");
+  current = { ...current!, elapsedSeconds: 12, integratedLufs: -9, truePeakDbtp: 2 };
+  await vi.advanceTimersByTimeAsync(200); await settle();
+  expect(popup()?.querySelector('[data-metric="integratedLufs"]')?.textContent).toBe("-9.0");
+  expect(popup()?.querySelector('[data-metric="truePeakDbtp"]')?.textContent).toContain("2.0");
+  expect(command.mock.calls.some(([kind]) => kind === "track_set")).toBe(false);
+});
+
+it("keeps the level-bar icon decorative and the full button named and keyboard-operable", async () => {
+  await show();
+  for (const button of document.querySelectorAll<HTMLButtonElement>(".meter-more")) {
+    expect(button.getAttribute("aria-label")).toContain("響度分析");
+    expect(button.tabIndex).toBe(0);
+    expect(button.querySelector("span")?.getAttribute("aria-hidden")).toBe("true");
+    expect(button.querySelector("svg")?.getAttribute("focusable")).toBe("false");
+    const bars = [...button.querySelectorAll("svg rect")];
+    expect(bars.map((bar) => bar.getAttribute("height"))).toEqual(["4", "10", "7"]);
+    expect(bars.every((bar) => Number(bar.getAttribute("y")) + Number(bar.getAttribute("height")) === 13)).toBe(true);
+  }
+});
+
 it("old engines disable the extra entry without disabling existing meter right-click", async () => {
   capabilities = []; await show();
   expect(more().disabled).toBe(true);
@@ -190,7 +223,7 @@ it("can open while stopped, freezes a stopped report, and restarts while open", 
   emitStatus({ running: true }); await settle();
   current = { ...current!, elapsedSeconds: 6, integratedLufs: -19 };
   emitStatus({ running: false }); await settle();
-  expect(popup()?.textContent).toContain("已停止，數值已凍結");
+  expect(popup()?.textContent).toContain("已停止 · 數值凍結");
   expect(popup()?.querySelector('[data-metric="integratedLufs"]')?.textContent).toBe("-19.0");
   emitStatus({ running: true, sampleRate: 96000 }); await settle();
   expect(starts()).toHaveLength(2);

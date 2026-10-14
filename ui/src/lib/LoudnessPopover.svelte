@@ -14,14 +14,14 @@
   let panel: HTMLDivElement;
   const report = $derived(view.report);
   const interrupted = $derived(!!view.error || report?.state === "error");
-  const statusText = $derived(view.busy ? "正在開始量測…" : interrupted ? "量測中斷（非即時）" :
-    !running ? (report ? "已停止，數值已凍結" : "引擎未啟動") :
-    report?.state === "stopped" ? "已停止，數值已凍結" :
+  const statusText = $derived(view.busy ? "開始量測…" : interrupted ? "量測中斷" :
+    !running ? (report ? "已停止 · 數值凍結" : "引擎未啟動") :
+    report?.state === "stopped" ? "已停止 · 數值凍結" :
     !report || report.elapsedSeconds < 3 ? "收集資料中…" : "量測中");
   const metrics = [
-    { key: "momentaryLufs", label: "LUFS-M", window: "400 ms", help: "最近 400 毫秒的瞬時響度，用來觀察當下音量變化。" },
-    { key: "shortTermLufs", label: "LUFS-S", window: "3 秒", help: "最近 3 秒的短期響度，用來比較一小段聲音的持續響度。" },
-    { key: "integratedLufs", label: "LUFS-I", window: "本次累積", help: "自開啟或重置起、經 gating 的整體響度；沒有有效資料時顯示 —。" },
+    { key: "momentaryLufs", label: "LUFS-M", window: "瞬時 · 400 ms", help: "最近 400 毫秒的響度。" },
+    { key: "shortTermLufs", label: "LUFS-S", window: "短期 · 3 秒", help: "最近 3 秒的響度。" },
+    { key: "integratedLufs", label: "LUFS-I", window: "整體 · 本次", help: "本次量測的整體響度，排除過低音量。" },
   ] as const;
 
   $effect(() => {
@@ -85,7 +85,7 @@
   role="dialog" tabindex="-1" aria-labelledby="loudness-heading">
   <header>
     <h2 id="loudness-heading">響度分析 <span>· {track.name}</span></h2>
-    <button type="button" class="close" aria-label="關閉響度分析" data-tooltip="關閉並停止本次響度量測。"
+    <button type="button" class="close" aria-label="關閉響度分析" data-tooltip="關閉並停止量測。"
       onclick={() => onClose(true)}>×</button>
   </header>
   <p class="status" role="status">{statusText}</p>
@@ -99,20 +99,32 @@
     {/each}
   </div>
   <dl>
-    <div><dt data-tooltip="自開啟或重置起，左右聲道中最高的真峰值；包含取樣點之間可能出現的峰值，不等同 Peak／dBFS。">最高 True Peak</dt>
+    <div><dt data-tooltip="本次最高真峰值，包含取樣點之間的峰值。">最高 True Peak</dt>
       <dd data-metric="truePeakDbtp">{loudnessValue(report, "truePeakDbtp")} <span>dBTP</span></dd></div>
-    <div><dt data-tooltip="LRA 描述這段聲音的響度變化範圍，不是峰值與 RMS 的差。剛開始或有效資料不足時不宜據此下結論。">Loudness Range（LRA）</dt>
+    <div><dt data-tooltip="響度的變化範圍；越小越平穩，越大起伏越明顯。">響度範圍（LRA）</dt>
       <dd data-metric="loudnessRangeLu">{loudnessValue(report, "loudnessRangeLu")} <span>LU</span></dd></div>
   </dl>
+  <!-- 成品參考：https://podcasters.apple.com/support/893-audio-requirements
+       https://support.spotify.com/us/artists/article/loudness-normalization/ -->
+  <section class="reference" aria-labelledby="loudness-reference">
+    <h3 id="loudness-reference">成品輸出參考 <span>LUFS-I</span></h3>
+    <div class="reference-targets">
+      <div><span>Apple Podcasts</span><strong>−16 ±1 LUFS</strong></div>
+      <div><span>Spotify 音樂</span><strong>−14 LUFS</strong></div>
+    </div>
+    <p class="reference-peak">True Peak <strong>≤ −1 dBTP</strong></p>
+    <p class="note">Spotify 高於 −14 LUFS 時，真峰值建議低於 −2 dBTP。</p>
+    <p class="note">非單軌目標；M／S、LRA 不設固定值。</p>
+  </section>
   {#if interrupted}<p class="error" role="alert">{view.error || report?.error || "量測中斷，請重置後再試。"}</p>{/if}
-  {#if view.restarted && !view.busy}<p class="note">引擎重新啟動或取樣率已變更，量測已重置。</p>{/if}
+  {#if view.restarted && !view.busy}<p class="note">引擎變更，量測已重置。</p>{/if}
   <footer>
     <span>已量測 <time>{loudnessDuration(report?.elapsedSeconds ?? 0)}</time></span>
     <button type="button" disabled={!running || view.busy} onclick={onReset}
-      aria-label="重置響度量測" data-tooltip="清空五項量測、累積統計與計時，從現在重新開始。">{!report && view.error ? "重試量測" : "重置量測"}</button>
+      aria-label="重置響度量測" data-tooltip="清空數值與計時，重新量測。">{!report && view.error ? "重試量測" : "重置量測"}</button>
   </footer>
-  <p class="note">累積值自開啟或上次重置起。— 表示收集資料中或有效資料不足；−∞ 表示靜音。</p>
-  <p class="note">{track.kind === "output" ? "量測實際輸出 bus（含監聽分支），在送往裝置前取樣。" : "量測主訊號：插件、音量與靜音控制之後。"}不同用途的適合響度不同，數值不是音質合格判定。</p>
+  <p class="note">— 無有效資料 · −∞ 靜音 · 開啟或重置後累積</p>
+  <p class="note">{track.kind === "output" ? "量測點：實際輸出（含監聽）。" : "量測點：插件、音量與靜音控制之後。"}</p>
 </div>
 
 <style>
@@ -137,6 +149,14 @@
   dt { color: var(--text-dim); }
   dd { margin: 0; white-space: nowrap; font-variant-numeric: tabular-nums; font-weight: 600; }
   dd span { font-weight: 400; }
+  .reference { border-top: 1px solid var(--border); padding: 12px 0; }
+  .reference h3 { display: flex; align-items: baseline; gap: 8px; margin: 0 0 8px; font-size: 12px; font-weight: 500; }
+  .reference h3 span, .reference-targets span { color: var(--text-dim); font-size: 12px; font-weight: 400; }
+  .reference-targets { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .reference-targets > div { display: flex; flex-direction: column; gap: 2px; }
+  .reference strong { font-variant-numeric: tabular-nums; font-weight: 500; }
+  .reference-peak { margin: 8px 0 0; font-size: 12px; }
+  .reference .note { margin-top: 4px; }
   footer { border-top: 1px solid var(--border); padding-top: 12px; color: var(--text-dim); font-size: 12px; }
   footer button { min-height: 36px; }
   time { font-variant-numeric: tabular-nums; }

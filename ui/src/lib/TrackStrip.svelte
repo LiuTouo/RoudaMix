@@ -1378,7 +1378,7 @@
         <button type="button" class="meter-trigger" aria-disabled={!loudnessEnabled}
           aria-label={`開啟 ${track.name} 的響度分析`}
           aria-haspopup="dialog" aria-expanded={loudnessOpen} aria-controls={loudnessOpen ? "loudness-analysis" : undefined}
-          data-tooltip={loudnessEnabled ? "按一下開啟 LUFS、True Peak 與 LRA 響度分析；右鍵只清除電平錶過載標記。" : "目前引擎不支援響度分析。"}
+          data-tooltip={loudnessEnabled ? "開啟響度分析；右鍵清除過載標記。" : "目前引擎不支援響度分析。"}
           onclick={(event) => { if (loudnessEnabled) onLoudnessOpen?.(track.trackId, meterAnchor, event.currentTarget); }}>
           <MeterCanvas strip={stripOfTrack(track.trackId, meterView)} />
         </button>
@@ -1391,10 +1391,16 @@
         >
       {/if}
       <button type="button" class="meter-more" disabled={!loudnessEnabled}
-        aria-label={`${track.name} 的更多音頻資訊：響度分析`}
+        aria-label={`${track.name} 的響度分析`}
         aria-haspopup="dialog" aria-expanded={loudnessOpen} aria-controls={loudnessOpen ? "loudness-analysis" : undefined}
-        data-tooltip={loudnessEnabled ? "響度分析：LUFS-M／S／I、True Peak 與 LRA。" : "目前引擎不支援響度分析。"}
-        onclick={(event) => onLoudnessOpen?.(track.trackId, meterAnchor, event.currentTarget)}><span aria-hidden="true">⋯</span></button>
+        data-tooltip={loudnessEnabled ? "響度分析" : "目前引擎不支援響度分析。"}
+        onclick={(event) => onLoudnessOpen?.(track.trackId, meterAnchor, event.currentTarget)}>
+        <span aria-hidden="true"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" focusable="false">
+          <rect x="3" y="9" width="2" height="4" rx="0.5" />
+          <rect x="7" y="3" width="2" height="10" rx="0.5" />
+          <rect x="11" y="6" width="2" height="7" rx="0.5" />
+        </svg></span>
+      </button>
     </div>
   </div>
   </div>
@@ -2005,9 +2011,18 @@
   .meter-trigger[aria-disabled="true"] { cursor: default; }
   .meter-more {
     flex: 0 0 44px; width: 46px; min-height: 44px; padding: 0;
-    border: 0; background: transparent; color: var(--text-dim); font-size: 16px;
+    display: flex; align-items: center; justify-content: flex-start;
+    border: 0; background: transparent;
   }
-  .meter-more:hover:not(:disabled), .meter-more[aria-expanded="true"] { color: var(--accent); }
+  .meter-more > span {
+    /* 排除 MeterCanvas 右側 24px 刻度，圖示對齊雙聲道電平條，點擊範圍不縮小。 */
+    width: calc(100% - 24px); height: 24px; display: grid; place-items: center;
+    color: var(--text-dim);
+    transition: color var(--motion-dur-1) var(--motion-ease-standard), background-color var(--motion-dur-1) var(--motion-ease-standard);
+  }
+  .meter-more:hover:not(:disabled) > span, .meter-more[aria-expanded="true"] > span {
+    color: var(--text); background: var(--bg-raised);
+  }
   .meterwrap .nometer { flex: 1; }
   .add {
     align-self: flex-start;
