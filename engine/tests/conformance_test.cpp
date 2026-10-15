@@ -84,7 +84,7 @@ void check_command_result_schemas() {
         {"get_loudness_report", loudness},
         {"reset_loudness", loudness},
         {"stop_loudness", nlohmann::json::object()},
-        {"ping", {{"engineVersion", "0.1.0"}}},
+        {"ping", {{"engineVersion", rmx::kEngineVersion}}},
         {"get_snapshot", {{"snapshot", nlohmann::json::object()}}},
         {"get_latency_report",
          {{"report",
