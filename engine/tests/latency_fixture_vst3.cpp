@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <thread>
 #include <vector>
 #include <windows.h>
 
@@ -21,6 +22,9 @@ using namespace Steinberg::Vst;
 constexpr ParamID kLatencyParam = 100;
 constexpr ParamID kCpuParam = 101;
 constexpr ParamID kFailParam = 102;
+constexpr ParamID kMessageProbeParam = 103;
+constexpr const char* kMessageRequest = "rmx.fixture.realtime.request";
+constexpr const char* kMessageReply = "rmx.fixture.realtime.reply";
 constexpr std::uint32_t kMaxLatency = 192000;
 const FUID kProcessorUid(0x52584C50, 0x44434658, 0x54555245, 0x30303031);
 const FUID kControllerUid(0x52584C43, 0x44434658, 0x54555245, 0x30303031);
@@ -64,6 +68,13 @@ public:
         ring_r_.assign(capacity, 0.0F);
         write_ = 0;
         return kResultOk;
+    }
+
+    tresult PLUGIN_API notify(IMessage* message) override {
+        if (message != nullptr && message->getMessageID() != nullptr &&
+            std::strcmp(message->getMessageID(), kMessageRequest) == 0)
+            return sendMessageID(kMessageReply);
+        return AudioEffect::notify(message);
     }
 
     uint32 PLUGIN_API getLatencySamples() override {
@@ -253,6 +264,34 @@ public:
         return kResultOk;
     }
 
+    // Hidden test hook: a plug-in-owned thread requests data and receives a synchronous reply.
+    tresult PLUGIN_API setParamNormalized(ParamID id, ParamValue value) override {
+        if (id != kMessageProbeParam) return EditController::setParamNormalized(id, value);
+        message_received_.store(false);
+        const auto request = [this] { (void)sendMessageID(kMessageRequest); };
+        if (value >= 0.5) {
+            std::thread worker(request);
+            worker.join();
+        } else {
+            request();
+        }
+        return kResultOk;
+    }
+
+    ParamValue PLUGIN_API getParamNormalized(ParamID id) override {
+        if (id == kMessageProbeParam) return message_received_.load() ? 1.0 : 0.0;
+        return EditController::getParamNormalized(id);
+    }
+
+    tresult PLUGIN_API notify(IMessage* message) override {
+        if (message != nullptr && message->getMessageID() != nullptr &&
+            std::strcmp(message->getMessageID(), kMessageReply) == 0) {
+            message_received_.store(true);
+            return kResultOk;
+        }
+        return EditController::notify(message);
+    }
+
     IPlugView* PLUGIN_API createView(FIDString name) override {
         wchar_t mode[2]{};
         if (std::strcmp(name, ViewType::kEditor) != 0 ||
@@ -304,6 +343,7 @@ public:
     }
 
 private:
+    std::atomic<bool> message_received_{};
     IComponentHandler* registered_handler_{};
 };
 

@@ -72,9 +72,9 @@ tresult PLUGIN_API ConnectionProxy::notify (IMessage* message)
 {
 	if (dstConnection)
 	{
-		// We discard the message if we are not in the UI main thread
-		if (threadChecker && threadChecker->test ())
-			return dstConnection->notify (message);
+		// RoudaMix hosts both peers in-process: preserve the sender's thread, as a direct
+		// connection would. FabFilter polls analyzer data from its own background thread.
+		return dstConnection->notify (message);
 	}
 	return kResultFalse;
 }

@@ -76,6 +76,19 @@ int main(int argc, char** argv) {
     CHECK(plugin.process(in_l, in_r, out_l, out_r, 64, nullptr, 0));
     CHECK(out_l[0] == 0.0F && out_r[0] == 0.0F);
 
+    // FabFilter-style analyzer polling: controller worker -> processor -> controller.
+    // Repeat across instances so neither the connection nor its teardown can rely on a singleton.
+    for (int i = 0; i < 3; ++i) {
+        rmx::Vst3Plugin messaging(module, classes[0].uid);
+        CHECK(messaging.loaded());
+        CHECK(messaging.initialize(48000.0, 64));
+        constexpr std::uint32_t message_probe_id = 103;
+        messaging.set_param_normalized(message_probe_id, 0.0); // main-thread control
+        CHECK(messaging.param_value(message_probe_id) == 1.0);
+        messaging.set_param_normalized(message_probe_id, 1.0); // plug-in-owned worker
+        CHECK(messaging.param_value(message_probe_id) == 1.0);
+    }
+
     std::printf("latency_fixture_test PASSED\n");
     return 0;
 }
