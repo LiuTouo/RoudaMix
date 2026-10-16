@@ -45,6 +45,10 @@ This project is indexed by GitNexus as **RoudaMix** (4478 symbols, 9725 relation
 
 # UI 提示規範
 
+## 引擎測試紀律
+
+- 本地跑引擎測試前必先 `cmake --build engine/build --config Release` 全量重建；`ctest` 不會重建，只重建單一 target 後跑全套會拿到舊 binary 的假綠（2026-10-16 v0.1.41 CI 敗於此）。
+
 - 所有滑鼠懸停或鍵盤焦點提示一律使用 `data-tooltip`，由 `ui/src/lib/tooltip.ts` 的全域提示層呈現。
 - 禁止使用 HTML `title` 屬性作為提示，避免出現 WebView／瀏覽器原生樣式。
 - 提示外觀統一由 `ui/src/app.css` 的 `.app-tooltip` 維護；不得在個別元件另建臨時提示樣式或提示元件。

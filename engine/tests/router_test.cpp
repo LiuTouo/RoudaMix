@@ -35,6 +35,18 @@ void expect_equal(const nlohmann::json& actual, const nlohmann::json& expected,
     ++failures;
 }
 
+// engineVersion 隨 release 版本變動，fixture 凍結範例值，比對前對齊，
+// 避免每次改版都要重錄 fixture（2026-10-16 v0.1.41 CI 敗於此）。
+void freeze_engine_version(std::vector<nlohmann::json>& frames) {
+    for (auto& frame : frames) {
+        for (const char* envelope : {"result", "payload"}) {
+            if (frame.contains(envelope) && frame.at(envelope).contains("engineVersion")) {
+                frame.at(envelope).at("engineVersion") = "0.1.0";
+            }
+        }
+    }
+}
+
 void request_reply_fixture(const fs::path& fixture_path) {
     const auto fixture = read_json(fixture_path);
     expect_equal(fixture.at("baselineCommit"), "fa1eb53bda529dbd2371c2171bb5defe80f824e7",
@@ -52,6 +64,7 @@ void request_reply_fixture(const fs::path& fixture_path) {
     frames.clear();  // connection snapshot belongs to a separate protocol event
     (void)router.dispatch_guarded(1, command);
 
+    freeze_engine_version(frames);
     expect_equal(frames, fixture.at("frames"), "router request/reply fixture");
     bool validated = false;
     for (const auto& frame : frames) {
@@ -77,6 +90,7 @@ void connection_snapshot_fixture(const fs::path& fixture_path) {
     rmx::Router router;
     std::vector<nlohmann::json> frames;
     router.connect(7, [&](const nlohmann::json& frame) { frames.push_back(frame); });
+    freeze_engine_version(frames);
     expect_equal(frames, fixture.at("frames"), "router connection snapshot fixture");
 }
 
