@@ -19,3 +19,6 @@ node_modules/
 # CTest 局部狀態
 /engine/Testing/
 /Testing/
+
+# pi agent session artifacts
+/.pi/
