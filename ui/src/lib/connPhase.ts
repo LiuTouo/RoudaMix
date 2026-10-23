@@ -68,7 +68,8 @@ export function needsActiveSnapshot(connected: boolean): boolean {
 }
 
 /** reconnect epoch 對齊:epoch 變了(新 engine 代)= 上一代的pending 狀態全部作廢。
- *  回傳是否要重置本地 scan/restore 等一次性旗標。 */
+ *  回傳是否要重置本地 scan/restore 等一次性旗標。engine 的 epoch 只會遞增,
+ *  回到 0 = 全新 engine process(bridge 重 spawn 後首次 snapshot)——同樣是換代。 */
 export function epochChanged(prev: number, next: number): boolean {
-  return prev !== 0 && next !== 0 && prev !== next;
+  return prev !== 0 && prev !== next;
 }

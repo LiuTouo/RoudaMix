@@ -33,6 +33,8 @@ HWND g_main_hwnd = nullptr;
 
 std::mutex g_write_mutex;
 std::atomic<HANDLE> g_active_pipe{nullptr};
+// 有 client 通過認證並服務中 = UI 活着;idle watchdog 只針對孤兒 engine。
+std::atomic<bool> g_client_connected{false};
 std::atomic<std::uint64_t> g_conn_gen{0};
 
 // #16 IPC capability:bridge 產生、spawn env 傳入(ROUDAMIX_IPC_PIPE /
@@ -164,6 +166,7 @@ void serve_client(HANDLE pipe, std::uint64_t generation) {
         return;
     }
     g_last_activity.store(GetTickCount64());
+    g_client_connected.store(true);
     g_router.connect(generation,
                      [pipe](const nlohmann::json& frame) { send_frame(pipe, frame); });
     for (;;) {
@@ -195,6 +198,7 @@ void serve_client(HANDLE pipe, std::uint64_t generation) {
             g_router.send_protocol_error(generation, 0, error.code, error.what());
         }
     }
+    g_client_connected.store(false);
 }
 
 void pipe_serve_inner() {
@@ -260,6 +264,9 @@ void idle_watchdog() {
         if (g_exiting.load()) return;
         for (int index = 0; index < 240 && !g_exiting.load(); ++index) Sleep(250);
         if (g_exiting.load()) return;
+        // client 連線中 = UI 活着(即使使用者沒下指令、meter 走 SHM 不走 pipe)
+        // —— 這不是孤兒,不得 idle 退出。UI 死亡時 pipe 會斷,自然落到下面的計時。
+        if (g_client_connected.load()) continue;
         if (GetTickCount64() - g_last_activity.load() > kIdleTimeoutMs) {
             if (HANDLE pipe = g_active_pipe.load(); pipe != nullptr)
                 CancelIoEx(pipe, nullptr);

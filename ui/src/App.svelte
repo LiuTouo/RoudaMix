@@ -94,7 +94,7 @@
     Track,
   } from "./lib/types";
 
-  let conn = $state<ConnectionStatus>({ connected: false, epoch: 0, engineVersion: "" });
+  let conn = $state<ConnectionStatus>({ connected: false, epoch: 0, engineVersion: "", bootGen: 0 });
   let connProbeErr = $state<CommandError | null>(null); // 主動 get_snapshot 的錯誤(version mismatch 等)
   let snap = $state<unknown>(null);
   let status = $state<EngineStatus | null>(null);
@@ -521,14 +521,17 @@
 
       sub(
       await onConnection((c) => {
-        if (!c.connected || epochChanged(conn.epoch, c.epoch)) {
+        // engine 換代偵測:epoch(重生後可能 0→0 分不出)加 bridge 的 spawn 計數 bootGen
+        const engineGenerationChanged =
+          epochChanged(conn.epoch, c.epoch) || epochChanged(conn.bootGen ?? 0, c.bootGen ?? 0);
+        if (!c.connected || engineGenerationChanged) {
           resetPluginTransfer();
           pluginCopyEnabled = false;
           loudnessEnabled = false;
           closeLoudness(false);
         }
         // P1-A:reconnect epoch 對齊 —— engine 換代重連,本地一次性旗標作廢重跑
-        if (epochChanged(conn.epoch, c.epoch)) {
+        if (engineGenerationChanged) {
           ensuredDefaults = false;
           deviceStream = transitionDeviceStream(deviceStream, { type: "reset" }).state;
           devices = [];
@@ -914,6 +917,10 @@
   async function ensureDefaults() {
     if (!status) return;
     await settingsReady();
+    // 引擎已有軌道 = 不是新場景:絕不自動 restore 覆蓋活着的場景。
+    // (WebView reload / pipe 瞬斷重連會重置旗標,但引擎可能還帶著使用中的場景;
+    // 場景內容只由使用者明確操作改變)
+    if (status.tracks.length > 0) return;
     if (restorePath()) await startupRestore(); // 恢復完 snapshot 會帶 tracks,自然跳過空白預設
     if (ensuredDefaults || !status || status.tracks.length > 0) return;
     ensuredDefaults = true;

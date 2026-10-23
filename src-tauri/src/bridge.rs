@@ -24,6 +24,18 @@ use crate::spawn;
 const REPLY_TIMEOUT: Duration = Duration::from_secs(30);
 const CONNECT_RETRY: Duration = Duration::from_millis(500);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
+/// 連線中 keepalive:meter 走 SHM、指令全由使用者觸發,pipe 可能長時間無
+/// inbound frame;每 60s ping 一次證明 UI 活着(engine idle watchdog 只認
+/// inbound),失敗即停(半開 pipe 由讀 loop 斷線處理)。
+const PING_INTERVAL: Duration = Duration::from_secs(60);
+
+/// serve 返回時中止 ping task(RAII:讀 loop 任一 return 路徑都會 drop)。
+struct PingerGuard(tokio::task::JoinHandle<()>);
+impl Drop for PingerGuard {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
 
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -36,6 +48,9 @@ pub struct SharedState {
     pub phase: String,
     /// phase 詳情(spawn 失敗原因等;空 = 無)
     pub detail: String,
+    /// engine 換代計數:每次 spawn_supervised 成功 +1。epoch 在第一代連線期間
+    /// 恆為 0,engine 死亡重生(0→0)無法靠 epoch 分辨;UI 以 bootGen 偵測重生。
+    pub boot_gen: u64,
 }
 
 impl SharedState {
@@ -46,6 +61,7 @@ impl SharedState {
             engine_version: String::new(),
             phase: "connecting".into(),
             detail: String::new(),
+            boot_gen: 0,
         }
     }
 }
@@ -113,6 +129,8 @@ struct Inner {
     pending: PendingMap,
     write: AsyncMutex<Option<WriteHalf>>,
     next_id: AtomicU64,
+    /// engine 換代計數(spawn 成功次數;見 SharedState::boot_gen)。
+    boot_gen: AtomicU64,
     /// #16:本啟動的 pipe 名稱 + 認證秘密(run 與 respawn 共用同一 capability)。
     ipc: IpcChannel,
 }
@@ -130,6 +148,7 @@ impl Bridge {
                 pending: PendingMap::new(),
                 write: AsyncMutex::new(None),
                 next_id: AtomicU64::new(0),
+                boot_gen: AtomicU64::new(0),
                 ipc: crate::protocol::generate_ipc_channel(),
             }),
         }
@@ -137,6 +156,12 @@ impl Bridge {
 
     pub fn shared(&self) -> SharedState {
         self.inner.state.lock().unwrap().clone()
+    }
+
+    /// spawn 成功 = engine 換代計數 +1(僅改狀態;下一個 connection 事件帶出)。
+    fn note_engine_spawned(&self) {
+        let n = self.inner.boot_gen.fetch_add(1, Ordering::Relaxed) + 1;
+        self.inner.state.lock().unwrap().boot_gen = n;
     }
 
     fn set_phase(&self, app: &AppHandle, phase: &str, detail: &str) {
@@ -155,7 +180,10 @@ impl Bridge {
         tauri::async_runtime::spawn(async move {
             b.set_phase(&app, "spawning", "");
             match spawn::spawn_supervised(&app, &b.inner.ipc) {
-                Ok(()) => b.set_phase(&app, "connecting", ""),
+                Ok(()) => {
+                    b.note_engine_spawned();
+                    b.set_phase(&app, "connecting", "");
+                }
                 Err(se) => b.set_phase(&app, "spawn_failed", &format!("{se}")),
             }
         });
@@ -278,6 +306,7 @@ async fn run(app: AppHandle, b: Bridge) {
                     b.set_phase(&app, "spawning", "");
                     match spawn::spawn_supervised(&app, &b.inner.ipc) {
                         Ok(()) => {
+                            b.note_engine_spawned();
                             eprintln!("[bridge] spawned engine");
                             b.set_phase(&app, "connecting", "");
                         }
@@ -322,6 +351,19 @@ async fn serve(app: &AppHandle, b: &Bridge, mut pipe: NamedPipeClient) {
     }
     let (mut read, write) = tokio::io::split(pipe);
     *b.inner.write.lock().await = Some(write);
+
+    // keepalive ping(見 PING_INTERVAL 註):送失敗 = 連線已死,停 task 即可。
+    let _pinger = {
+        let b = b.clone();
+        PingerGuard(tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(PING_INTERVAL).await;
+                if b.send("ping", json!({})).await.is_err() {
+                    break;
+                }
+            }
+        }))
+    };
 
     // 主視窗 HWND → engine:editor host 掛成 owned 浮動視窗(無工作列項、
     // 隨主程式最小化)。fire-and-forget:engine 會回 ok,pending 沒登記即丟。

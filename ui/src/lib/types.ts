@@ -8,6 +8,8 @@ export interface ConnectionStatus {
   phase?: string;
   /** phase 詳情(spawn 失敗原因等;空 = 無) */
   detail?: string;
+  /** engine 換代計數(bridge 每次 spawn 成功 +1);用於偵測 engine 重生 */
+  bootGen?: number;
 }
 
 export interface ParamValue {

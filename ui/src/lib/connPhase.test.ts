@@ -49,9 +49,10 @@ test("needsActiveSnapshot:listener 掛好後永遠主動拉(snapshot 事件可�
   assert.equal(needsActiveSnapshot(false), true);
 });
 
-test("epochChanged:0(未知)不算變更;非 0 相異才算(reconnect 重置本地一次性旗標)", () => {
+test("epochChanged:0(未知)不算變更;非 0 相異或回到 0(全新 engine)才算", () => {
   assert.equal(epochChanged(0, 5), false);
-  assert.equal(epochChanged(3, 0), false);
+  // epoch 只會遞增;回到 0 = bridge 重 spawn 的全新 engine → 也是換代
+  assert.equal(epochChanged(3, 0), true);
   assert.equal(epochChanged(3, 3), false);
   assert.equal(epochChanged(3, 7), true);
 });
