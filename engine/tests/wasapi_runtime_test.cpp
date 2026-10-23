@@ -138,7 +138,7 @@ static void restore_and_retry(const std::string& module) {
     json saved;
     { std::ifstream in(path); in >> saved; }
     for (auto& track : saved["tracks"])
-        for (auto& plugin : track["plugins"]) plugin["pluginPath"] = module + ".missing";
+        for (auto& slot : track["plugins"]) slot["pluginPath"] = module + ".missing";
     { std::ofstream out(path); out << saved; }
     const auto loaded = s.ok("load_session", {{"path", path.string()}});
     CHECK(!loaded["missing"].empty());

@@ -8,12 +8,9 @@
     "build:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-portable.ps1",
     "generate:protocol": "node scripts/generate-protocol-artifacts.mjs",
     "check:protocol": "node scripts/generate-protocol-artifacts.mjs --check",
-    "test:protocol": "node --test --test-concurrency=1 scripts/protocol-artifacts.test.mjs scripts/protocol-stub-framework.test.mjs scripts/protocol-parity.test.mjs scripts/error-code-parity.test.mjs scripts/verify-updater-sig.test.mjs"
+    "test:protocol": "node --test --test-concurrency=1 scripts/protocol-artifacts.test.mjs scripts/protocol-stub-framework.test.mjs scripts/protocol-parity.test.mjs scripts/error-code-parity.test.mjs scripts/verify-updater-sig.test.mjs scripts/version-parity.test.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"
-  },
-  "dependencies": {
-    "@tauri-apps/plugin-dialog": "^2.7.2"
   }
 }
