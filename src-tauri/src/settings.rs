@@ -57,6 +57,9 @@ pub struct Settings {
     /// 監聽系統輸出軌靜音的全域快捷鍵(Tauri Shortcut 字串,如 "Ctrl+Shift+M");
     /// None = 未綁定。註冊與觸發由前端 global-shortcut plugin 處理。
     pub monitor_hotkey: Option<String>,
+    /// P1-K 輸入靜音看門狗開關。降噪/閘門型麥克風(NVIDIA Broadcast 等)沒說話時
+    /// 送出真數位零,會被看門狗誤判成斷源 —— 這類使用者需要能關掉警示。
+    pub input_silence_alert: bool,
 }
 
 impl Default for Settings {
@@ -74,6 +77,7 @@ impl Default for Settings {
             check_updates_on_startup: true,
             ui_scale: 100,
             monitor_hotkey: None,
+            input_silence_alert: true,
         }
     }
 }
@@ -199,6 +203,10 @@ pub fn normalize(raw: Value) -> (Settings, Vec<String>) {
                 Err(()) => {
                     warnings.push("settings.monitorHotkey 型別錯誤,已回復預設(未綁定)".into())
                 }
+            },
+            "inputSilenceAlert" => match v.as_bool() {
+                Some(value) => s.input_silence_alert = value,
+                None => warnings.push("settings.inputSilenceAlert 型別錯誤,已回復預設 true".into()),
             },
             _ => {} // 未知鍵:保留策略(merge 寫回)
         }
@@ -529,6 +537,30 @@ mod tests {
         assert_eq!(m["schemaVersion"], json!(SCHEMA_VERSION));
         assert_eq!(m["closeBehavior"], json!("tray"));
         assert_eq!(m["startMinimizedOnAutostart"], json!(false));
+    }
+
+    #[test]
+    fn normalize_input_silence_alert() {
+        let (s, w) = normalize(json!({"inputSilenceAlert": false}));
+        assert!(!s.input_silence_alert);
+        assert!(w.is_empty());
+
+        // 缺欄位 = 預設開啟(既有使用者升級後行為不變)
+        let (s, w) = normalize(json!({}));
+        assert!(s.input_silence_alert);
+        assert!(w.is_empty());
+
+        let (s, w) = normalize(json!({"inputSilenceAlert": "off"}));
+        assert!(s.input_silence_alert);
+        assert_eq!(w.len(), 1);
+
+        let path = tmp_path("input-silence-alert");
+        let (s, _) = normalize(json!({"inputSilenceAlert": false}));
+        save_to(&path, &merge(json!({}), &s)).unwrap();
+        let (loaded, w) = load_from(&path);
+        assert!(!loaded.input_silence_alert);
+        assert!(w.is_empty());
+        fs::remove_file(path).unwrap();
     }
 
     #[test]
