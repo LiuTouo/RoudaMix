@@ -322,10 +322,12 @@
     beeper.stop();
   }
 
-  /** 每 meter tick 餵靜音偵測;strip 缺 frame(graph 變更瞬間)視為不判斷 */
+  /** 每 meter tick 餵靜音偵測;strip 缺 frame(graph 變更瞬間)視為不判斷。
+   *  設定關閉看門狗 → monitored=false:下次 sample 自動解除既有警示 */
   function feedSilence(m: MetersFrame): void {
     const st = status;
     if (!st) return;
+    const watch = appSettings?.inputSilenceAlert !== false;
     const byTrackId = indexByTrackId({ table: st.telemetryStrips, strips: m.strips });
     for (const t of st.tracks) {
       if (t.kind === "output") continue;
@@ -333,7 +335,7 @@
       const trans = silenceWatcher.sample(
         t.trackId,
         strip ? Math.max(strip.peakL, strip.peakR) : 0,
-        silenceEligible(t) && strip !== undefined,
+        watch && silenceEligible(t) && strip !== undefined,
       );
       if (trans === "alert") raiseAlarm(`silence:${t.trackId}`);
       else if (trans === "clear") clearAlarm(`silence:${t.trackId}`);
@@ -2237,6 +2239,27 @@
         <option value="tray">縮小到系統匣</option>
         <option value="exit">關閉程式</option>
       </select>
+    </div>
+    <h2>警示</h2>
+    <div class="formrow checkrow" class:disabled={!appSettings}>
+      <span class="formlabel">輸入靜音警示</span>
+      <input
+        id="inputsilencealert"
+        type="checkbox"
+        checked={appSettings?.inputSilenceAlert !== false}
+        disabled={!appSettings}
+        onchange={(e) => {
+          if (!appSettings) return;
+          appSettings.inputSilenceAlert = e.currentTarget.checked;
+          persistSettings();
+        }}
+      />
+      <label
+        class="checklabel"
+        for="inputsilencealert"
+        data-tooltip="麥克風輪入持續 30 秒完全無訊號時發出警示（嗶聲與通知）。使用降噪／閘門型麥克風（如 NVIDIA Broadcast）沒說話時送出真正的靜音，會被誤判，請關閉此選項。來源失效與音訊未啟動的警示不受影響。"
+        >麥克風沒聲音時警示</label
+      >
     </div>
     </div>
   {:else if tab === "scenes"}

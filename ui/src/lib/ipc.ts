@@ -54,6 +54,8 @@ export type AppSettings = {
   uiScale?: number;
   /** 監聽系統輸出軌靜音的全域快捷鍵(Tauri Shortcut 字串,如 "Ctrl+Shift+M");null = 未綁定 */
   monitorHotkey?: string | null;
+  /** P1-K 輸入靜音看門狗(麥克風持續 30 秒全零 → 警示);降噪/閘門型麥克風沒說話時送真零,需可關閉。缺欄位 = 開啟。 */
+  inputSilenceAlert?: boolean;
 };
 
 /** get/set 的回覆:typed settings + 載入時的 normalize 警告(可呈現) */
