@@ -183,10 +183,8 @@ button:disabled {
   z-index: 2147483647;
   width: max-content;
   max-width: min(360px, calc(100vw - 16px));
-  max-height: min(320px, calc(100vh - 16px));
   margin: 0;
   padding: 4px 9px 5px;
-  overflow: hidden;
   overflow-wrap: anywhere;
   white-space: pre-line;
   color: var(--text);
