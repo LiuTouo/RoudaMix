@@ -4,4 +4,4 @@ members = ["src-tauri"]
 
 [workspace.package]
 edition = "2021"
-version = "0.1.43"
+version = "0.1.44"
