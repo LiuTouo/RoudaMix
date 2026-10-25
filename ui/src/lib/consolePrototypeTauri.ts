@@ -161,6 +161,18 @@ function engine(kind: string, payload: Record<string, any>): unknown {
       if (index >= 0) status.tracks.splice(payload.newIndex, 0, status.tracks.splice(index, 1)[0]);
       break;
     }
+    case 'duplicate_track': {
+      const index = status.tracks.findIndex((item) => item.trackId === payload.trackId);
+      if (index < 0 || status.tracks[index].systemRole)
+        throw { code: 'bad_command', message: '找不到可複製的模擬軌道' };
+      const source = status.tracks[index];
+      const base = source.name.endsWith(' 複製') ? source.name.slice(0, -3) : source.name;
+      const added: Track = { ...structuredClone(source), trackId: nextTrack++,
+        name: base + ' 複製', plugins: structuredClone(source.plugins) };
+      status.tracks.splice(index + 1, 0, added);
+      changed('已複製模擬軌道');
+      return { trackId: added.trackId, tracks: status.tracks };
+    }
     case 'add_plugin': {
       if (!track) throw { code: 'track_not_found', message: '找不到模擬軌道' };
       const index = catalog.findIndex((item) => item.path === payload.path);

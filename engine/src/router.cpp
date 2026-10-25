@@ -221,6 +221,7 @@ const std::unordered_map<std::string, Router::Route>& Router::routes() {
         {"track_set_output", &Router::route<TrackOutputRequest, &Router::handle_track_set_output>},
         {"track_set_output_latency_policy", &Router::route<TrackOutputLatencyPolicyRequest, &Router::handle_track_set_output_latency_policy>},
         {"track_move", &Router::route<TrackMoveRequest, &Router::handle_track_move>},
+        {"duplicate_track", &Router::route<TrackIdRequest, &Router::handle_duplicate_track>},
         {"start_scan", &Router::route<StartScanRequest, &Router::handle_start_scan>},
         {"cancel_scan", &Router::route<EmptyRequest, &Router::handle_cancel_scan>},
         {"add_plugin", &Router::route<AddPluginRequest, &Router::handle_add_plugin>},
@@ -621,6 +622,126 @@ Router::Outcome Router::handle_track_move(const TrackMoveRequest& request) {
     if (auto fail = engine_.track_move(request.track_id, request.new_index))
         return failure(std::move(*fail));
     return success({{"tracks", session::tracks_json(engine_)}}, Effect::kDirty);
+}
+
+// 一鍵複製整軌:control 面組合既有 API(同 session::load 的重建語意),原子性由
+// Router 臨界區保證 —— 任一步失敗 = 新軌回滾不建立。複製範圍 = kind/color/
+// gain/mute/source/output/latency policy/dests/sidechain 與完整 plugin 鏈
+// (參數 + runtime state;placeholder 原樣保留鏈位不重新試載)。新軌插在原軌
+// 正下方,名稱 = 原名 +「 複製」(已帶後綴不疊加)。
+Router::Outcome Router::handle_duplicate_track(const TrackIdRequest& request) {
+    const auto& tracks = engine_.tracks();
+    const auto src = std::find_if(tracks.begin(), tracks.end(), [&](const TrackNode& t) {
+        return t.track_id == request.track_id;
+    });
+    if (src == tracks.end())
+        return failure(Err::kTrackNotFound, "unknown trackId " + std::to_string(request.track_id));
+    if (src->system_role != SystemRole::kNone)
+        return failure(Err::kBadCommand,
+                       std::string("system ") + system_role_str(src->system_role) +
+                           " output cannot be duplicated");
+    // 先收妥全部來源資料 —— tracks_ 的 push_back 會使 src 迭代器失效;capture
+    // 失敗 = 零副作用直接中止
+    const std::size_t src_index = static_cast<std::size_t>(src - tracks.begin());
+    constexpr std::string_view kSuffix = " 複製";
+    std::string base = src->name;
+    if (base.ends_with(kSuffix)) base.erase(base.size() - kSuffix.size());
+    if (base.empty()) base = src->name;
+    const TrackKind kind = src->kind;
+    const std::uint32_t color = src->color;
+    const float gain = src->gain;
+    const bool mute = src->mute;
+    const OutputLatencyPolicy policy = src->latency_policy;
+    const TrackSource source = src->source;
+    const TrackOutput output = src->output;
+    const std::vector<std::uint32_t> dests = src->dests;
+    const std::vector<std::uint32_t> sidechain = src->sidechain_dests;
+    struct ChainCopy {
+        PluginSnapshot snapshot;  // live:完整 runtime state
+        std::string path, class_id, name, display_name, load_error;  // placeholder metadata
+        RackSlot::Availability availability{RackSlot::Availability::kOk};
+        bool placeholder{}, bypass{}, monitor_bypass{};
+        std::vector<std::pair<std::uint32_t, double>> params;
+    };
+    std::vector<ChainCopy> chain;
+    chain.reserve(src->chain.size());
+    for (const auto& slot : src->chain) {
+        ChainCopy copy;
+        copy.bypass = slot.bypass;
+        copy.monitor_bypass = slot.monitor_bypass;
+        copy.params = slot.param_values;
+        if (slot.is_placeholder()) {
+            copy.placeholder = true;
+            copy.path = slot.module_path;
+            copy.class_id = slot.class_id;
+            copy.name = slot.name;
+            copy.display_name = slot.display_name;
+            copy.availability = slot.availability;
+            copy.load_error = slot.load_error;
+        } else if (auto fail = engine_.capture_plugin(slot.instance_id, copy.snapshot)) {
+            return failure(std::move(*fail));
+        }
+        chain.push_back(std::move(copy));
+    }
+
+    std::uint32_t new_id = 0;
+    if (auto fail = engine_.track_add(kind, base + std::string(kSuffix), color, new_id))
+        return failure(std::move(*fail));
+    const auto rollback = [&]() { (void)engine_.track_remove(new_id); };
+    // 失敗即整軌回滾(track_remove 收 capture/editor 並清懸空引用),引擎狀態
+    // 回到指令前,錯誤回覆不需另外推 status
+    std::optional<Failure> fail =
+        engine_.track_set(new_id, std::nullopt, std::nullopt, gain, mute);
+    // latency policy 只對 output 軌合法(engine 端拒絕其他軌種)
+    if (!fail && kind == TrackKind::kOutput)
+        fail = engine_.track_set_output_latency_policy(new_id, policy);
+    if (!fail) fail = engine_.track_set_output(new_id, output);
+    if (!fail) fail = engine_.track_set_source(new_id, source);
+    if (!fail) fail = engine_.track_set_dests(new_id, dests);
+    if (fail) {
+        rollback();
+        return failure(std::move(*fail));
+    }
+    // 側鏈以 fx 視角還原:來源軌的 outgoing 邊 = 在每個目標 fx 的 sources 清單
+    // 加入新軌(輸入軌才可能有側鏈邊,新軌同軌種必為合法來源)。回滾時
+    // track_remove 會清掉其他軌對新軌的懸空引用
+    for (const auto target : sidechain) {
+        std::vector<std::uint32_t> sources;
+        for (const auto& t : engine_.tracks())
+            if (std::find(t.sidechain_dests.begin(), t.sidechain_dests.end(), target) !=
+                t.sidechain_dests.end())
+                sources.push_back(t.track_id);
+        sources.push_back(new_id);
+        std::sort(sources.begin(), sources.end());
+        if (auto side_fail = engine_.track_set_sidechain(target, std::move(sources))) {
+            rollback();
+            return failure(std::move(*side_fail));
+        }
+    }
+    for (std::size_t i = 0; i < chain.size(); ++i) {
+        const auto& copy = chain[i];
+        if (copy.placeholder) {
+            std::uint32_t instance_id = 0;
+            if (auto ph_fail = engine_.add_placeholder_plugin(
+                    new_id, copy.path, copy.class_id, copy.name, copy.bypass,
+                    copy.availability, copy.load_error, copy.params, instance_id)) {
+                rollback();
+                return failure(std::move(*ph_fail));
+            }
+            if (!copy.display_name.empty())
+                (void)engine_.set_plugin_name(instance_id, copy.display_name);
+            if (copy.monitor_bypass) (void)engine_.set_monitor_bypass(instance_id, true);
+            continue;
+        }
+        const auto inserted = insert_plugin_copy(copy.snapshot, new_id, i);
+        if (!inserted.ok) {
+            rollback();
+            return failure(std::move(inserted.error));
+        }
+    }
+    (void)engine_.track_move(new_id, src_index + 1);
+    return success({{"trackId", new_id}, {"tracks", session::tracks_json(engine_)}},
+                   Effect::kDirty);
 }
 
 Router::Outcome Router::handle_start_scan(const StartScanRequest& request) {

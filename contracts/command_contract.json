@@ -525,6 +525,23 @@
       "errors": ["bad_command"]
     },
     {
+      "kind": "duplicate_track",
+      "payload": {
+        "type": "object",
+        "required": ["trackId"],
+        "properties": { "trackId": { "$ref": "#/definitions/u32" } }
+      },
+      "result": {
+        "type": "object",
+        "required": ["trackId", "tracks"],
+        "properties": {
+          "trackId": { "$ref": "#/definitions/u32" },
+          "tracks": { "$ref": "#/definitions/trackArray" }
+        }
+      },
+      "errors": ["bad_command", "track_not_found", "plugin_load_failed", "plugin_state_failed"]
+    },
+    {
       "kind": "start_scan",
       "payload": {
         "type": "object",

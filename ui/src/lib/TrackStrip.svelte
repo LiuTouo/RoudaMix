@@ -56,6 +56,7 @@
     metered = true,
     latencyEnabled = false,
     pluginCopyEnabled = false,
+    trackDuplicateEnabled = false,
     loudnessEnabled = false,
     loudnessOpen = false,
     onLoudnessOpen,
@@ -85,6 +86,7 @@
     metered?: boolean;
     latencyEnabled?: boolean;
     pluginCopyEnabled?: boolean;
+    trackDuplicateEnabled?: boolean;
     loudnessEnabled?: boolean;
     loudnessOpen?: boolean;
     onLoudnessOpen?: (trackId: number, anchor: HTMLElement, trigger: HTMLButtonElement) => void;
@@ -869,8 +871,20 @@
       engineCommand("track_move", { trackId: track.trackId, newIndex: masterIdx }),
     );
   }
+  function duplicateTrack() {
+    err = "";
+    mq.run(mutKey.track(track.trackId), "duplicate", () =>
+      engineCommand("duplicate_track", { trackId: track.trackId }),
+    );
+  }
   function trackMenu(e: MouseEvent) {
-    openMenu(e.clientX, e.clientY, `軌道「${track.name}」排序`, [
+    // 系統輸出軌(監聽/串流)每 session 恰各一,不可複製(engine 也擋)
+    openMenu(e.clientX, e.clientY, `軌道「${track.name}」操作`, [
+      {
+        label: "複製音軌",
+        disabled: !trackDuplicateEnabled || track.systemRole != null,
+        run: duplicateTrack,
+      },
       { label: "上移", disabled: lanePeers[0]?.trackId === track.trackId, run: () => laneMove("up") },
       {
         label: "下移",
@@ -953,7 +967,7 @@
   data-console-kind={track.kind}
   role="listitem"
   aria-label="軌道 {track.name}"
-  data-tooltip="拖曳軌道空白區調整順序；點下方色塊的名稱可改名、點色塊其他處可換色；按右鍵開啟排序選單。"
+  data-tooltip="拖曳軌道空白區調整順序；點下方色塊的名稱可改名、點色塊其他處可換色；按右鍵開啟操作選單（複製音軌、排序）。"
   oncontextmenu={(e) => {
     if ((e.target as HTMLElement).closest("input, select, button, dialog")) return;
     e.preventDefault();

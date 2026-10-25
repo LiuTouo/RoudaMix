@@ -138,6 +138,14 @@
         "newIndex"
       ]
     },
+    "duplicate_track": {
+      "missing": [
+        "trackId"
+      ],
+      "wrongType": [
+        "trackId"
+      ]
+    },
     "start_scan": {
       "missing": [],
       "wrongType": [

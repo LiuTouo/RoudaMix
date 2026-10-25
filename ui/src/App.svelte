@@ -100,6 +100,7 @@
   let status = $state<EngineStatus | null>(null);
   let latencyEnabled = $state(false); // legacy view prop；實際 gate = pluginLatencyPdcV1 capability
   let pluginCopyEnabled = $state(false);
+  let trackDuplicateEnabled = $state(false);
   let loudnessEnabled = $state(false);
   let loudnessTarget = $state<{ trackId: number; anchor: HTMLElement; trigger: HTMLButtonElement } | null>(null);
   let loudnessView = $state(emptyLoudnessView());
@@ -406,6 +407,7 @@
   function applyAuthoritativeStatus(payload: AuthoritativeStatusPayload): void {
     if (payload.capabilities !== undefined) {
       pluginCopyEnabled = payload.capabilities.includes("pluginCopyV1");
+      trackDuplicateEnabled = payload.capabilities.includes("trackDuplicateV1");
       loudnessEnabled = payload.capabilities.includes("loudnessAnalysisV1");
     }
     const applied = applyStatus(
@@ -529,6 +531,7 @@
         if (!c.connected || engineGenerationChanged) {
           resetPluginTransfer();
           pluginCopyEnabled = false;
+          trackDuplicateEnabled = false;
           loudnessEnabled = false;
           closeLoudness(false);
         }
@@ -1920,6 +1923,7 @@
             metered={t.metered !== false}
             {latencyEnabled}
             {pluginCopyEnabled}
+            {trackDuplicateEnabled}
             scanModules={scanModules}
             scanFailed={scanFailed}
             scanRunning={scanRunning}
@@ -2000,6 +2004,7 @@
             metered={t.metered !== false}
             {latencyEnabled}
             {pluginCopyEnabled}
+            {trackDuplicateEnabled}
             scanModules={scanModules}
             scanFailed={scanFailed}
             scanRunning={scanRunning}

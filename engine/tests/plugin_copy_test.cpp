@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <thread>
 
 #include "audio_engine.hpp"
@@ -121,6 +122,7 @@ static void router_copy(const std::string& module) {
     router.connect(1, [&](const auto& frame) { frames.push_back(frame); });
     const auto capabilities = frames[0]["payload"]["capabilities"].get<std::vector<std::string>>();
     CHECK(std::find(capabilities.begin(), capabilities.end(), "pluginCopyV1") != capabilities.end());
+    CHECK(std::find(capabilities.begin(), capabilities.end(), "trackDuplicateV1") != capabilities.end());
     auto send = [&](const std::string& kind, nlohmann::json payload) {
         frames.clear();
         CHECK(!router.dispatch_guarded(1, {rmx::kProtocolVersion, ++id, kind, std::move(payload)}));
@@ -275,6 +277,181 @@ static void sidechain_rollback(const std::string& module) {
     engine.release_graph();
 }
 
+// duplicate_track:整軌複製(設定 + 插件鏈 + placeholder 保留)、原軌正下方插入、
+// 後綴不疊加、系統輸出軌拒絕、未知 id、模組消失 = 整軌回滾零殘留
+static void router_duplicate_track(const std::string& module) {
+    rmx::Router router;
+    std::vector<nlohmann::json> frames;
+    std::uint64_t id{};
+    router.connect(1, [&](const auto& frame) { frames.push_back(frame); });
+    auto send = [&](const std::string& kind, nlohmann::json payload) {
+        frames.clear();
+        CHECK(!router.dispatch_guarded(1, {rmx::kProtocolVersion, ++id, kind, std::move(payload)}));
+        for (const auto& frame : frames) {
+            if (!frame.contains("id") || frame["id"] != id) continue;
+            if (frame["ok"].get<bool>()) rmx::contract::validate_result(kind, frame["result"]);
+            return frame;
+        }
+        CHECK(false); return nlohmann::json{};
+    };
+    auto ok = [&](const std::string& kind, nlohmann::json payload) {
+        auto reply = send(kind, std::move(payload));
+        if (!reply["ok"].get<bool>()) std::fprintf(stderr, "%s: %s\n", kind.c_str(), reply.dump().c_str());
+        CHECK(reply["ok"].get<bool>()); return reply["result"];
+    };
+    auto snapshot_tracks = [&]() {
+        return ok("get_snapshot", nlohmann::json::object())["snapshot"]["tracks"];
+    };
+
+    const auto guitar = ok("track_add", {{"kind", "audio"}, {"name", "吉他"}, {"color", 0x4da3ff}})["trackId"].get<std::uint32_t>();
+    const auto fx = ok("track_add", {{"kind", "fx"}, {"name", "FX"}})["trackId"].get<std::uint32_t>();
+    const auto sink = ok("track_add", {{"kind", "output"}, {"name", "Out"}})["trackId"].get<std::uint32_t>();
+    ok("track_set_source", {{"trackId", guitar}, {"source", {{"type", "sine"}, {"freq", 220}}}});
+    ok("track_set_dests", {{"trackId", guitar}, {"dests", {fx, sink}}});
+    ok("track_set_dests", {{"trackId", fx}, {"dests", {sink}}});
+    ok("track_set_sidechain", {{"trackId", fx}, {"sources", {guitar}}});
+    ok("track_set", {{"trackId", guitar}, {"gain", 1.5}, {"mute", true}});
+    // 註:asioOut sink 在無 ASIO 裝置的測試環境回 ok 但不持久(既有引擎行為),
+    // 故 output 副本斷言用 null;latency policy 與軌種仍可驗
+    ok("track_set_output_latency_policy", {{"trackId", sink}, {"policy", "lowLatency"}});
+    const auto plug = ok("add_plugin", {{"trackId", fx}, {"path", module}})["instanceId"].get<std::uint32_t>();
+    ok("set_param", {{"instanceId", plug}, {"paramId", 101}, {"value", 0.25}});
+    ok("set_bypass", {{"instanceId", plug}, {"bypassed", true}});
+    ok("set_plugin_name", {{"instanceId", plug}, {"name", "我的效果"}});
+
+    // 一般輌完整複製 + 插入原軌正下方
+    const auto copy_id = ok("duplicate_track", {{"trackId", guitar}})["trackId"].get<std::uint32_t>();
+    CHECK(copy_id != guitar);
+    auto tracks = snapshot_tracks();
+    CHECK(tracks.size() == 4);
+    CHECK(tracks[1]["trackId"] == copy_id);
+    const auto& copy = tracks[1];
+    CHECK(copy["name"] == "吉他 複製");
+    CHECK(copy["kind"] == "audio");
+    CHECK(copy["color"] == 0x4da3ff);
+    CHECK(copy["gain"] == 1.5);
+    CHECK(copy["mute"] == true);
+    CHECK(copy["source"]["type"] == "sine");
+    CHECK(copy["source"]["freq"] == 220);
+    CHECK((copy["dests"] == nlohmann::json::array({fx, sink})));
+    CHECK(copy["plugins"].empty());
+    CHECK(tracks[0]["name"] == "吉他");
+    CHECK(tracks[0]["dests"].size() == 2);  // 原軌不受影響
+    // 側鏈:fx 同時收原軌與副本(來源邊指向兩個不同 id)
+    CHECK((tracks[2]["sidechain"] == nlohmann::json::array({guitar, copy_id})));
+
+    // 輸出軌(output + latency policy)與插件鏈(參數/bypass/自訂名)複製
+    ok("duplicate_track", {{"trackId", sink}});
+    ok("duplicate_track", {{"trackId", fx}});
+    tracks = snapshot_tracks();
+    CHECK(tracks.size() == 6);  // [吉他, 吉他複製, FX, FX複製, Out, Out複製]
+    const auto& fx_copy = tracks[3];
+    CHECK(fx_copy["name"] == "FX 複製");
+    CHECK(fx_copy["kind"] == "fx");
+    CHECK((fx_copy["dests"] == nlohmann::json::array({sink})));
+    CHECK((fx_copy["sidechain"] == nlohmann::json::array()));  // 來源邊不自動複製
+    CHECK(fx_copy["plugins"].size() == 1);
+    CHECK(fx_copy["plugins"][0]["instanceId"] != plug);
+    CHECK(fx_copy["plugins"][0]["name"] == "我的效果");
+    CHECK(fx_copy["plugins"][0]["displayName"] == "我的效果");
+    CHECK(fx_copy["plugins"][0]["bypassed"] == true);
+    CHECK(fx_copy["plugins"][0]["availability"] == "ok");
+    double copied_value = -1;
+    for (const auto& p : fx_copy["plugins"][0]["params"])
+        if (p["paramId"] == 101) copied_value = p["normalized"].get<double>();
+    CHECK(std::abs(copied_value - 0.25) < 1e-9);
+    const auto& out_copy = tracks[5];
+    CHECK(out_copy["name"] == "Out 複製");
+    CHECK(out_copy["kind"] == "output");
+    CHECK(out_copy["output"].is_null());  // 來源 sink 同值(見 setup 註)
+    CHECK(out_copy["latencyPolicy"] == "lowLatency");
+
+    // 後綴不疊加:副本的副本仍叫「吉他 複製」
+    ok("duplicate_track", {{"trackId", copy_id}});
+    tracks = snapshot_tracks();
+    CHECK(tracks.size() == 7);
+    CHECK(tracks[2]["name"] == "吉他 複製");
+
+    // 未知 id
+    const auto missing = send("duplicate_track", {{"trackId", 99999}});
+    CHECK(!missing["ok"].get<bool>());
+    CHECK(missing["error"]["code"] == "track_not_found");
+
+    // 系統輸出軌不可複製
+    ok("ensure_system_outputs", nlohmann::json::object());
+    tracks = snapshot_tracks();
+    std::uint32_t monitor = 0;
+    for (const auto& t : tracks)
+        if (t["systemRole"] == "monitor") monitor = t["trackId"].get<std::uint32_t>();
+    CHECK(monitor != 0);
+    const auto system_dup = send("duplicate_track", {{"trackId", monitor}});
+    CHECK(!system_dup["ok"].get<bool>());
+    CHECK(system_dup["error"]["code"] == "bad_command");
+
+    // 插入失敗 = 整軌回滾零殘留。已載入的 module 檔被 OS 鎖住刪不掉,改用超限
+    // latency(fixture param 100 = 1.0 → 4s,超出 2s 路由上限)迫使副本插入失敗
+    const auto folder = std::filesystem::temp_directory_path() /
+        ("roudamix-dup-test-" + std::to_string(GetCurrentProcessId()));
+    std::filesystem::create_directories(folder);
+    const auto doomed = ok("track_add", {{"kind", "audio"}, {"name", "Doomed"}})["trackId"].get<std::uint32_t>();
+    const auto doomed_plug = ok("add_plugin", {{"trackId", doomed}, {"path", module}})["instanceId"].get<std::uint32_t>();
+    ok("set_param", {{"instanceId", doomed_plug}, {"paramId", 100}, {"value", 1.0}});
+    ok("track_set_dests", {{"trackId", doomed}, {"dests", {sink}}});
+    const auto before_count = snapshot_tracks().size();
+    const auto failed = send("duplicate_track", {{"trackId", doomed}});
+    CHECK(!failed["ok"].get<bool>());
+    CHECK(failed["error"]["code"] == "plugin_state_failed");
+    tracks = snapshot_tracks();
+    CHECK(tracks.size() == before_count);
+    for (const auto& t : tracks) CHECK(t["name"] != "Doomed 複製");
+    // 原軌不受回滾影響,插件仍在
+    for (const auto& t : tracks)
+        if (t["trackId"] == doomed) CHECK(t["plugins"].size() == 1);
+
+    // placeholder(遺失模組)原樣保留鏈位:手寫 session 檔 → load → 複製
+    nlohmann::json placeholder_plugin = {
+        {"pluginPath", "C:\\missing\\gone.vst3"}, {"classId", ""},
+        {"name", "Gone"}, {"displayName", "自訂名"},
+        {"bypassed", true}, {"monitorBypassed", true},
+        {"params", nlohmann::json::array({{{"paramId", 5}, {"normalized", 0.5}}})},
+        {"availability", "loadFailed"}, {"loadError", "gone"}};
+    nlohmann::json session_file = {
+        {"roudamixSession", 4},
+        {"deviceKey", nullptr}, {"sampleRate", nullptr}, {"bufferSize", nullptr},
+        {"tracks", nlohmann::json::array({nlohmann::json{
+            {"trackId", 1}, {"kind", "audio"}, {"systemRole", nullptr},
+            {"latencyPolicy", "fullPdc"}, {"name", "PH"}, {"color", 7},
+            {"source", nullptr}, {"dests", nlohmann::json::array()},
+            {"sidechain", nlohmann::json::array()}, {"output", nullptr},
+            {"gain", 1.0}, {"mute", false},
+            {"plugins", nlohmann::json::array({placeholder_plugin})}}})}};
+    const auto session_path = folder / "placeholder.rmsession";
+    { std::ofstream out(session_path); out << session_file.dump(2); }
+    ok("load_session", {{"path", session_path.string()}});
+    tracks = snapshot_tracks();
+    // load 清空重建 + ensure_system_outputs 補 monitor/stream
+    CHECK(tracks.size() == 3);
+    CHECK(tracks[0]["name"] == "PH");
+    const auto ph_id = tracks[0]["trackId"].get<std::uint32_t>();
+    CHECK(tracks[0]["plugins"][0]["availability"] == "loadFailed");
+    ok("duplicate_track", {{"trackId", ph_id}});
+    tracks = snapshot_tracks();
+    CHECK(tracks.size() == 4);
+    CHECK(tracks[1]["name"] == "PH 複製");
+    const auto& ph_copy = tracks[1]["plugins"][0];
+    CHECK(ph_copy["availability"] == "loadFailed");
+    // 註:session 載入對 placeholder 不回填 displayName(既有行為),副本如實複製
+    // 源頭狀態;displayName 複製路徑由上面 fx 副本(「我的效果」)覆蓋
+    CHECK(ph_copy["name"] == "Gone");
+    CHECK(ph_copy["displayName"].is_null());
+    CHECK(ph_copy["bypassed"] == true);
+    CHECK(ph_copy["monitorBypassed"] == true);
+    CHECK(ph_copy["loadError"] == "gone");
+    CHECK(ph_copy["params"][0]["paramId"] == 5);
+    CHECK(ph_copy["params"][0]["normalized"] == 0.5);
+    std::filesystem::remove_all(folder);
+}
+
 int main(int argc, char** argv) {
     CHECK(argc == 2);
     SetEnvironmentVariableW(L"ROUDAMIX_VST_REGISTRY", nullptr);
@@ -283,5 +460,6 @@ int main(int argc, char** argv) {
     sidechain_rollback(module);
     engine_copy(module);
     router_copy(module);
+    router_duplicate_track(module);
     std::puts("plugin_copy_test PASSED");
 }

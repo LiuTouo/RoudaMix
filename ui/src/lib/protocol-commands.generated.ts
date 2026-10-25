@@ -2,7 +2,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { AudioApp, CaptureDevice, DeviceInfo, EngineStatus, ParamInfo, RenderDevice, Snapshot, Track } from "./types";
 
-export type CommandKind = "ping" | "get_snapshot" | "get_latency_report" | "list_devices" | "list_audio_apps" | "list_render_devices" | "list_capture_devices" | "start" | "stop" | "open_device_panel" | "track_add" | "track_remove" | "track_set" | "track_set_source" | "track_set_dests" | "track_set_sidechain" | "track_set_output" | "track_set_output_latency_policy" | "track_move" | "start_scan" | "cancel_scan" | "add_plugin" | "copy_plugin" | "paste_plugin" | "duplicate_plugin" | "remove_plugin" | "move_plugin" | "set_plugin_name" | "set_bypass" | "set_monitor_bypass" | "retry_plugin" | "set_param" | "get_params" | "open_editor" | "close_editor" | "save_preset" | "load_preset" | "save_session" | "load_session" | "ensure_system_outputs" | "set_editor_scale" | "set_editor_owner" | "shutdown_engine" | "start_loudness" | "get_loudness_report" | "reset_loudness" | "stop_loudness";
+export type CommandKind = "ping" | "get_snapshot" | "get_latency_report" | "list_devices" | "list_audio_apps" | "list_render_devices" | "list_capture_devices" | "start" | "stop" | "open_device_panel" | "track_add" | "track_remove" | "track_set" | "track_set_source" | "track_set_dests" | "track_set_sidechain" | "track_set_output" | "track_set_output_latency_policy" | "track_move" | "duplicate_track" | "start_scan" | "cancel_scan" | "add_plugin" | "copy_plugin" | "paste_plugin" | "duplicate_plugin" | "remove_plugin" | "move_plugin" | "set_plugin_name" | "set_bypass" | "set_monitor_bypass" | "retry_plugin" | "set_param" | "get_params" | "open_editor" | "close_editor" | "save_preset" | "load_preset" | "save_session" | "load_session" | "ensure_system_outputs" | "set_editor_scale" | "set_editor_owner" | "shutdown_engine" | "start_loudness" | "get_loudness_report" | "reset_loudness" | "stop_loudness";
 export type ErrorCode = "unsupported_version" | "bad_frame" | "bad_command" | "not_running" | "already_running" | "device_open_failed" | "device_lost" | "track_not_found" | "cycle_detected" | "device_busy" | "app_not_found" | "unsupported_windows" | "plugin_not_found" | "plugin_load_failed" | "plugin_no_editor" | "param_not_found" | "session_io" | "preset_io" | "plugin_state_failed" | "internal";
 type EmptyCommandKind = "ping" | "get_snapshot" | "get_latency_report" | "list_devices" | "list_audio_apps" | "list_render_devices" | "list_capture_devices" | "stop" | "open_device_panel" | "cancel_scan" | "ensure_system_outputs" | "shutdown_engine";
 
@@ -40,6 +40,7 @@ export interface CommandPayloads {
   "track_set_output": { "trackId": number; "output": null | { "type": "asioOut"; "channel": number } | { "type": "wasapi"; "deviceId": string } };
   "track_set_output_latency_policy": { "trackId": number; "policy": "fullPdc" | "lowLatency" };
   "track_move": { "trackId": number; "newIndex": number };
+  "duplicate_track": { "trackId": number };
   "start_scan": { "roots"?: Array<string> };
   "cancel_scan": Record<string, never>;
   "add_plugin": { "trackId": number; "path": string; "classId"?: string };
@@ -90,6 +91,7 @@ export interface CommandResults {
   "track_set_output": { "tracks": Array<Track> };
   "track_set_output_latency_policy": { "tracks": Array<Track> };
   "track_move": { "tracks": Array<Track> };
+  "duplicate_track": { "trackId": number; "tracks": Array<Track> };
   "start_scan": { "jobId": number; "reused": boolean };
   "cancel_scan": { "jobId": number; "cancelling": boolean };
   "add_plugin": { "instanceId": number; "trackId": number; "tracks": Array<Track> };
@@ -140,6 +142,7 @@ export interface CommandErrors {
   "track_set_output": "bad_command" | "track_not_found" | "device_busy";
   "track_set_output_latency_policy": "bad_command";
   "track_move": "bad_command";
+  "duplicate_track": "bad_command" | "track_not_found" | "plugin_load_failed" | "plugin_state_failed";
   "start_scan": never;
   "cancel_scan": never;
   "add_plugin": "plugin_load_failed";

@@ -55,7 +55,8 @@ static json warmed(Session& s, const json& id) {
 }
 static void router_lifecycle() {
     Session s;
-    CHECK(s.snapshot()["capabilities"].get<std::vector<std::string>>().back() == "loudnessAnalysisV1");
+    const auto caps = s.snapshot()["capabilities"].get<std::vector<std::string>>();
+    CHECK(std::find(caps.begin(), caps.end(), "loudnessAnalysisV1") != caps.end());
     s.error("start_loudness", {{"trackId", 1}}, "not_running");
     for (const auto* kind : {"start_loudness", "get_loudness_report", "reset_loudness", "stop_loudness"}) {
         bool rejected = false;

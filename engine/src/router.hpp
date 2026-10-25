@@ -147,6 +147,7 @@ private:
     Outcome handle_track_set_output(const TrackOutputRequest& request);
     Outcome handle_track_set_output_latency_policy(const TrackOutputLatencyPolicyRequest& request);
     Outcome handle_track_move(const TrackMoveRequest& request);
+    Outcome handle_duplicate_track(const TrackIdRequest& request);
     Outcome handle_start_scan(const StartScanRequest& request);
     Outcome handle_cancel_scan(const EmptyRequest& request);
     Outcome handle_add_plugin(const AddPluginRequest& request);

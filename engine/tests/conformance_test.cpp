@@ -107,6 +107,7 @@ void check_command_result_schemas() {
         {"track_set_output", {{"tracks", nlohmann::json::array()}}},
         {"track_set_output_latency_policy", {{"tracks", nlohmann::json::array()}}},
         {"track_move", {{"tracks", nlohmann::json::array()}}},
+        {"duplicate_track", {{"trackId", 1}, {"tracks", nlohmann::json::array()}}},
         {"start_scan", {{"jobId", 1}, {"reused", false}}},
         {"cancel_scan", {{"jobId", 1}, {"cancelling", true}}},
         {"add_plugin",
