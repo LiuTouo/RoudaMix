@@ -134,6 +134,42 @@ test("插件列只在 Monitor Bypass 已啟用時顯示非按鈕 MB 標記，不
   }
 });
 
+test("音軌標頭依角色與來源顯示圖示，名稱色條只出現一次且在來源之前", () => {
+  const cases: { patch: Partial<Track>; label: string }[] = [
+    { patch: { systemRole: "monitor" }, label: "監聽輸出" },
+    { patch: { systemRole: "stream" }, label: "串流輸出" },
+    { patch: {}, label: "音訊輸出" },
+    { patch: { kind: "fx" }, label: "效果音軌" },
+    { patch: { kind: "app" }, label: "應用程式音軌" },
+    { patch: { kind: "audio", source: { type: "wasapiIn" } }, label: "麥克風輸入" },
+    { patch: { kind: "audio", source: { type: "sine" } }, label: "正弦波來源" },
+    { patch: { kind: "audio", source: { type: "asioIn", channel: 0 } }, label: "音訊輸入" },
+    { patch: { kind: "audio", source: null }, label: "音訊輸入" },
+  ];
+  for (const { patch, label } of cases) {
+    const props = stripProps(false);
+    props.track = { ...props.track, ...patch };
+    props.tracks = [props.track];
+    const body = render(TrackStrip, { props }).body;
+    const head = body.indexOf('class="head');
+    const icon = body.indexOf('class="track-icon');
+    const rail = body.indexOf('class="colorbar');
+    const source = body.indexOf('class="row source-row');
+    assert.ok(head < icon && icon < rail && rail < source, label);
+    assert.match(body, new RegExp(`alt="${label}"`));
+    assert.equal([...body.matchAll(/class="colorbar/g)].length, 1);
+    assert.match(body.slice(rail, source), /console-gain[^>]*>100%/);
+    assert.match(body.slice(rail, source), /aria-label="軌道 Stream 的顏色"/);
+    assert.match(body.slice(rail, source), /aria-label="軌道名稱:Stream\(點擊改名\)"/);
+    if (patch.systemRole) {
+      assert.doesNotMatch(body, /aria-label="刪除軌道/);
+      assert.match(body.slice(rail, source), patch.systemRole === "monitor" ? />MON<\/span>/ : />STR<\/span>/);
+    } else {
+      assert.match(body.slice(rail, source), /aria-label="刪除軌道/);
+    }
+  }
+});
+
 test("靜態 index.html 同樣不出現原生 title 屬性（<title> 元素除外）", () => {
   const html = readFileSync(new URL("../../index.html", import.meta.url), "utf8");
   assert.match(html, /<title>/);

@@ -1,9 +1,9 @@
 <script lang="ts">
   // 軌條:輸入/輸出軌共用。上方為來源、路由與 M/B；下方左錶右 VST 機架，
-  // 名稱只顯示於底部識別色帶。engine 溝通自含(ipc 直呼),App 只餵狀態。
+  // 名稱與類型圖示顯示於頂部識別色帶。engine 溝通自含(ipc 直呼),App 只餵狀態。
   import MeterCanvas from "./MeterCanvas.svelte";
   import { fade } from "svelte/transition";
-  import { powerOff, powerOn } from "./icons";
+  import { powerOff, powerOn, trackIcons } from "./icons";
   import { mountDragGhost, removeDragGhost, settleDragGhost } from "./ghost";
   import { open as openFile } from "@tauri-apps/plugin-dialog";
   import { engineCommand } from "./protocol-commands.generated";
@@ -134,6 +134,10 @@
 
   const dev = $derived(devices.find((d) => d.deviceKey === selectedDeviceKey) ?? null);
   const isOutput = $derived(track.kind === "output");
+  const identityIcon = $derived(track.systemRole ? trackIcons[track.systemRole]
+    : track.kind !== "audio" ? trackIcons[track.kind]
+    : track.source?.type === "wasapiIn" ? trackIcons.mic
+    : track.source?.type === "sine" ? trackIcons.sine : trackIcons.audio);
   const basename = (p: string) => p.split(/[\\/]/).pop() ?? p;
   $effect(() => {
     const reconciled = reconcileMonitorBypass(
@@ -967,7 +971,7 @@
   data-console-kind={track.kind}
   role="listitem"
   aria-label="軌道 {track.name}"
-  data-tooltip="拖曳軌道空白區調整順序；點下方色塊的名稱可改名、點色塊其他處可換色；按右鍵開啟操作選單（複製音軌、排序）。"
+  data-tooltip="拖曳軌道空白區調整順序；點上方色塊的名稱可改名、點色塊其他處可換色；按右鍵開啟操作選單（複製音軌、排序）。"
   oncontextmenu={(e) => {
     if ((e.target as HTMLElement).closest("input, select, button, dialog")) return;
     e.preventDefault();
@@ -975,6 +979,8 @@
   }}
 >
   <div class="head">
+    <img class="track-icon" src={identityIcon.src} alt={identityIcon.label} draggable="false" />
+    {@render identityRail()}
     {#if track.systemRole}
       <!-- 系統輸出:每 session 恰好一條 monitor/stream,不可刪(engine 也擋) -->
       <span
@@ -1419,7 +1425,8 @@
   </div>
   </div>
 
-  <!-- 名稱+識別色合併在底部色塊:點色塊開調色盤,點名稱改名(空白不套用) -->
+  {#snippet identityRail()}
+  <!-- 名稱與色票共用標頭空間，保留原本的改名與換色操作。 -->
   <div class="colorbar" style="background:{matteColor(track.color)}">
     <input
       type="color"
@@ -1455,6 +1462,7 @@
     {/if}
     <span class="console-gain mono">{Math.round(shownGain * 100)}%</span>
   </div>
+  {/snippet}
 
   {#if err || track.error}
     <!-- P1-O:錯誤文字可選取複製;tooltip 帶完整原文 -->
@@ -1509,25 +1517,29 @@
     transition: transform 0.16s ease;
   }
   .head {
-    flex: 0 0 22px;
+    flex: 0 0 32px;
     display: flex;
     align-items: center;
     gap: 6px;
     min-width: 0;
-    min-height: 22px;
+    min-height: 32px;
   }
-  /* 名稱+識別色色塊(底部,通欄):霧面底色 + 可點換色 + 可點改名 */
+  .track-icon { width: 20px; height: 20px; padding: 0 4px; box-sizing: content-box; flex: none; }
+  .head > .del, .head > .sysbadge { flex: none; }
+  .console-gain { flex: none; margin-left: auto; position: relative; pointer-events: none; font-size: 11px; }
+  /* 名稱色條填滿圖示與軌道操作之間的空間。 */
   .colorbar {
     position: relative;
-    height: 26px;
-    border-radius: 0 0 7px 7px; /* 對齊 strip 8px 圓角(扣 1px 邊框) */
-    margin: 0 -10px; /* 吃掉 padding,通欄 */
-    padding: 0 10px;
+    height: 32px;
+    flex: 1;
+    min-width: 0;
+    border-radius: 3px;
+    padding: 0 6px;
     display: flex;
     align-items: center;
     gap: 6px;
     box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08); /* 霧面質感的上緣受光 */
-    justify-content: center; /* 名稱藥丸置中;藥丸以外區域點擊換色 */
+    justify-content: flex-start;
   }
   /* 透明滿版色票:點色塊任何位置(名稱以外)都開原生調色盤 */
   .barpick {
@@ -1561,6 +1573,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     max-width: 100%;
+    min-width: 0;
     cursor: pointer;
   }
   .name:hover {

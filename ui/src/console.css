@@ -26,11 +26,11 @@ body { background: var(--flat-0); }
   & .colhead .mini { font-size: 11px; padding: 3px 6px; }
   & .lanes { background: var(--flat-1); }
   & .strip { position: relative; padding: 4px 12px 0; gap: 4px; border: 1px solid var(--border); border-radius: 0; background: var(--flat-4); }
-  & .head { position: absolute; top: 4px; right: 12px; width: 28px; height: 28px; min-height: 28px; border: 0; background: transparent; padding: 0; }
+  & .head { position: static; width: auto; height: 32px; min-height: 32px; border: 0; background: transparent; padding: 0; }
   & .sysbadge { background: none; border: 0; padding: 0; color: var(--text-dim); font: 10px var(--mono); }
   & .head .del { width: 28px; height: 26px; color: var(--text-dim); }
   & .row { gap: 6px; }
-  & .row.source-row { display: flex; flex-wrap: nowrap; align-content: center; gap: 4px; min-height: 28px; flex-basis: 28px; margin-right: 32px; }
+  & .row.source-row { display: flex; flex-wrap: nowrap; align-content: center; gap: 4px; min-height: 28px; flex-basis: 28px; }
   & .source-row > .lbl, & .destination-row:not(.routing-row) > .lbl { flex: 0 0 26px; }
   & .source-row > select { flex: 1 1 0; width: 0; }
   & .source-row .boundname { line-height: 24px; }
@@ -110,10 +110,10 @@ body { background: var(--flat-0); }
   & .slotwrap::after { background: var(--text-dim); left: -10px; bottom: calc(15px + (100% - 30px) * 2 / 3 - 1px); }
   & .meterwrap { flex: 0 0 46px; background: transparent; border: 0; }
   /* Keep TrackStrip's inline matteColor across the entire name rail, not a narrow mark. */
-  & .colorbar { flex: none; justify-content: flex-start; height: 32px; margin: 0 -12px; padding: 0 12px; border: 0; border-top: 1px solid var(--divider); box-shadow: none; }
-  & .colorbar .name { padding: 4px 0; border: 0; background: transparent; text-align: left; color: var(--text); font-weight: 500; font-size: 12px; max-width: calc(100% - 48px); }
+  & .colorbar { flex: 1; min-width: 0; justify-content: flex-start; height: 32px; margin: 0; padding: 0 6px; border: 0; box-shadow: none; }
+  & .colorbar .name { padding: 4px 0; border: 0; background: transparent; text-align: left; color: var(--text); font-weight: 500; font-size: 12px; min-width: 0; max-width: 100%; }
   & .colorbar .name:hover { background: rgb(0 0 0 / 15%); color: var(--text); }
-  & .colorbar .barpick:focus-visible { opacity: 1; background: transparent; clip-path: inset(0 calc(100% - 4px) 0 0); }
+  & .colorbar:has(.barpick:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }
   & .console-gain { margin-left: auto; font-size: 11px; color: var(--text); pointer-events: none; position: relative; }
   & .nameedit { background: var(--flat-2); text-align: left; border: 0; border-bottom: 1px solid var(--accent); }
   & button.danger:enabled:hover { background: #382022; color: #F0ABAB; }
