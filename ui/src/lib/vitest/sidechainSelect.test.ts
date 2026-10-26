@@ -79,10 +79,10 @@ describe("側鏈來源", () => {
       track(3, "監聽", "output"),
     ];
     show(fixtures);
-    // fx 軌:輸出到 + 側鏈來源 兩列;label 辨認
+    // fx 軌:輸出到 + 側鏈來源(M/B 同列靠右)兩列;label 辨認
     expect(triggers()).toHaveLength(2);
-    const rows = [...document.querySelectorAll(".destination-row")];
-    expect(rows.map((r) => r.textContent?.includes("側鏈來源"))).toEqual([false, true]);
+    const rows = [...document.querySelectorAll(".routing-row")];
+    expect(rows.map((r) => r.textContent?.includes("側鏈來源"))).toEqual([true]);
     // popover id 去重:popovertarget 各指各的 panel(寫死同 id 會永遠開第一個)
     const [destTarget, sidechainTarget] = triggers().map((t) =>
       t.getAttribute("popovertarget"),

@@ -10,10 +10,10 @@ test("visibleRange:窗口 + overscan,夾 [0,count]", () => {
   const r = visibleRange(0, 2600, 10);
   assert.equal(r.start, 0);
   assert.equal(r.end, 10);
-  // 捲到第 20 條左右(100 軌):start ≈ 20-3,end ≈ 25+3
+  // 捲到第 20 條左右(100 軌):start ≈ 20-3,end 由 pitch 常數推導 + overscan 3
   const r2 = visibleRange(20 * P, 1032, 100);
   assert.equal(r2.start, 17); // 20 - 3
-  assert.equal(r2.end, 28);   // ceil((20*258+1032)/258)+1 = 24+3 夾 100
+  assert.equal(r2.end, Math.ceil((20 * P + 1032) / P) + 4);
   // 空清單
   assert.deepEqual(visibleRange(0, 800, 0), { start: 0, end: 0 });
 });
@@ -38,9 +38,9 @@ test("spacerWidths:總寬守恆(spacer + render 區 = 全量內容寬)", () => {
 });
 
 test("dropPosFromX:中心點判插入位;指標過尾 = count", () => {
-  // lane 在視窗 x=100、未捲動:內容座標 = clientX-100。第 0 條中心 = 125
-  assert.equal(dropPosFromX(200, 100, 0, 5), 0); // 內容 100 < 125 → 0
-  assert.equal(dropPosFromX(230, 100, 0, 5), 1); // 內容 130 > 125 → 1
+  // lane 在視窗 x=100、未捲動:內容座標 = clientX-100。第 0 條中心 = STRIP_W / 2
+  assert.equal(dropPosFromX(200, 100, 0, 5), 0); // 內容 100 < 中心 → 0
+  assert.equal(dropPosFromX(230, 100, 0, 5), 1); // 內容 130 > 中心 → 1
   // 捲動一個 pitch:內容座標 300 的指標 = 視窗 100+300-P = 142(第 0 條中心之後)
   assert.equal(dropPosFromX(142, 100, P, 5), 1);
   // 指標在最後一條中心之後 → count

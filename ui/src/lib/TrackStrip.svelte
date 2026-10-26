@@ -979,7 +979,14 @@
   }}
 >
   <div class="head">
-    <img class="track-icon" src={identityIcon.src} alt={identityIcon.label} draggable="false" />
+    <span
+    class="track-icon"
+    role="img"
+    aria-label={identityIcon.label}
+    style:--icon-src={`url("${identityIcon.src}")`}
+    style:--icon-color={cssColor(track.color)}
+    style:--icon-glow={`color-mix(in srgb, ${cssColor(track.color)} 45%, transparent)`}
+  ></span>
     {@render identityRail()}
     {#if track.systemRole}
       <!-- 系統輸出:每 session 恰好一條 monitor/stream,不可刪(engine 也擋) -->
@@ -1128,48 +1135,6 @@
       omitIds={sysOuts.map((t) => t.trackId)} />
   </div>
 
-  {#if sysOuts.length > 0}
-    <div class="row destination-row routing-row">
-      {#each sysOuts as sys (sys.trackId)}
-        <label class="sys-dest">
-          <input type="checkbox" checked={shownDests.includes(sys.trackId)}
-            onchange={(e) => toggleDest(sys.trackId, e.currentTarget.checked)}
-            aria-label="{track.name} 路由到{sysLabel(sys)}"
-            data-tooltip="直接切換此輸入軌是否送往{sysLabel(sys)}輸出；與「輸出到」同步套用。" />
-          <span class="sys-dot" style:background={matteColor(sys.color)} aria-hidden="true"></span>
-          <span>{sys.systemRole === 'monitor' ? 'MON' : 'STR'}</span>
-        </label>
-      {/each}
-    </div>
-  {:else if track.kind === "fx"}
-    <div class="row destination-row routing-row" data-tooltip="側鏈:來源軌訊號只進此軌插件的 aux input,不進混音">
-      <span class="lbl">側鏈</span>
-      <DestinationSelect trackId={track.trackId} trackName={track.name}
-        options={sidechainCandidates(tracks)} selected={shownSidechain}
-        pending={sidechainLocal !== null} onToggle={toggleSidechain}
-        label="側鏈來源" panelSuffix="sidechain"
-        emptyText="沒有可作為側鏈來源的輸入軌。" />
-    </div>
-  {:else if isOutput && latencyEnabled}
-    <div class="row routing-row">
-      <!-- 勾選 = Low Latency(不加入 Compensation Delay);取消勾選 = Full PDC(對齊匯流分支) -->
-      <label class="latency-toggle">
-        <input
-          type="checkbox"
-          checked={shownLatencyPolicy() === "lowLatency"}
-          disabled={isLatencyPolicyPending(latencyPolicyState)}
-          onchange={(e) =>
-            void setLatencyPolicy(e.currentTarget.checked ? "lowLatency" : "fullPdc")}
-          aria-label="輸出軌 {track.name} 低延遲"
-          data-tooltip="勾選 = Low Latency（不加入 Compensation Delay，不保證平行路徑同步）；取消勾選 = Full PDC（匯流分支 sample-exact 對齊）。"
-        />
-        <span>低延遲</span>
-      </label>
-    </div>
-  {:else}
-    <div class="row routing-row" aria-hidden="true"></div>
-  {/if}
-
   {#snippet muteSwitch()}
     <button class="mini mute" class:on={track.mute} aria-pressed={track.mute}
       aria-label={track.mute ? `靜音中(點此取消)` : `靜音 ${track.name}`}
@@ -1183,7 +1148,43 @@
       onclick={bypassAll}
       data-tooltip={allBypassed ? "此軌全部 plugin 目前皆為 bypass；按下可全部恢復處理。" : "將此軌所有 plugin 一次切為 bypass；再按一次全部恢復。"}>B</button>
   {/snippet}
-  <div class="console-switches">{@render muteSwitch()}{@render rackSwitch()}</div>
+  <div class="row routing-row" data-tooltip={track.kind === "fx" ? "側鏈:來源軌訊號只進此軌插件的 aux input,不進混音" : undefined}>
+    {#if sysOuts.length > 0}
+      {#each sysOuts as sys (sys.trackId)}
+        <label class="sys-dest">
+          <input type="checkbox" checked={shownDests.includes(sys.trackId)}
+            onchange={(e) => toggleDest(sys.trackId, e.currentTarget.checked)}
+            aria-label="{track.name} 路由到{sysLabel(sys)}"
+            data-tooltip="直接切換此輸入軌是否送往{sysLabel(sys)}輸出；與「輸出到」同步套用。" />
+          <span class="sys-dot" style:background={matteColor(sys.color)} aria-hidden="true"></span>
+          <span>{sys.systemRole === 'monitor' ? 'MON' : 'STR'}</span>
+        </label>
+      {/each}
+    {:else if track.kind === "fx"}
+      <span class="lbl">側鏈</span>
+      <DestinationSelect trackId={track.trackId} trackName={track.name}
+        options={sidechainCandidates(tracks)} selected={shownSidechain}
+        pending={sidechainLocal !== null} onToggle={toggleSidechain}
+        label="側鏈來源" panelSuffix="sidechain"
+        emptyText="沒有可作為側鏈來源的輸入軌。" />
+    {:else if isOutput && latencyEnabled}
+      <!-- 勾選 = Low Latency(不加入 Compensation Delay);取消勾選 = Full PDC(對齊匯流分支) -->
+      <label class="latency-toggle">
+        <input
+          type="checkbox"
+          checked={shownLatencyPolicy() === "lowLatency"}
+          disabled={isLatencyPolicyPending(latencyPolicyState)}
+          onchange={(e) =>
+            void setLatencyPolicy(e.currentTarget.checked ? "lowLatency" : "fullPdc")}
+          aria-label="輸出軌 {track.name} 低延遲"
+          data-tooltip="勾選 = Low Latency（不加入 Compensation Delay，不保證平行路徑同步）；取消勾選 = Full PDC（匯流分支 sample-exact 對齊）。"
+        />
+        <span>低延遲</span>
+      </label>
+    {/if}
+    <!-- M/B 排在第三列右側(流排版):來源/送至下拉列整行不再被覆蓋。 -->
+    <div class="console-switches">{@render muteSwitch()}{@render rackSwitch()}</div>
+  </div>
   <div class="lower">
   <div class="vstcol">
   <!-- 標題列在機架盒子外(正上方);右鍵仍可開機架選單(button 已在 rackMenu 內過濾)。 -->
@@ -1495,8 +1496,8 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-    flex: 0 0 250px;
-    width: 250px;
+    flex: 0 0 230px;
+    width: 230px;
     min-height: 0;
     overflow-y: auto;
     user-select: none; /* 拖曳區禁選(全域已開放選取;錯誤文字 .err 例外) */
@@ -1524,7 +1525,15 @@
     min-width: 0;
     min-height: 32px;
   }
-  .track-icon { width: 20px; height: 20px; padding: 0 4px; box-sizing: content-box; flex: none; }
+  /* 圖示線條跟隨音軌自訂色(mask 著色)，兩層低透明同色光暈做出淡淡螢光感。 */
+  .track-icon {
+    display: inline-block;
+    width: 20px; height: 20px; padding: 0 4px; box-sizing: content-box; flex: none;
+    background: var(--icon-color, #E2E5E8);
+    -webkit-mask: var(--icon-src) center / contain no-repeat;
+    mask: var(--icon-src) center / contain no-repeat;
+    filter: drop-shadow(0 0 2px var(--icon-glow, transparent)) drop-shadow(0 0 5px var(--icon-glow, transparent));
+  }
   .head > .del, .head > .sysbadge { flex: none; }
   .console-gain { flex: none; margin-left: auto; position: relative; pointer-events: none; font-size: 11px; }
   /* 名稱色條填滿圖示與軌道操作之間的空間。 */

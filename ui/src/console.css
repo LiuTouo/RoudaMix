@@ -1,5 +1,6 @@
-/* Approved C / minimal console. Shared by the real App and the isolated DEV preview.
-   Keep the 250px strip / 16px lane pitch (STRIP_GAP): virtualization and drag hit-testing use it. */
+/* Minimal console with approved A / separate Inputs and Outputs containers.
+   Shared by the real App and the isolated DEV preview.
+   Keep the 230px strip / 16px lane pitch (STRIP_GAP): virtualization and drag hit-testing use it. */
 :root {
   --flat-0: #0D0F10; --flat-1: #121416; --flat-2: #181B1E; --flat-3: #181B1E; --flat-4: #202428;
   --border: #292D31; --divider: #1E2225; --text: #E2E5E8; --text-dim: #9CA5AE;
@@ -18,14 +19,17 @@ body { background: var(--flat-0); }
   & .bar .gear { width: 26px; height: 26px; padding: 4px; }
   & .console-telemetry { display: inline-flex; gap: 16px; }
   & .console-telemetry .dim { font-size: inherit; }
-  & main { padding: 0; gap: 0; }
-  & .board { gap: 0; padding: 0; background: var(--flat-1); }
-  & .group { gap: 0; }
-  & .group + .group { padding-left: 8px; border-left: 1px solid var(--border); }
-  & .colhead { height: 32px; flex: none; padding: 4px 12px; gap: 8px; background: var(--flat-0); border-bottom: 1px solid var(--border); }
+  & main { padding: 16px; gap: 0; }
+  & .board { display: grid; grid-template-columns: minmax(256px, 2fr) minmax(256px, 1fr); gap: 20px; padding: 0 0 4px; background: transparent; }
+  & .group { min-width: 0; gap: 0; padding: 0 12px 12px; border: 1px solid #080A0C; border-radius: 12px; background: #090B0D; box-shadow: inset 0 3px 9px #000A, 0 1px 0 #FFFFFF0D; }
+  & .colhead { min-height: 48px; flex: none; flex-wrap: wrap; padding: 10px 4px; gap: 6px 8px; background: transparent; border: 0; }
+  & .group-title { display: flex; align-items: center; gap: 8px; margin-right: auto; }
+  & .group-title h2 { margin: 0; font-size: 14px; font-weight: 600; letter-spacing: .3px; }
+  & .track-count { color: var(--text-dim); font: 10px var(--mono); border: 1px solid var(--border); padding: 1px 5px; }
   & .colhead .mini { font-size: 11px; padding: 3px 6px; }
-  & .lanes { background: var(--flat-1); }
-  & .strip { position: relative; padding: 4px 12px 0; gap: 4px; border: 1px solid var(--border); border-radius: 0; background: var(--flat-4); }
+  /* Keep the lane origin at the first strip: lanePos and spacerWidths assume no horizontal padding. */
+  & .lanes { min-width: 0; overflow: auto; background: transparent; }
+  & .strip { position: relative; padding: 4px 10px 0; gap: 4px; border: 1px solid var(--border); border-radius: 8px; background: var(--flat-4); }
   & .head { position: static; width: auto; height: 32px; min-height: 32px; border: 0; background: transparent; padding: 0; }
   & .sysbadge { background: none; border: 0; padding: 0; color: var(--text-dim); font: 10px var(--mono); }
   & .head .del { width: 28px; height: 26px; color: var(--text-dim); }
@@ -39,7 +43,7 @@ body { background: var(--flat-0); }
   & .source-fx { color: var(--text-dim); font: 11px var(--mono); }
   & .lbl { color: var(--text-dim); font: 11px "Segoe UI", system-ui, sans-serif; letter-spacing: 0; }
   & .destination-row:not(.routing-row) { min-height: 28px; flex-basis: 28px; }
-  & .routing-row { padding-right: 72px; min-height: 28px; flex-basis: 28px; }
+  & .routing-row { min-height: 28px; flex-basis: 28px; }
   & :is(.row select, .destination-trigger) { border: 0; border-bottom: 1px solid transparent; background: transparent; color: var(--text); min-height: 24px; padding: 3px 4px; font: 12px "Segoe UI", system-ui, sans-serif; }
   & .row select { appearance: none; padding-right: 18px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='m3 4 3 3 3-3' stroke='%239ca5ae' fill='none'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 3px center; }
   & .row select option { background: var(--flat-2); color: var(--text); }
@@ -56,8 +60,8 @@ body { background: var(--flat-0); }
   & .sys-dest:has(input:focus-visible) { outline: 1px solid var(--accent); outline-offset: -1px; }
   & .latency-toggle { font: 11px "Segoe UI", system-ui, sans-serif; color: var(--text-dim); }
   & .latency-toggle input { width: 12px; height: 12px; accent-color: var(--ok); }
-  /* Three 28px control rows, 4px gaps/padding; M/B shares the last row. */
-  & .console-switches { position: absolute; right: 12px; top: 68px; display: flex; align-items: center; gap: 6px; width: 62px; height: 28px; padding: 0; border: 0; }
+  /* M/B 與第三列(routing row)同排流排版靠右；不做絶對定位，下拉列永不覆蓋。 */
+  & .console-switches { margin-left: auto; display: flex; align-items: center; gap: 6px; flex: none; width: 62px; height: 28px; padding: 0; border: 0; }
   & button { border: 0; border-radius: 3px; background: transparent; color: var(--text); }
   & button:enabled:hover { background: var(--flat-4); border-color: transparent; }
   & .console-switches .mute { flex: none; width: 28px; min-width: 28px; height: 26px; min-height: 26px; padding: 0; background: var(--flat-0); color: var(--text-dim); font: 11px var(--mono); border: 1px solid var(--border); }

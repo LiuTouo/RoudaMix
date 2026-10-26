@@ -1327,7 +1327,7 @@
       if (e.dataTransfer) {
         e.dataTransfer.effectAllowed = "move";
         const r = el.getBoundingClientRect();
-        mountDragGhost(e.dataTransfer, el, el.offsetWidth || 250, { x: e.clientX - r.left, y: e.clientY - r.top });
+        mountDragGhost(e.dataTransfer, el, el.offsetWidth || 230, { x: e.clientX - r.left, y: e.clientY - r.top });
       }
     };
   }
@@ -1888,11 +1888,12 @@
 </div>
 
 <main>
-  <!-- 單一水平帶:輸入群組(左)→ 輸出群組(右),都往右長;超出寬度橫向卷動(shift+滾輪原生) -->
+  <!-- 左右獨立底盤；各軌帶自行捲動，窄窗仍可橫向到達兩個容器。 -->
   <section class="board">
     <!-- 輸入群組:audio / app / fx -->
-    <section class="group">
+    <section class="group" aria-labelledby="inputs-heading">
       <div class="colhead">
+        <div class="group-title"><h2 id="inputs-heading">Inputs</h2><span class="track-count">{inputTracks.length}</span></div>
         <button class="mini" onclick={() => addTrack("audio")}>＋ Audio</button>
         <button class="mini" onclick={() => addTrack("app")}>＋ App</button>
         <button class="mini" onclick={() => addTrack("fx")}>＋ FX</button>
@@ -1974,8 +1975,9 @@
     </section>
 
     <!-- 輸出群組 -->
-    <section class="group">
+    <section class="group" aria-labelledby="outputs-heading">
       <div class="colhead">
+        <div class="group-title"><h2 id="outputs-heading">Outputs</h2><span class="track-count">{outputTracks.length}</span></div>
         <button class="mini" onclick={() => addTrack("output")}>＋ 輸出軌</button>
       </div>
       <div

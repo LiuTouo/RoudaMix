@@ -156,7 +156,8 @@ test("音軌標頭依角色與來源顯示圖示，名稱色條只出現一次�
     const rail = body.indexOf('class="colorbar');
     const source = body.indexOf('class="row source-row');
     assert.ok(head < icon && icon < rail && rail < source, label);
-    assert.match(body, new RegExp(`alt="${label}"`));
+    assert.match(body, new RegExp(`aria-label="${label}"`));
+    assert.match(body.slice(head, rail), /--icon-color: #[0-9a-f]{6}/); // 圖示線條用音軌自訂色
     assert.equal([...body.matchAll(/class="colorbar/g)].length, 1);
     assert.match(body.slice(rail, source), /console-gain[^>]*>100%/);
     assert.match(body.slice(rail, source), /aria-label="軌道 Stream 的顏色"/);

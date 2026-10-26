@@ -10,7 +10,9 @@ import { installTooltip } from "./lib/tooltip";
 const prototype = import.meta.env.DEV ? new URLSearchParams(location.search).get("prototype") : null;
 const Root = prototype === "console"
   ? (await import("./ConsolePrototype.svelte")).default
-  : prototype === "palette" ? (await import("./PalettePrototype.svelte")).default : App;
+  : prototype === "palette" ? (await import("./PalettePrototype.svelte")).default
+  : prototype === "containers" ? (await import("./ContainerPrototype.svelte")).default
+  : App;
 const app = mount(Root, { target: document.getElementById("app")! });
 const removeTooltip = installTooltip();
 
