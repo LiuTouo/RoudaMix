@@ -31,7 +31,7 @@ beforeEach(() => command.mockReset().mockResolvedValue({ tracks: [] }));
 afterEach(async () => { await unmount(component); document.body.innerHTML = ""; });
 
 describe("全軌 Bypass B 鈕", () => {
-  it("未全 bypass 時點擊 = 全部送 set_bypass(true);再點 = 全部恢復", async () => {
+  it("B 鈕記憶:再按只恢復 bypass 前啟用的插件", async () => {
     await show(makeTrack([{ instanceId: 1, bypassed: false }, { instanceId: 2, bypassed: true }]));
     const b = bBtn();
     expect(b.getAttribute("aria-pressed")).toBe("false");
@@ -39,12 +39,41 @@ describe("全軌 Bypass B 鈕", () => {
     expect(bypassCalls()).toEqual([
       ["set_bypass", { instanceId: 1, bypassed: true }],
     ]); // 已 bypass 的不重複送
-    command.mockClear();
+    expect(b.getAttribute("aria-pressed")).toBe("true"); // 進入 bypass 模式(latched)
 
-    // 模擬 engine 回報後的新狀態(全部 bypassed)
+    // 模擬 engine 回報後的新狀態(全部 bypassed),不重掛載(記憶保留)
+    component.setTracks([makeTrack([{ instanceId: 1, bypassed: true }, { instanceId: 2, bypassed: true }])]);
+    await flushSync();
+    command.mockClear();
+    b.click(); await flushSync();
+    expect(bypassCalls()).toEqual([
+      ["set_bypass", { instanceId: 1, bypassed: false }],
+    ]); // 只恢復記憶中啟用的 1,不動 2
+  });
+
+  it("bypass 期間手動打開的插件不在記憶中,再按 B 維持現狀", async () => {
+    await show(makeTrack([{ instanceId: 1, bypassed: false }, { instanceId: 2, bypassed: false }]));
+    const b = bBtn();
+    b.click(); await flushSync();
+    expect(bypassCalls()).toEqual([
+      ["set_bypass", { instanceId: 1, bypassed: true }],
+      ["set_bypass", { instanceId: 2, bypassed: true }],
+    ]);
+
+    // engine 回報全 bypass,但使用者手動打開了 2
+    component.setTracks([makeTrack([{ instanceId: 1, bypassed: true }, { instanceId: 2, bypassed: false }])]);
+    await flushSync();
+    command.mockClear();
+    b.click(); await flushSync();
+    expect(bypassCalls()).toEqual([
+      ["set_bypass", { instanceId: 1, bypassed: false }],
+    ]); // 只恢復記憶中的 1;2 維持使用者手動打開的狀態
+  });
+
+  it("重掛載後無記憶且全 bypass → 退回全部啟用", async () => {
     await show(makeTrack([{ instanceId: 1, bypassed: true }, { instanceId: 2, bypassed: true }]));
     const b2 = bBtn();
-    expect(b2.getAttribute("aria-pressed")).toBe("true");
+    expect(b2.getAttribute("aria-pressed")).toBe("false");
     b2.click(); await flushSync();
     expect(bypassCalls()).toEqual([
       ["set_bypass", { instanceId: 1, bypassed: false }],

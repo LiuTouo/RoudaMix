@@ -502,19 +502,50 @@
     );
   }
 
-  // 全軌 bypass:只作用於非 placeholder 插件;全部已 bypass → 全開,否則全關。
+  // 全軌 bypass:只作用於非 placeholder 插件。
+  // 記憶恢復:按下時記住啟用中的插件,再按一次只恢復這些,而非全部開啟。
   const rackPlugins = $derived(track.plugins.filter((s) => !isPh(s)));
   const allBypassed = $derived(rackPlugins.length > 0 && rackPlugins.every((s) => s.bypassed));
+  let bypassMemory: number[] | null = $state(null); // bypass 當下啟用中的 instanceId
+  const bypassLatched = $derived(bypassMemory !== null);
 
   function bypassAll() {
-    const target = !allBypassed;
     err = "";
+    if (bypassMemory) {
+      // 恢復:只打開記憶中啟用的插件;期間手動/新增的其他插件維持現狀
+      const ids = bypassMemory;
+      bypassMemory = null;
+      for (const slot of rackPlugins) {
+        if (!slot.bypassed || !ids.includes(slot.instanceId)) continue;
+        mq.run(mutKey.plugin(slot.instanceId), "bypass", () =>
+          engineCommand("set_bypass", {
+            instanceId: slot.instanceId,
+            bypassed: false,
+          }),
+        );
+      }
+      return;
+    }
+    if (allBypassed) {
+      // 無記憶(如檢視切換重掛載)且全 bypass:退回舊行為,全部啟用
+      for (const slot of rackPlugins) {
+        if (!slot.bypassed) continue;
+        mq.run(mutKey.plugin(slot.instanceId), "bypass", () =>
+          engineCommand("set_bypass", {
+            instanceId: slot.instanceId,
+            bypassed: false,
+          }),
+        );
+      }
+      return;
+    }
+    bypassMemory = rackPlugins.filter((s) => !s.bypassed).map((s) => s.instanceId);
     for (const slot of rackPlugins) {
-      if (slot.bypassed === target) continue;
+      if (slot.bypassed) continue;
       mq.run(mutKey.plugin(slot.instanceId), "bypass", () =>
         engineCommand("set_bypass", {
           instanceId: slot.instanceId,
-          bypassed: target,
+          bypassed: true,
         }),
       );
     }
@@ -1142,11 +1173,11 @@
       data-tooltip={track.mute ? "此軌目前已靜音；按下可取消靜音。" : "將此軌靜音。"}>M</button>
   {/snippet}
   {#snippet rackSwitch()}
-    <button class="mini mute rack-b" class:on={allBypassed} disabled={rackPlugins.length === 0}
-      aria-pressed={allBypassed}
-      aria-label={allBypassed ? `恢復 ${track.name} 全部 plugin(目前全軌 bypass 中)` : `Bypass ${track.name} 全部 plugin`}
+    <button class="mini mute rack-b" class:on={bypassLatched} disabled={rackPlugins.length === 0}
+      aria-pressed={bypassLatched}
+      aria-label={bypassLatched ? `恢復 ${track.name} bypass 前啟用的 plugin(目前全軌 bypass 中)` : `Bypass ${track.name} 全部 plugin`}
       onclick={bypassAll}
-      data-tooltip={allBypassed ? "此軌全部 plugin 目前皆為 bypass；按下可全部恢復處理。" : "將此軌所有 plugin 一次切為 bypass；再按一次全部恢復。"}>B</button>
+      data-tooltip={bypassLatched ? "此軌 plugin 目前全軌 bypass 中(已記憶啟用狀態)；按下只恢復 bypass 前啟用的插件。" : "將此軌所有 plugin 一次切為 bypass(並記憶當下啟用狀態)；再按一次只恢復原本啟用的插件。"}>B</button>
   {/snippet}
   <div class="row routing-row" data-tooltip={track.kind === "fx" ? "側鏈:來源軌訊號只進此軌插件的 aux input,不進混音" : undefined}>
     {#if sysOuts.length > 0}
