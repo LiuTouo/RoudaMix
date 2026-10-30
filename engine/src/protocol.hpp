@@ -12,7 +12,7 @@ namespace rmx {
 
 inline constexpr uint32_t kProtocolVersion = 2;
 inline constexpr size_t kMaxFrameBytes = 1024 * 1024;
-inline constexpr const char* kEngineVersion = "0.1.46";
+inline constexpr const char* kEngineVersion = "0.1.47";
 inline constexpr const char* kPipeName = "\\\\.\\pipe\\roudamix-engine";
 inline constexpr const wchar_t* kSingletonMutex = L"Local\\roudamix-engine-singleton";
 
