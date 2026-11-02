@@ -33,3 +33,5 @@ tauri-plugin-single-instance = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-global-shortcut = "2"
+# 介面字型設定：列舉本機已安裝字型(HKLM/HKCU Fonts 登錄)；已在依賴樹內(零新增編譯)
+winreg = "0.55"

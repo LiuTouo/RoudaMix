@@ -85,7 +85,7 @@
   role="dialog" tabindex="-1" aria-labelledby="loudness-heading">
   <header>
     <h2 id="loudness-heading">響度分析 <span>· {track.name}</span></h2>
-    <button type="button" class="close" aria-label="關閉響度分析" data-tooltip="關閉並停止量測。"
+    <button type="button" class="dialog-close" aria-label="關閉響度分析" data-tooltip="關閉並停止量測。"
       onclick={() => onClose(true)}>×</button>
   </header>
   <p class="status" role="status">{statusText}</p>
@@ -130,20 +130,20 @@
 <style>
   .loudness-popup {
     position: fixed; inset: auto; margin: 0; padding: 16px; box-sizing: border-box;
-    overflow: auto; background: var(--bg-panel); color: var(--text);
-    border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 8px 24px #0006;
-    font: 13px/1.5 "IBM Plex Sans TC", "Segoe UI", system-ui, sans-serif;
+    overflow: auto;
+    /* 底色/框線/圓角/投影由 console.css 浮層規則統一 */
+    color: var(--text);
+    font: 13px/1.5 var(--font-ui);
   }
   .loudness-popup::backdrop { background: transparent; pointer-events: none; }
   header, footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  h2 { margin: 0; font-size: 15px; min-width: 0; overflow-wrap: anywhere; }
+  h2 { margin: 0; font-size: 14px; min-width: 0; overflow-wrap: anywhere; }
   h2 span { font-weight: 400; }
-  .close { flex: none; width: 44px; height: 44px; border: 0; background: transparent; font-size: 24px; }
   .status { margin: 0 0 12px; color: var(--text-dim); font-size: 12px; }
   .loudness-values { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding: 4px 0 20px; }
   .metric { display: flex; flex-direction: column; align-items: center; gap: 2px; }
   .metric-label, .metric-window { color: var(--text-dim); font-size: 12px; }
-  .metric-value { font: 600 27px/1.4 "IBM Plex Mono", Consolas, monospace; font-variant-numeric: tabular-nums; }
+  .metric-value { font: 600 27px/1.4 var(--mono); font-variant-numeric: tabular-nums; }
   dl { border-top: 1px solid var(--border); margin: 0; padding: 12px 0; }
   dl > div { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; }
   dt { color: var(--text-dim); }

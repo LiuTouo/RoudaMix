@@ -124,7 +124,7 @@
     flex-direction: column;
     background: var(--bg-raised);
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: var(--flat-radius);
     padding: 4px;
     box-shadow: 0 8px 24px rgb(0 0 0 / 0.55);
     /* 進場:微下上浮淡入;離場瞬間。一律播放,不連動 OS 動畫設定(ADR 0007) */
@@ -145,8 +145,8 @@
     border: none;
     text-align: left;
     padding: 5px 10px;
-    font-size: 13px;
-    border-radius: 4px;
+    font-size: 12px;
+    border-radius: var(--flat-radius);
   }
   /* 提亮既有危險色，維持 hover 底色上的文字對比。 */
   :global(#app) .ctxitem.destructive { color: color-mix(in srgb, var(--err) 90%, var(--text)); }

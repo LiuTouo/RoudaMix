@@ -157,6 +157,7 @@ pub fn run() {
             settings::get_settings,
             settings::set_settings,
             settings::list_sessions,
+            settings::list_system_fonts,
             open_release_page,
             quit_app
         ])

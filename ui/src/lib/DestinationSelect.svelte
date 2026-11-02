@@ -156,7 +156,7 @@
     width: 100%; min-width: 0; display: flex; align-items: center; gap: 5px;
     padding: 3px 6px; font-size: 12px; line-height: normal;
     background: var(--bg); color: var(--text); border: 1px solid var(--border);
-    border-radius: var(--proto-radius, 4px); box-shadow: var(--proto-inset, none); text-align: left;
+    border-radius: var(--flat-radius); text-align: left;
   }
   .destination-trigger[aria-expanded="true"] { border-color: var(--accent); }
   .destination-trigger svg { flex: 0 0 10px; }
@@ -164,9 +164,10 @@
   .destination-count, .destination-pending { color: var(--text-dim); flex: none; }
   .destination-popup {
     position: fixed; inset: auto; margin: 0; padding: 6px; box-sizing: border-box;
-    overflow: auto; background: var(--bg-panel); color: var(--text);
-    border: 1px solid var(--border); border-radius: 4px;
-    box-shadow: 0 8px 24px #0006; font: 12px/1.45 "IBM Plex Sans TC", "Segoe UI", system-ui, sans-serif;
+    overflow: auto;
+    /* 底色/框線/圓角/投影由 console.css 浮層規則統一（無投影、3px 圓角） */
+    color: var(--text);
+    font: 12px/1.45 var(--font-ui);
   }
   .destination-popup::backdrop { background: transparent; }
   fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }

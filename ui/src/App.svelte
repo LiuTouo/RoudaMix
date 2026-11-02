@@ -74,6 +74,7 @@
     getSettings,
     setSettings,
     listSessions,
+    listSystemFonts,
     onTrayExitRequested,
     onSingleInstance,
     quitApp,
@@ -82,6 +83,7 @@
     type SettingsReply,
   } from "./lib/ipc";
   import { engineCommand, toCommandError, type CommandError } from "./lib/protocol-commands.generated";
+  import { applyUiFont } from "./lib/uiFont";
   import { samplesToMs } from "./lib/format";
   import type {
     ConnectionStatus,
@@ -141,6 +143,9 @@
   let uiScaleRequest = 0;
   let uiScaleError = $state("");
   let editorScaleError = $state("");
+  // 介面字型：本機已安裝字族清單(null = 尚未列舉/列舉失敗)；字族存 appSettings.uiFontFamily
+  let fontChoices = $state<string[] | null>(null);
+  let fontEnumStarted = false;
   let autostartEnabled = $state<boolean | null>(null);
   let autostartBusy = $state(false);
   let startMinimizedBusy = $state(false);
@@ -450,7 +455,10 @@
   let closeFlowActive = false;
   let exitFlowActive = false;
   $effect(() => {
-    if (settingsOpen) settingsDlg?.showModal();
+    if (settingsOpen) {
+      settingsDlg?.showModal();
+      void ensureFontChoices();
+    }
     // open 才 close:dialog.close() 對未 open 的 dialog throw InvalidStateError
     else if (settingsDlg?.open) settingsDlg.close();
   });
@@ -1497,6 +1505,28 @@
 
   // ---------- 通用設定 ----------
 
+  // 介面字型：settings 載入後（及變更時）同步 --font-ui；null/非法字族 = 移除 inline 覆蓋回預設
+  $effect(() => {
+    applyUiFont(appSettings?.uiFontFamily);
+  });
+
+  /** 打開設定時惰性列舉本機字型；失敗靜默退回純預設清單（字型選擇不擋主流程）。 */
+  async function ensureFontChoices(): Promise<void> {
+    if (fontEnumStarted) return;
+    fontEnumStarted = true;
+    try {
+      fontChoices = await listSystemFonts();
+    } catch {
+      fontChoices = [];
+    }
+  }
+
+  function updateUiFont(family: string): void {
+    if (!appSettings) return;
+    appSettings.uiFontFamily = family || null;
+    persistSettings();
+  }
+
   $effect(() => {
     if (!conn.connected) return;
     const epoch = conn.epoch;
@@ -1819,7 +1849,7 @@
     <!-- P1-J:callback 負載 %(RT TSC 量測;持續 >100% = 過載警示走通知中心) -->
     <span
       class="mono"
-      class:err={overloadOn}
+      class:warn={overloadOn}
       data-tooltip="音訊 callback 的即時運算負載；持續達 100% 以上表示處理逾時，可能產生 xrun 或爆音。"
       >LOAD {Math.round((meters?.callbackLoad ?? 0) * 100)}%</span
     >
@@ -1828,7 +1858,7 @@
         <span><span class="dim">BUF</span> {status!.bufferSize}</span>
         <span><span class="dim">IN</span> {samplesToMs(status!.inputLatency, status!.sampleRate)} ms</span>
         <span><span class="dim">OUT</span> {samplesToMs(status!.outputLatency, status!.sampleRate)} ms</span>
-        <span class:err={status!.xruns > 0}><span class="dim">XRUN</span> {status!.xruns}</span>
+        <span class:warn={status!.xruns > 0}><span class="dim">XRUN</span> {status!.xruns}</span>
       </span>
   {:else if selDev?.currentSampleRate}
     <span
@@ -1849,7 +1879,7 @@
   {/if}
   {#if status?.pluginFails}
     <span
-      class="err mono"
+      class="warn mono"
       data-tooltip="即時音訊執行緒中的 plugin 處理失敗累計；失敗時該 plugin 會維持 bypass，避免中斷音訊。"
       >plugin fail {status.pluginFails}</span
     >
@@ -2134,7 +2164,7 @@
         >ASIO</button
       >
       {#if panelOpen}
-        <span class="err mono"
+        <span class="warn mono"
           >面板開啟中 — 聲音可能中斷,關閉面板後自動恢復</span
         >
       {/if}
@@ -2230,6 +2260,28 @@
     </div>
     <p id="uiscale-hint" class="dim indent">75%–150%，縮放 RoudaMix 介面與 VST 視窗工具列，不改變插件內容大小。</p>
     {#if uiScaleError || editorScaleError}<p class="err indent" role="alert">{uiScaleError || editorScaleError}</p>{/if}
+    <div class="formrow">
+      <label class="formlabel" for="uifont">介面字型</label>
+      {#key fontChoices}
+        <select
+          id="uifont"
+          value={appSettings?.uiFontFamily ?? ""}
+          disabled={!appSettings}
+          aria-describedby="uifont-hint"
+          data-tooltip="主介面文字的字型。清單來自本機已安裝字型；變更即時生效。"
+          onchange={(e) => updateUiFont(e.currentTarget.value)}
+        >
+          <option value="">預設（IBM Plex Sans TC）</option>
+          {#if appSettings?.uiFontFamily && !(fontChoices ?? []).includes(appSettings.uiFontFamily)}
+            <option value={appSettings.uiFontFamily}>{appSettings.uiFontFamily}</option>
+          {/if}
+          {#each fontChoices ?? [] as name (name)}
+            <option value={name}>{name}</option>
+          {/each}
+        </select>
+      {/key}
+    </div>
+    <p id="uifont-hint" class="dim indent">套用於主介面文字（VST 插件視窗不受影響）；清單來自本機已安裝字型。</p>
     <div class="formrow">
       <label class="formlabel" for="closebehavior">關閉視窗時</label>
       <select
@@ -2510,7 +2562,7 @@
     justify-content: flex-end;
   }
   .settingsdlg h2 {
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-dim);
     margin: 4px 0 2px;
   }
@@ -2548,7 +2600,7 @@
     width: 112px;
     flex-shrink: 0;
     color: var(--text-dim);
-    font-size: 13px;
+    font-size: 12px;
   }
   .scale-controls {
     display: flex;
@@ -2600,7 +2652,7 @@
     accent-color: var(--accent);
   }
   .checklabel {
-    font-size: 13px;
+    font-size: 12px;
   }
   .checkrow.disabled .checklabel {
     opacity: 0.45;
@@ -2629,44 +2681,34 @@
     font-size: 12px;
   }
   .err {
+    color: var(--err);
+  }
+  /* 警示計數（負載過載、XRUN、plugin fail、面板開啟中）：發生中但引擎已自處，琥珀而非紅 */
+  .warn {
     color: var(--warn);
   }
+  /* 底色/框線/圓角由 console.css 統一（方角 3px、透明 ghost）；這裡只留尺寸與字級 */
   select,
   button {
-    background: var(--bg);
     color: var(--text);
-    border: 1px solid var(--border);
-    border-radius: 6px;
     padding: 5px 10px;
-    font-size: 13px;
+    font-size: 12px;
   }
   button.primary {
-    background: var(--accent);
-    color: #0d1117;
-    border-color: var(--accent);
     font-weight: 600;
   }
   button.danger {
-    background: var(--warn);
-    color: #fff;
-    border-color: var(--warn);
     font-weight: 600;
   }
-  button:disabled,
   select:disabled {
-    opacity: 0.45;
+    opacity: 0.4;
   }
   button.on {
-    background: var(--warn);
-    border-color: var(--warn);
-    color: #14161a;
     font-weight: 600;
   }
   main {
-    padding: 14px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
     flex: 1;
     min-height: 0;
     min-width: 0;
@@ -2758,13 +2800,7 @@
     gap: 4px;
     max-width: min(40em, 90vw); /* 40em ≈ 舊 480px,隨容器字級等比縮放 */
     padding: 0.42em 1.17em;
-    border-radius: 999px;
-    background: var(--bg-panel);
-    border: 1px solid var(--border);
-    box-shadow: 0 4px 16px rgb(0 0 0 / 0.3);
-  }
-  .capsule.iserr {
-    border-color: color-mix(in srgb, var(--warn) 45%, var(--border));
+    /* 底色/框線/圓角/投影由 console.css 浮層規則統一（flat-2、hairline、3px、無投影） */
   }
   .capsule-body {
     flex: 0 1 auto;
@@ -2778,9 +2814,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  .capsule.iserr .capsule-body {
-    color: var(--warn);
   }
   .capsule-btn {
     flex: none;

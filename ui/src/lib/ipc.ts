@@ -56,6 +56,8 @@ export type AppSettings = {
   monitorHotkey?: string | null;
   /** P1-K 輸入靜音看門狗(麥克風持續 30 秒全零 → 警示);降噪/閘門型麥克風沒說話時送真零,需可關閉。缺欄位 = 開啟。 */
   inputSilenceAlert?: boolean;
+  /** 主介面字型(本機已安裝字族名);null/缺欄位 = 預設 IBM Plex Sans TC。 */
+  uiFontFamily?: string | null;
 };
 
 /** get/set 的回覆:typed settings + 載入時的 normalize 警告(可呈現) */
@@ -70,6 +72,9 @@ export const setSettings = (patch: Partial<AppSettings>) =>
   invoke<SettingsReply>("set_settings", { patch });
 
 export const listSessions = (dir: string) => invoke<string[]>("list_sessions", { dir });
+
+/** 本機已安裝字型族名(HKLM/HKCU Fonts 登錄);失敗時 invoke reject,UI 退回純預設清單。 */
+export const listSystemFonts = () => invoke<string[]>("list_system_fonts");
 
 export const onTrayExitRequested = (cb: () => void) =>
   listen("tray-exit-requested", cb);

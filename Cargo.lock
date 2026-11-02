@@ -3079,6 +3079,7 @@ dependencies = [
  "tauri-plugin-updater",
  "thiserror 2.0.20",
  "tokio",
+ "winreg 0.55.0",
 ]
 
 [[package]]

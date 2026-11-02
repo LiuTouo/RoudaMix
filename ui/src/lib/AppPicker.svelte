@@ -151,11 +151,11 @@
     align-items: center;
     gap: 8px;
     font-weight: 600;
-    font-size: 13px;
+    font-size: 14px; /* DESIGN Title：對話框標題 */
   }
   .saved {
     margin: 0;
-    font-size: 12.5px;
+    font-size: 12px;
   }
   .searchrow {
     display: flex;
@@ -167,9 +167,9 @@
     background: var(--bg);
     color: var(--text);
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: var(--flat-radius);
     padding: 5px 8px;
-    font-size: 13px;
+    font-size: 12px;
   }
   .applist {
     display: flex;
@@ -190,7 +190,7 @@
     border-color: var(--accent);
   }
   .appname {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
   }
   .apppath {
@@ -212,7 +212,7 @@
     font-family: var(--mono);
   }
   .err {
-    color: var(--warn);
+    color: var(--err);
     margin: 0;
     user-select: text;
   }

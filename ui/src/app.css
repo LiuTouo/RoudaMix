@@ -1,34 +1,11 @@
-/* IBM Plex Sans TC — 本機打包(TC 版不在 Google Fonts;來源 IBM/plex release,OFL) */
+/* IBM Plex Sans TC — 本機打包(TC 版不在 Google Fonts;來源 IBM/plex release,OFL)。
+   字型階梯 --font-ui：預設 Plex，使用者可於「設定 → 通用」改選本機已安裝字型。 */
 @font-face {
   font-family: "IBM Plex Sans TC";
   src: url("/fonts/IBMPlexSansTC-Regular.ttf") format("truetype");
   font-weight: 400;
   font-display: swap;
 }
-
-.latency-drawer {
-  position: fixed;
-  inset: 48px 0 0 auto;
-  z-index: 80;
-  width: min(620px, 92vw);
-  overflow: auto;
-  padding: 14px;
-  border-left: 1px solid var(--line, #353b45);
-  background: var(--panel, #171a1f);
-  box-shadow: -12px 0 28px #0008;
-}
-.drawer-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
-.drawer-head strong { flex: 1; }
-.latency-output-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; }
-.latency-output { display: grid; gap: 4px; padding: 10px; border: 1px solid var(--line, #353b45); border-radius: 6px; }
-.latency-output small { color: var(--dim, #9aa3af); }
-.drawer-sort { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 12px; color: var(--text-dim); }
-.drawer-sort select { min-width: 150px; }
-.latency-table { margin-top: 12px; border: 1px solid var(--line, #353b45); border-radius: 6px; overflow: hidden; }
-.latency-row { display: grid; grid-template-columns: minmax(180px, 1fr) 90px 100px 110px; gap: 8px; padding: 7px 9px; border-top: 1px solid var(--line, #353b45); }
-.latency-row:first-child { border-top: 0; }
-.latency-header { color: var(--dim, #9aa3af); font-size: 12px; }
-.latency-path { display: block; color: var(--text-dim); }
 @font-face {
   font-family: "IBM Plex Sans TC";
   src: url("/fonts/IBMPlexSansTC-SemiBold.ttf") format("truetype");
@@ -42,21 +19,37 @@
   font-display: swap;
 }
 
-/* RoudaMix 深色主題 — tokens(M2 起機架 UI 全量沿用) */
+/* RoudaMix tokens — 色階由 flat-theme.css(別名層)與 console.css(主題層)定義；
+   這裡只留全域基準：介面字族與等寬讀值字族。 */
 :root {
-  --bg: #14161a;
-  --bg-panel: #1c1f24;
-  --bg-raised: #24282e;
-  --border: #33383f;
-  --text: #d8dce2;
-  --text-dim: #8a919b;
-  --accent: #4da3ff;
-  --ok: #3ddc84;
-  --warn: #ffb454;
-  --err: #ff5c5c;
+  --font-ui: "IBM Plex Sans TC", "Segoe UI", system-ui, sans-serif;
   --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
   color-scheme: dark; /* 原生控制項(select 彈出清單等)跟著深色 */
 }
+
+.latency-drawer {
+  position: fixed;
+  inset: 48px 0 0 auto;
+  z-index: 80;
+  width: min(620px, 92vw);
+  overflow: auto;
+  padding: 14px;
+  border-left: 1px solid var(--border);
+  background: var(--flat-2);
+  box-shadow: -12px 0 28px #0008;
+}
+.drawer-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.drawer-head strong { flex: 1; }
+.latency-output-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; }
+.latency-output { display: grid; gap: 4px; padding: 10px; border: 1px solid var(--border); border-radius: var(--flat-radius); }
+.latency-output small { color: var(--text-dim); }
+.drawer-sort { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 12px; color: var(--text-dim); }
+.drawer-sort select { min-width: 150px; }
+.latency-table { margin-top: 12px; border: 1px solid var(--border); border-radius: var(--flat-radius); overflow: hidden; }
+.latency-row { display: grid; grid-template-columns: minmax(180px, 1fr) 90px 100px 110px; gap: 8px; padding: 7px 9px; border-top: 1px solid var(--border); }
+.latency-row:first-child { border-top: 0; }
+.latency-header { color: var(--text-dim); font-size: 12px; }
+.latency-path { display: block; color: var(--text-dim); }
 
 * {
   box-sizing: border-box;
@@ -68,7 +61,7 @@ body {
   height: 100%;
   background: var(--bg);
   color: var(--text);
-  font: 13px/1.45 "IBM Plex Sans TC", "Segoe UI", system-ui, sans-serif;
+  font: 13px/1.45 var(--font-ui);
   /* P1-O:全域不鎖 user-select —— 錯誤/路徑/技術細節要能選取複製;
      拖曳區(軌條)自己在元件內禁選 */
 }
@@ -83,7 +76,7 @@ button {
   background: var(--bg-raised);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--flat-radius);
   padding: 4px 10px;
   cursor: pointer;
 }
@@ -108,7 +101,7 @@ button:disabled {
   flex: 1 1 auto;
   min-width: 0;
   padding: 5px 0;
-  font-size: 13px;
+  font-size: 14px; /* DESIGN Title：對話框標題 600/14px */
   font-weight: 600;
   line-height: 1.45;
 }
@@ -126,7 +119,7 @@ button:disabled {
   padding: 0;
   background: none;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--flat-radius);
   color: var(--text-dim);
   font-size: 18px;
   line-height: 1;
@@ -164,7 +157,7 @@ button:disabled {
   background: transparent;
 }
 ::selection {
-  background: rgb(77 163 255 / 0.35);
+  background: rgb(110 168 254 / 0.35);
 }
 :focus-visible {
   outline: 1px solid var(--accent);
@@ -193,7 +186,7 @@ button:disabled {
   border-left: 2px solid var(--accent);
   border-radius: 0;
   box-shadow: 0 4px 14px rgb(0 0 0 / 0.5);
-  font: 11px/1.5 "IBM Plex Sans TC", "Segoe UI", system-ui, sans-serif;
+  font: 11px/1.5 var(--font-ui);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.02em;
   pointer-events: none;
@@ -222,7 +215,7 @@ button:disabled {
   transform: scale(1.05);
   opacity: 1;
   border-radius: var(--flat-radius);
-  background: var(--bg-panel);
+  background: var(--flat-1);
   border: 1px solid var(--accent);
   box-shadow:
     0 18px 36px rgba(0, 0, 0, 0.45),

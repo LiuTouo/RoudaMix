@@ -169,9 +169,12 @@
   .plugin-picker {
     box-sizing: border-box;
     width: min(1040px, 92vw);
-    height: min(760px, 88dvh);
+    /* 高度隨內容收放；清單短時不留大片空白。fit-content：top-layer dialog 的
+     * UA inset:0 會拉伸 auto 高度，必須顯式指定 */
+    height: fit-content;
+    min-height: 320px;
     max-width: 92vw;
-    max-height: 88dvh;
+    max-height: min(760px, 88dvh);
     padding: 14px 16px;
     border: 1px solid var(--border);
     border-radius: 8px;
@@ -187,7 +190,8 @@
   .toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
   label { display: flex; flex-direction: column; gap: 6px; color: var(--text-dim); font-size: 12px; }
   .search-field { flex: 1 1 320px; min-width: 0; }
-  input { box-sizing: border-box; min-width: 0; width: 100%; height: 36px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
+  /* 邊框/底色/圓角由 console.css 的對話框欄位語彙統一（下劃線式） */
+  input { box-sizing: border-box; min-width: 0; width: 100%; height: 36px; padding: 7px 10px; font: inherit; }
   .clear { height: 36px; }
   .scan { height: 36px; }
   .statusline { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-size: 12px; color: var(--text-dim); }
@@ -206,14 +210,14 @@
   summary { cursor: pointer; }
   .plugin-group summary {
     display: flex; align-items: center; gap: 8px; padding: 3px 6px;
-    list-style: none; border-radius: 4px;
+    list-style: none; border-radius: var(--flat-radius);
   }
   .plugin-group summary::-webkit-details-marker { display: none; }
   .plugin-group summary::before { content: "▸"; color: var(--text-dim); font-size: 11px; }
   .plugin-group[open] summary::before { content: "▾"; }
   .plugin-group summary:hover { background: color-mix(in srgb, var(--bg-raised) 55%, transparent); }
   .plugin-group summary h2 { margin: 0; }
-  h2 { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 13px; color: var(--accent); }
+  h2 { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 12px; color: var(--accent); }
   h2 span { color: var(--text-dim); font-size: 11px; font-weight: normal; }
   ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
   .plugin-row { text-align: left; padding: 5px 12px; }
@@ -223,7 +227,7 @@
   strong { font-size: 14px; font-weight: 600; }
   .source { font-size: 11px; color: var(--text-dim); }
   .categories { display: flex; flex-wrap: wrap; gap: 4px; }
-  .categories span { font-size: 11px; padding: 2px 6px; border: 1px solid var(--border); border-radius: 4px; }
+  .categories span { font-size: 11px; padding: 2px 6px; border: 1px solid var(--border); border-radius: var(--flat-radius); }
   .add-label { font-size: 12px; color: var(--accent); }
   .empty { padding: 28px 10px; text-align: center; color: var(--text-dim); }
   .error, .notice { margin: 0; flex-shrink: 0; max-height: 72px; overflow: auto; overflow-wrap: anywhere; font-size: 12px; }

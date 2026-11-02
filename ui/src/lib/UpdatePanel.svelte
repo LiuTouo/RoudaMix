@@ -186,7 +186,7 @@
   section[hidden] { display: none; }
   h2 { margin: 0 0 6px; font-size: 20px; }
   .version { color: var(--text-dim); font-family: var(--mono); }
-  .update-status { margin: 16px 0; padding: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; }
+  .update-status { margin: 16px 0; padding: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--flat-radius); }
   .update-status p { margin: 0; }
   .update-status .error { margin-top: 8px; color: var(--err); overflow-wrap: anywhere; }
   .actions { display: flex; gap: 8px; flex-wrap: wrap; }

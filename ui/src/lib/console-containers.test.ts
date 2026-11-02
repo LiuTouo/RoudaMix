@@ -28,7 +28,7 @@ test('console container gutters stay outside scrollable lanes and preserve virtu
   assert.match(board, /grid-template-columns: minmax\(256px, 2fr\) minmax\(256px, 1fr\)/);
   assert.match(board, /gap: 20px/);
   assert.match(group, /padding: 0 12px 12px/);
-  assert.match(group, /background: #090B0D/);
+  assert.match(group, /background: var\(--well\)/);
   assert.match(group, /box-shadow: inset/);
   assert.match(lanes, /overflow: auto/);
   assert.doesNotMatch(lanes, /padding|border|gap:/);

@@ -168,3 +168,19 @@
     {/if}
   </aside>
 {/if}
+
+<style>
+  /* 本檔 scoped：全域只有 app.css 的版面(.latency-drawer)，狀態色與明細層級在這裡定義。
+     語意遵循 DESIGN.md：故障/錯誤 = err 紅、次要資訊 = text-dim。 */
+  .dim {
+    color: var(--text-dim);
+  }
+  .err {
+    color: var(--err);
+    overflow-wrap: anywhere;
+  }
+  /* Monitor Shadow（平行 dry 路徑）列：次要資訊，整列降為暗層，與主路徑列區分 */
+  .latency-row.shadow {
+    color: var(--text-dim);
+  }
+</style>

@@ -60,6 +60,9 @@ pub struct Settings {
     /// P1-K 輸入靜音看門狗開關。降噪/閘門型麥克風(NVIDIA Broadcast 等)沒說話時
     /// 送出真數位零,會被看門狗誤判成斷源 —— 這類使用者需要能關掉警示。
     pub input_silence_alert: bool,
+    /// 主介面字族名(本機已安裝)；None = 預設 IBM Plex Sans TC。
+    /// 含引號等 CSS 字串逃脫字元的值會在 normalize 被退回預設（見 uiFont.ts 同規則）。
+    pub ui_font_family: Option<String>,
 }
 
 impl Default for Settings {
@@ -78,6 +81,7 @@ impl Default for Settings {
             ui_scale: 100,
             monitor_hotkey: None,
             input_silence_alert: true,
+            ui_font_family: None,
         }
     }
 }
@@ -208,6 +212,11 @@ pub fn normalize(raw: Value) -> (Settings, Vec<String>) {
                 Some(value) => s.input_silence_alert = value,
                 None => warnings.push("settings.inputSilenceAlert 型別錯誤,已回復預設 true".into()),
             },
+            "uiFontFamily" => match opt_font(v) {
+                Ok(v) => s.ui_font_family = v,
+                Err(()) => warnings
+                    .push("settings.uiFontFamily 值不合法,已回復預設 IBM Plex Sans TC".into()),
+            },
             _ => {} // 未知鍵:保留策略(merge 寫回)
         }
     }
@@ -220,6 +229,88 @@ fn opt_str(v: &Value) -> Result<Option<String>, ()> {
         Value::String(s) => Ok(Some(s.clone())),
         _ => Err(()),
     }
+}
+
+/// 字族名安全檢查：非字串/空/過長/含 CSS 字串逃脫字元（引號、反斜線、分號、
+/// 大括號、換行、NUL）→ Err。與 ui/src/lib/uiFont.ts 的 sanitizeFontFamily 同規則。
+fn opt_font(v: &Value) -> Result<Option<String>, ()> {
+    const MAX_LEN: usize = 64;
+    let name = match v {
+        Value::Null => return Ok(None),
+        Value::String(s) => s.trim(),
+        _ => return Err(()),
+    };
+    if name.is_empty()
+        || name.len() > MAX_LEN
+        || name.chars()
+            .any(|c| matches!(c, '"' | '\\' | ';' | '{' | '}' | '\n' | '\r' | '\u{0}'))
+    {
+        return Err(());
+    }
+    Ok(Some(name.to_string()))
+}
+
+/// 列出本機已安裝字型族名（設定 → 通用 → 介面字型選單）。
+/// 讀 HKLM + HKCU 的 Fonts 登錄值名，去 (TrueType)/(OpenType) 尾碼與 " & " 複合名、
+/// 去樣式後綴（Bold/Italic…），去重排序。讀不到回 Err，UI 退回純預設清單。
+#[tauri::command]
+pub fn list_system_fonts() -> Result<Vec<String>, String> {
+    #[cfg(windows)]
+    {
+        use winreg::enums::HKEY_CURRENT_USER;
+        use winreg::enums::HKEY_LOCAL_MACHINE;
+        use winreg::RegKey;
+        let mut names: Vec<String> = Vec::new();
+        for hive in [HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER] {
+            let key = RegKey::predef(hive)
+                .open_subkey("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Fonts")
+                .map_err(|e| format!("無法讀取系統字型登錄({e})"))?;
+            for (value_name, _) in key.enum_values().flatten() {
+                if let Some(family) = font_family_from_registry_name(&value_name) {
+                    if !names.iter().any(|n: &String| n.eq_ignore_ascii_case(&family)) {
+                        names.push(family);
+                    }
+                }
+            }
+        }
+        names.sort_by_key(|a| a.to_lowercase());
+        Ok(names)
+    }
+    #[cfg(not(windows))]
+    {
+        Err("僅 Windows 支援字型列舉".into())
+    }
+}
+
+/// 登錄值名 → CSS 字族名。"Segoe UI Bold (TrueType)" → "Segoe UI"；
+/// "Microsoft JhengHei & 微軟正黑體 (TrueType)" → "Microsoft JhengHei"。
+/// 樣式後綴一併去掉（清單以家族為單位；粗斜體由 CSS 權重處理）。
+fn font_family_from_registry_name(raw: &str) -> Option<String> {
+    const STYLE_SUFFIXES: [&str; 12] = [
+        " Bold", " Italic", " Oblique", " Regular", " SemiBold", " Semibold",
+        " Light", " Thin", " Medium", " Black", " ExtraBold", " UltraBold",
+    ];
+    let base = raw.split(" (")          // 去 " (TrueType)" 等尾碼
+        .next()?
+        .split(" & ").next()?           // 複合名取拉丁名
+        .trim();
+    if base.is_empty() || base.contains('(') {
+        return None; // 純尾碼名(如 "(TrueType)")不是字族
+    }
+    let mut family = base.to_string();
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for suffix in STYLE_SUFFIXES {
+            let lower = family.to_lowercase();
+            if lower.ends_with(&suffix.to_lowercase()) {
+                family.truncate(family.len() - suffix.len());
+                changed = true;
+            }
+        }
+    }
+    let family = family.trim();
+    (!family.is_empty()).then(|| family.to_string())
 }
 
 /// typed 欄位覆蓋進原始 JSON(未知鍵保留),寫檔用
@@ -633,5 +724,44 @@ mod tests {
         assert_eq!(s, Settings::default());
         assert_eq!(w.len(), 1);
         let _ = fs::remove_file(&p);
+    }
+
+    #[test]
+    fn ui_font_family_normalizes() {
+        // 合法字族名保留；null = 預設；非法字元/過長/非字串 → 預設 + warning
+        let (s, w) = normalize(json!({"uiFontFamily": "Segoe UI"}));
+        assert_eq!(s.ui_font_family.as_deref(), Some("Segoe UI"));
+        assert!(w.is_empty());
+
+        let (s, w) = normalize(json!({"uiFontFamily": null}));
+        assert_eq!(s.ui_font_family, None);
+        assert!(w.is_empty());
+
+        for bad in [json!(123), json!("a\"b"), json!("a;b"), json!("a\\b"), json!("a{b"), json!("A".repeat(65))] {
+            let (s, w) = normalize(json!({"uiFontFamily": bad}));
+            assert_eq!(s.ui_font_family, None, "bad value {bad} 應回預設");
+            assert_eq!(w.len(), 1, "bad value {bad} 應帶 warning");
+        }
+    }
+
+    #[test]
+    fn font_registry_names_map_to_css_families() {
+        assert_eq!(
+            font_family_from_registry_name("Segoe UI (TrueType)").as_deref(),
+            Some("Segoe UI")
+        );
+        assert_eq!(
+            font_family_from_registry_name("Segoe UI Bold (TrueType)").as_deref(),
+            Some("Segoe UI")
+        );
+        assert_eq!(
+            font_family_from_registry_name("Microsoft JhengHei & 震軟正黑體 (TrueType)").as_deref(),
+            Some("Microsoft JhengHei")
+        );
+        assert_eq!(
+            font_family_from_registry_name("IBM Plex Sans TC SemiBold (OpenType)").as_deref(),
+            Some("IBM Plex Sans TC")
+        );
+        assert_eq!(font_family_from_registry_name("(TrueType)"), None);
     }
 }

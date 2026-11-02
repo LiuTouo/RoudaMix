@@ -1664,7 +1664,7 @@
     display: flex; align-items: center; gap: 5px; min-width: 0;
     padding: 3px 6px; font-size: 12px; line-height: normal; cursor: pointer;
     background: var(--bg); color: var(--text); border: 1px solid var(--border);
-    border-radius: var(--proto-radius, 4px);
+    border-radius: var(--flat-radius);
   }
   .sys-dest:hover { background: var(--bg-raised); }
   .sys-dest input { flex: none; margin: 0; width: 14px; height: 14px; accent-color: var(--accent); }
@@ -2102,7 +2102,7 @@
     font-family: var(--mono);
   }
   .err {
-    color: var(--warn);
+    color: var(--err);
     font-size: 11px;
     margin: 0;
     padding-bottom: 6px;
