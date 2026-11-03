@@ -169,10 +169,13 @@ void serve_client(HANDLE pipe, std::uint64_t generation) {
     g_client_connected.store(true);
     g_router.connect(generation,
                      [pipe](const nlohmann::json& frame) { send_frame(pipe, frame); });
+    // bridge 每 60s ping 一次(PING_INTERVAL);2 倍週期無任何流量 = client
+    // 凍結,斷線重開 pipe,bridge 的寫入失敗會觸發它重連
+    constexpr DWORD kClientReadTimeoutMs = 120000;
     for (;;) {
         std::optional<std::vector<std::uint8_t>> frame;
         try {
-            frame = rmx::read_frame(pipe);
+            frame = rmx::read_frame_bounded(pipe, kClientReadTimeoutMs);
         } catch (const rmx::FrameIoError& error) {
             std::fprintf(stderr, "[engine] bad frame: %s\n", error.what());
             break;

@@ -108,15 +108,19 @@ bool read_exact_bounded(HANDLE h, void* buf, size_t n, DWORD timeout_ms) {
     return true;
 }
 
-std::optional<std::vector<uint8_t>> read_frame(HANDLE h) {
+std::optional<std::vector<uint8_t>> read_frame_bounded(HANDLE h, DWORD timeout_ms) {
     uint8_t len_buf[4];
-    if (!read_exact(h, len_buf, sizeof(len_buf))) return std::nullopt;
+    if (!read_exact_bounded(h, len_buf, sizeof(len_buf), timeout_ms)) return std::nullopt;
     uint32_t len = len_buf[0] | (len_buf[1] << 8) | (uint32_t(len_buf[2]) << 16) |
                    (uint32_t(len_buf[3]) << 24);
     if (len > kMaxFrameBytes) throw FrameIoError("frame exceeds 1 MiB cap");
     std::vector<uint8_t> payload(len);
-    if (!read_exact(h, payload.data(), len)) return std::nullopt;
+    if (!read_exact_bounded(h, payload.data(), len, timeout_ms)) return std::nullopt;
     return payload;
+}
+
+std::optional<std::vector<uint8_t>> read_frame(HANDLE h) {
+    return read_frame_bounded(h, INFINITE);
 }
 
 bool write_frame(HANDLE h, const nlohmann::json& j) {

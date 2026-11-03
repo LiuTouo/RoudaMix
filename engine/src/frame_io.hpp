@@ -17,8 +17,13 @@ struct FrameIoError : std::runtime_error {
 
 bool read_exact(HANDLE h, void* buf, size_t n);
 
-// EOF/斷線回 nullopt;超長或壞資料丟 FrameIoError
+// EOF/斷線/逾時回 nullopt;超長或壞資料丟 FrameIoError
 std::optional<std::vector<uint8_t>> read_frame(HANDLE h);
+
+// read_frame 的 bounded 版:每個讀取區段最多等 timeout_ms,逾時與 EOF/斷線
+// 同途徑回 nullopt(呼叫端視為連線結束)。serve 迴圈用:凍結的 client 不能
+// 無限佔住唯一 pipe 槽(逾時需 > bridge 的 PING_INTERVAL = 60s)。
+std::optional<std::vector<uint8_t>> read_frame_bounded(HANDLE h, DWORD timeout_ms);
 
 bool write_frame(HANDLE h, const nlohmann::json& j);
 
