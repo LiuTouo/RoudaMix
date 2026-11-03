@@ -186,6 +186,8 @@ private:
     std::uint64_t revision_{};
     nlohmann::json last_scan_ = nlohmann::json::array();
 
+    std::thread panel_thread_;  // 面板程序等待 thread;shutdown join,不可 detach
+
     std::mutex scan_mutex_;
     ScanJob scan_job_;
     std::uint64_t next_scan_id_{1};

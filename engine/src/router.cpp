@@ -157,6 +157,9 @@ void Router::shutdown() {
     std::lock_guard<std::mutex> lock(engine_mutex_);
     if (shutdown_) return;
     if (host_attached_) EditorHost::instance().shutdown();
+    // 面板關閉(或等滿開啟中面板)才停引擎:panel thread 仍在 driver/device 內
+    // 時 terminate/close 會踩使用後釋放
+    if (panel_thread_.joinable()) panel_thread_.join();
     engine_.stop();
     shutdown_ = true;
 }
@@ -557,13 +560,20 @@ Router::Outcome Router::handle_open_device_panel(const EmptyRequest&) {
         std::lock_guard<std::mutex> lock(connection_mutex_);
         generation = connection_generation_;
     }
-    std::thread([this, generation] {
+    // panel thread 收進 Router 生命週期(shutdown join):detached thread 在
+    // app 結束時可能仍持 engine/device 參照,解構即 UAF。面板還開著時不重複開。
+    if (panel_thread_.joinable()) {
+        if (engine_.panel_open())
+            return failure(Err::kDeviceBusy, "hardware panel is already open");
+        panel_thread_.join();
+    }
+    panel_thread_ = std::thread([this, generation] {
         if (auto fail = engine_.open_control_panel()) {
             std::fprintf(stderr, "[engine] open panel failed: %s\n", fail->message.c_str());
             return;
         }
         send_to(generation, make_event("devices_changed", nlohmann::json::object()));
-    }).detach();
+    });
     return success({{"panel", true}});
 }
 
@@ -1034,15 +1044,17 @@ void Router::handle_host_command(const EditorHostCmd& command) {
     if (command.kind == kHostBypass) {
         const auto* slot = engine_.find_slot(command.instance_id);
         if (slot == nullptr) return;
+        // set_bypass/load_preset 回傳 optional<Failure>(有值 = 失敗):
+        // 成功才推進 dirty revision,與 protocol 路徑 handle_bypass 同語意
         effect = engine_.set_bypass(command.instance_id, !slot->bypass)
-                     ? Effect::kDirty
-                     : Effect::kStatus;
+                     ? Effect::kStatus
+                     : Effect::kDirty;
     } else if (command.kind == kHostPreset) {
         if (engine_.find_slot(command.instance_id) == nullptr) return;
         effect = engine_.load_preset(command.instance_id,
                                      std::filesystem::path(command.path))
-                     ? Effect::kDirty
-                     : Effect::kStatus;
+                     ? Effect::kStatus
+                     : Effect::kDirty;
     } else if (command.kind == kHostSavePreset) {
         if (engine_.find_slot(command.instance_id) == nullptr) return;
         (void)engine_.save_preset(command.instance_id,

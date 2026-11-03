@@ -322,6 +322,98 @@ int main(int argc, char** argv) {
         // Healthy WASAPI destruction must stop callbacks before freeing graph/track members.
     }
     CHECK(fake_wasapi::clients == 0);
+
+    // --- editor host 指令 revision 語意:成功才推進 dirty revision ---
+    {
+        Session s;
+        const auto input = s.ok("track_add", {{"kind", "audio"}, {"name", "Input"}})["trackId"];
+        const auto output = s.ok("track_add", {{"kind", "output"}, {"name", "Monitor"}})["trackId"];
+        const auto fx = s.ok("track_add", {{"kind", "fx"}, {"name", "Effect"}})["trackId"];
+        s.ok("track_set_source", {{"trackId", input}, {"source", {{"type", "sine"}, {"freq", 440}}}});
+        s.ok("track_set_dests", {{"trackId", input}, {"dests", json::array({fx})}});
+        s.ok("track_set_dests", {{"trackId", fx}, {"dests", json::array({output})}});
+        s.ok("track_set_output", {{"trackId", output}, {"output", {{"type", "asioOut"}, {"channel", 0u}}}});
+        s.start();
+        const auto plugin = s.ok("add_plugin", {{"trackId", fx}, {"path", argv[1]}})["instanceId"];
+        auto broadcasted = [&] {
+            for (const auto& f : s.frames)
+                if (f["kind"] == "status") return true;
+            return false;
+        };
+        const auto revision0 = s.status()["revision"];
+
+        // 成功 bypass = dirty:revision +1 且廣播 status
+        s.frames.clear();
+        s.router.handle_host_command({rmx::kHostBypass, plugin.get<std::uint32_t>(), L""});
+        CHECK(broadcasted());
+        CHECK(s.status()["revision"] == revision0.get<std::uint64_t>() + 1);
+
+        // 失敗 preset(檔案不存在):kStatus 仍廣播現況,但 revision 不推進
+        const auto revision1 = s.status()["revision"];
+        s.frames.clear();
+        s.router.handle_host_command(
+            {rmx::kHostPreset, plugin.get<std::uint32_t>(), L"Z:\\roudamix-no-such.vstpreset"});
+        bool dirty_bump = false;
+        for (const auto& f : s.frames)
+            if (f["kind"] == "status" && f["payload"]["revision"] != revision1) dirty_bump = true;
+        CHECK(!dirty_bump);
+        CHECK(s.status()["revision"] == revision1);
+
+        // 成功 preset:save 後經 host 指令載回 = dirty
+        const auto preset = std::filesystem::temp_directory_path() /
+            ("roudamix-hostcmd-" + std::to_string(GetCurrentProcessId()) + ".vstpreset");
+        s.ok("save_preset", {{"instanceId", plugin}, {"path", preset.string()}});
+        const auto revision2 = s.status()["revision"];
+        s.frames.clear();
+        s.router.handle_host_command(
+            {rmx::kHostPreset, plugin.get<std::uint32_t>(), preset.wstring()});
+        CHECK(broadcasted());
+        CHECK(s.status()["revision"] == revision2.get<std::uint64_t>() + 1);
+        std::filesystem::remove(preset);
+
+        // 未知 instance = 早退,無變化
+        s.frames.clear();
+        s.router.handle_host_command({rmx::kHostBypass, 999999u, L""});
+        CHECK(s.frames.empty());
+        s.ok("stop");
+    }
+
+    // --- runtime latency 變更三態:active → suspended(超限)→ active(恢復)---
+    {
+        Session s;
+        // 與 main.cpp 同接線:mailbox → Router(測試程序無 main window)
+        s.router.set_latency_changed_callback([&](std::uint32_t id, bool monitor) {
+            s.router.handle_latency_changed(id, monitor);
+        });
+        const auto input = s.ok("track_add", {{"kind", "audio"}, {"name", "Input"}})["trackId"];
+        const auto output = s.ok("track_add", {{"kind", "output"}, {"name", "Monitor"}})["trackId"];
+        const auto fx = s.ok("track_add", {{"kind", "fx"}, {"name", "Effect"}})["trackId"];
+        s.ok("track_set_source", {{"trackId", input}, {"source", {{"type", "sine"}, {"freq", 440}}}});
+        s.ok("track_set_dests", {{"trackId", input}, {"dests", json::array({fx})}});
+        s.ok("track_set_dests", {{"trackId", fx}, {"dests", json::array({output})}});
+        s.ok("track_set_output", {{"trackId", output}, {"output", {{"type", "asioOut"}, {"channel", 0u}}}});
+        s.start();
+        const auto plugin = s.ok("add_plugin", {{"trackId", fx}, {"path", argv[1]}})["instanceId"];
+        auto slot = [&]() -> json {
+            const auto tracks = s.status()["tracks"];  // 具名複製:range-for 不可掛在暫時物件上
+            for (const auto& t : tracks)
+                for (const auto& p : t["plugins"])
+                    if (p["instanceId"] == plugin) return p;
+            return json();
+        };
+        // 1) 正常變更:128 samples,保持 active
+        s.ok("set_param", {{"instanceId", plugin}, {"paramId", 100u}, {"value", 128.0 / 192000.0}});
+        eventually([&] { return slot()["runtimeState"] == "active" && slot()["latencySamples"] == 128; });
+        // 2) 超限:1.0 → 192000 samples > 2s@48k(96000) → suspend,所有輸出 dry
+        s.ok("set_param", {{"instanceId", plugin}, {"paramId", 100u}, {"value", 1.0}});
+        eventually([&] { return slot()["runtimeState"] == "suspended"; });
+        // 3) 恢復:0 → kDrainParameters 餵參數 → 重新 active
+        s.ok("set_param", {{"instanceId", plugin}, {"paramId", 100u}, {"value", 0.0}});
+        eventually([&] { return slot()["runtimeState"] == "active"; });
+        s.ok("stop");
+    }
+
+    CHECK(fake_wasapi::clients == 0);
     CoUninitialize();
     std::puts("WASAPI runtime passed");
 }
