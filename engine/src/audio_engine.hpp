@@ -122,6 +122,10 @@ public:
     void stop_loudness(const std::string& id) noexcept;
     void clear_loudness() noexcept;
     std::optional<Failure> open_control_panel();
+    // 硬體面板程序開啟中(>0):期間禁 start/rebuild driver(panel thread 在 driver 內)
+    [[nodiscard]] bool panel_open() const noexcept {
+        return panel_open_.load(std::memory_order_acquire) > 0;
+    }
 
     // ---- tracks(控制面;全部由 Router 的臨界區序列化)----
     std::optional<Failure> track_add(TrackKind kind, const std::string& name,

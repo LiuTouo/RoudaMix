@@ -725,6 +725,9 @@ void AudioEngine::stop() noexcept {
     device_.stop();
     // RT 停 callback 後退 graph、卸 plugin(下次 start 依新 rate 重建)
     retire_graph();
+    // driver stop 後仍可能有最後一個 in-flight callback 持舊圖 reader;
+    // 與 save/load preset 同契約:排空才 terminate,避免與 setProcessing(false) 併發
+    wait_rt_blocks_drained(2000);
     for (auto& t : tracks_)
         for (auto& slot : t.chain)
             if (slot.plugin) {
@@ -1125,8 +1128,11 @@ void AudioEngine::handle_latency_changed(std::uint32_t instance_id, bool monitor
     slot->latency_samples = slot->plugin->latency_samples();
     slot->latency_known = true;
     slot->primary_state = RackSlot::RuntimeState::kActive;
-    if (prepare_monitor_variants())
-        slot->primary_state = RackSlot::RuntimeState::kSuspended;
+    // 準備失敗(shadow 載入/安全圖/排空逾時)不 suspend primary:Stream 保留
+    // 完整處理,缺 shadow 的 monitor 路徑由 planner 走 dry(ADR-0002 的
+    // Runtime-degraded 語意)。primary 超限只由下方 swap_graph 失敗路徑認定
+    // (plan 不合法 = commit 拒絕 → kSuspended → kDrainParameters 對齊)。
+    (void)prepare_monitor_variants();
     if (!swap_graph()) {
         // Runtime primary 超限不是使用者 transaction：保留觀察值但 suspend
         // 該 instance，讓所有輸出走 dry，其他 plugin/graph 繼續工作。
