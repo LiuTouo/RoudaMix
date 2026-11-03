@@ -58,6 +58,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed' }
           cmake --build engine/build --config Release --parallel 4
           if ($LASTEXITCODE -ne 0) { throw 'CMake build failed' }
+      # loudness-reference.test.mjs 以 ffmpeg ebur128 為響度參考基準
+      - name: Install ffmpeg
+        shell: pwsh
+        run: |
+          choco install ffmpeg --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'ffmpeg installation failed' }
       - name: Run full test suite
         shell: pwsh
         run: ./scripts/test-all.ps1
