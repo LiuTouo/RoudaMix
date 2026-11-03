@@ -22,3 +22,4 @@ node_modules/
 
 # pi agent session artifacts
 /.pi/
+/ui/.impeccable/
