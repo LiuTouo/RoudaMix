@@ -103,6 +103,52 @@ int main() {
         }
     }
 
+    // 連續請求以單一 64-bit 原子發布:RT 套用的 (delay,transition) 必為最後
+    // 一個請求的整組配對;crossfade 收斂後輸出 = 精確 delay 的歷史取樣。
+    {
+        rmx::PdcDelayLine rapid;
+        CHECK(rapid.prepare(16, 8));
+        CHECK(rapid.set_delay(2, 0));
+        float hist_l[16];
+        float hist_r[16];
+        for (int i = 0; i < 16; ++i) {
+            hist_l[i] = static_cast<float>(i + 1);
+            hist_r[i] = -hist_l[i];
+        }
+        float sink_l[16]{};
+        float sink_r[16]{};
+        rapid.process_add(hist_l, hist_r, sink_l, sink_r, 16);
+        // 兩個請求連發:第二個 (5,4) 必須整組生效,不得與 (3,8) 撕裂
+        CHECK(rapid.set_delay(3, 8));
+        CHECK(rapid.set_delay(5, 4));
+        CHECK(rapid.delay_samples() == 5);
+        float in_l[8];
+        float in_r[8];
+        float out_l[8];
+        float out_r[8];
+        for (int b = 0; b < 4; ++b) {
+            for (int i = 0; i < 8; ++i) {
+                in_l[i] = static_cast<float>(17 + b * 8 + i);
+                in_r[i] = -in_l[i];
+                out_l[i] = out_r[i] = 0.0F;
+            }
+            rapid.process_add(in_l, in_r, out_l, out_r, 8);
+            for (int i = 0; i < 8; ++i)
+                CHECK(std::isfinite(out_l[i]) && std::isfinite(out_r[i]));
+        }
+        // 收斂後:輸出 = 輸入延遲 5 samples,精確無暫態殘留(tail 接續序列,
+        // 值 = 1-based 位置)
+        float tail_l[8]{49, 50, 51, 52, 53, 54, 55, 56};
+        float tail_r[8]{-49, -50, -51, -52, -53, -54, -55, -56};
+        float tout_l[8]{};
+        float tout_r[8]{};
+        rapid.process_add(tail_l, tail_r, tout_l, tout_r, 8);
+        for (int i = 0; i < 8; ++i) {
+            CHECK(tout_l[i] == static_cast<float>(44 + i));
+            CHECK(tout_r[i] == -tout_l[i]);
+        }
+    }
+
     std::printf("pdc_delay_line_test PASSED\n");
     return 0;
 }

@@ -30,27 +30,28 @@ void PdcDelayLine::reset() noexcept {
     write_ = 0;
     current_delay_ = target_delay_ = 0;
     transition_total_ = transition_remaining_ = 0;
-    requested_delay_.store(0, std::memory_order_relaxed);
-    requested_transition_.store(0, std::memory_order_relaxed);
-    request_generation_.store(0, std::memory_order_relaxed);
-    applied_generation_ = 0;
+    requested_.store(0, std::memory_order_relaxed);
+    applied_request_ = 0;
 }
 
 bool PdcDelayLine::set_delay(std::uint64_t delay_samples,
                              std::uint32_t transition_samples) noexcept {
     if (delay_samples > max_delay_ || ring_l_.empty()) return false;
-    requested_delay_.store(delay_samples, std::memory_order_relaxed);
-    requested_transition_.store(transition_samples, std::memory_order_relaxed);
-    request_generation_.fetch_add(1, std::memory_order_release);
+    // 打包契約:delay 限 32-bit(PDC 2s 上限適低於此;防禦性檢查使契約本地化)
+    if (delay_samples > 0xFFFFFFFFull) return false;
+    // 單一 64-bit 原子發布 (delay,transition) 對:RT 端一次載入即得一致配對
+    requested_.store((delay_samples << 32) | transition_samples,
+                     std::memory_order_release);
     return true;
 }
 
 void PdcDelayLine::apply_pending_request() noexcept {
-    const auto generation = request_generation_.load(std::memory_order_acquire);
-    if (generation == applied_generation_) return;
-    applied_generation_ = generation;
-    const auto requested = requested_delay_.load(std::memory_order_relaxed);
-    const auto transition = requested_transition_.load(std::memory_order_relaxed);
+    const auto request = requested_.load(std::memory_order_acquire);
+    if (request == applied_request_) return;
+    applied_request_ = request;
+    const auto requested = request >> 32;
+    const auto transition =
+        static_cast<std::uint32_t>(request & 0xFFFFFFFFull);
     if (transition == 0 || requested == current_delay_) {
         current_delay_ = target_delay_ = requested;
         transition_total_ = transition_remaining_ = 0;

@@ -18,7 +18,7 @@ public:
                      std::uint32_t frames) noexcept;
 
     [[nodiscard]] std::uint64_t delay_samples() const noexcept {
-        return requested_delay_.load(std::memory_order_acquire);
+        return requested_.load(std::memory_order_acquire) >> 32;
     }
     [[nodiscard]] std::uint64_t max_delay_samples() const noexcept { return max_delay_; }
     [[nodiscard]] std::size_t allocated_bytes() const noexcept {
@@ -36,12 +36,10 @@ private:
     std::uint64_t target_delay_{};
     std::uint32_t transition_total_{};
     std::uint32_t transition_remaining_{};
-    // control thread 只發布 request；audio thread 只在 block boundary 套用。
-    // 這個 seam 避免 graph rebuild 與 process_add 同時寫 transition 狀態。
-    std::atomic<std::uint64_t> requested_delay_{};
-    std::atomic<std::uint32_t> requested_transition_{};
-    std::atomic<std::uint64_t> request_generation_{};
-    std::uint64_t applied_generation_{};  // audio thread 專屬
+    // control thread 發布單一 64-bit 請求 (delay << 32 | transition);
+    // audio thread 只在 block boundary 套用。單原子消除兩值分離載入的撕裂窗口。
+    std::atomic<std::uint64_t> requested_{};
+    std::uint64_t applied_request_{};  // audio thread 專屬
 };
 
 }  // namespace rmx
