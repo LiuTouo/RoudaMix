@@ -140,9 +140,11 @@ try { $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = [Runtime.InteropServices.Marshal
 finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
 # Fail fast on a wrong key password: probe-sign a temp file via the same env vars the
 # bundler uses, instead of discovering the wrong password minutes into the build.
+# npm.cmd explicitly: npm.ps1 shim mangles args when invoked from a function scope;
+# stdout redirected so Test-CommandResult returns a clean boolean (stderr stays visible).
 $probe = Join-Path ([IO.Path]::GetTempPath()) 'roudamix-sign-probe.txt'
 Set-Content -LiteralPath $probe -Value 'signing probe' -Encoding ascii
-$signOk = Test-CommandResult { npm run tauri -- signer sign $probe }
+$signOk = Test-CommandResult { npm.cmd run tauri -- signer sign $probe > $null }
 Remove-Item -LiteralPath $probe, "$probe.sig" -Force -ErrorAction SilentlyContinue
 if (-not $signOk) {
     throw 'Updater signing probe failed (error above); wrong -KeyPassword for the key generated 2026-09-16?'
