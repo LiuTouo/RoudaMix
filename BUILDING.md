@@ -23,7 +23,8 @@ git submodule update --init --recursive
 
 暫時以本地腳本發布（帳號 Actions 額度鎖定期間）：`scripts/release-local.ps1 -Version X.Y.Z`
 會在本機執行原本 release.yml 的全部步驟（完整測試、打包、SHA256 驗證、建 tag 推送、
-建立 GitHub Release，簽章金鑰讀取 `~/.tauri/roudamix.key`）。`-Draft` 先留草稿檢查，
+建立 GitHub Release）。簽章金鑰讀取 `~/.tauri/roudamix.key`，每次執行都必須提供
+`-KeyPassword`（省略時以遮罩提示輸入，不落地環境變數或檔案）。`-Draft` 先留草稿檢查，
 `-ValidateOnly` 只跑前置檢查。恢復 CI 發布時，把 release.yml 的 `push: tags: ['v*']` 觸發加回。
 
 ## CI 發布加速與驗證

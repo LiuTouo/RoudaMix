@@ -1,10 +1,12 @@
 ﻿# 暫時性本地發布腳本：帳號 Actions 額度鎖定期間，以本機取代 release.yml 的 build+publish。
 # 步驟與 CI 完全對齊：版本/衝突驗證 -> 建置+完整測試+打包 -> SHA256/資產檢查 -> 建 tag -> 推送 -> GitHub Release。
 # 恢復 CI 發布：把 release.yml 的 push: tags: ['v*'] 觸發加回即可。
-# 前置：gh 已登入、rust 1.97.1、7z、ffmpeg、~/.tauri/roudamix.key（加密金鑰，會提示輸入密碼）。
+# 前置：gh 已登入、rust 1.97.1、7z、ffmpeg、~/.tauri/roudamix.key（加密金鑰，每次執行輸入 -KeyPassword）。
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$Version,
+    # 簽章金鑰密碼（每次執行都必須提供；省略參數時會以遮罩提示輸入，不落地環境變數或檔案）。
+    [Parameter(Mandatory = $true)][securestring]$KeyPassword,
     # 保留為 GitHub 草稿 release，先檢查下載檔案再手動公開。
     [switch]$Draft,
     # 緊急時略過完整測試（不建議；正式發布應保留測試門檻）。
@@ -104,15 +106,10 @@ if ($ValidateOnly) {
 }
 
 # --- 建置 + 完整測試 + 打包（= CI build job 的 Test, build portable... 步驟）---
-if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
-    $env:TAURI_SIGNING_PRIVATE_KEY = Get-Content -LiteralPath $keyPath -Raw
-}
-if (-not $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD) {
-    $secure = Read-Host -Prompt 'Signing key password (TAURI_SIGNING_PRIVATE_KEY_PASSWORD)' -AsSecureString
-    $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
-    try { $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) }
-    finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
-}
+$env:TAURI_SIGNING_PRIVATE_KEY = Get-Content -LiteralPath $keyPath -Raw
+$bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($KeyPassword)
+try { $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) }
+finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
 $buildArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'scripts/build-release.ps1', '-Version', $Version)
 if ($SkipTests) { $buildArgs += '-SkipTests' }
 Invoke-ReleaseCommand powershell $buildArgs
