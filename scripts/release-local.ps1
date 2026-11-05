@@ -116,13 +116,25 @@ $tag = $meta.tag
 $repo = gh repo view --json nameWithOwner -q .nameWithOwner
 if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve GitHub repository' }
 # gh release view returns non-zero for a missing release; drafts visible to collaborators.
-if (Test-CommandResult { gh release view $tag --repo $repo > $null 2>&1 }) {
+# 直接呼叫（不用 & scriptblock 包裹）：本機 PowerShell 對「scriptblock 内帶變數參數呼叫原
+# 生指令」會把該參數換成 -encodedCommand <原始碼>，導致檢查被靜默繞過（已實測重現）。
+$previousEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+gh release view $tag --repo $repo > $null 2>&1
+$releaseExists = ($LASTEXITCODE -eq 0)
+$ErrorActionPreference = $previousEap
+if ($releaseExists) {
     throw "Release $tag already exists; choose a new version or delete the old release."
 }
 $tagCommit = $null
-if (Test-CommandResult { $script:tagCommit = git rev-parse --verify "refs/tags/$tag^{commit}" 2>$null }) {
-    if ($tagCommit -ne $meta.commit) { throw "Existing tag $tag points to a different commit" }
+$previousEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+git rev-parse --verify "refs/tags/$tag^{commit}" > $null 2>&1
+if ($LASTEXITCODE -eq 0) {
+    $tagCommit = git rev-parse --verify "refs/tags/$tag^{commit}"
 }
+$ErrorActionPreference = $previousEap
+if ($tagCommit -and $tagCommit -ne $meta.commit) { throw "Existing tag $tag points to a different commit" }
 $remoteTags = git ls-remote --tags origin "refs/tags/$tag"
 if ($remoteTags -and -not ($remoteTags -match [regex]::Escape($meta.commit))) {
     throw "Remote tag $tag points to a different commit"
@@ -140,11 +152,15 @@ try { $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = [Runtime.InteropServices.Marshal
 finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
 # Fail fast on a wrong key password: probe-sign a temp file via the same env vars the
 # bundler uses, instead of discovering the wrong password minutes into the build.
-# npm.cmd explicitly: npm.ps1 shim mangles args when invoked from a function scope;
-# stdout redirected so Test-CommandResult returns a clean boolean (stderr stays visible).
+# npm.cmd（npm.ps1 shim 在函式内呼叫時參數會被搞壞）；直接呼叫（scriptblock 包裹在本機
+# 會把變數參數換成 -encodedCommand）；stdout 導向 null 保持回傳值乾淨，stderr 保留可見。
 $probe = Join-Path ([IO.Path]::GetTempPath()) 'roudamix-sign-probe.txt'
 Set-Content -LiteralPath $probe -Value 'signing probe' -Encoding ascii
-$signOk = Test-CommandResult { npm.cmd run tauri -- signer sign $probe > $null }
+$previousEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+npm.cmd run tauri -- signer sign $probe > $null
+$signOk = ($LASTEXITCODE -eq 0)
+$ErrorActionPreference = $previousEap
 Remove-Item -LiteralPath $probe, "$probe.sig" -Force -ErrorAction SilentlyContinue
 if (-not $signOk) {
     throw 'Updater signing probe failed (error above); wrong -KeyPassword for the key generated 2026-09-16?'
@@ -167,7 +183,12 @@ foreach ($suffix in @('windows-x64-portable.zip', 'windows-x64-setup.exe', 'sour
 }
 
 # --- 建 tag、推送、發布（= CI publish job；release.py prepare 記錄的 HEAD 即發布提交）---
-if (-not (Test-CommandResult { git rev-parse --verify "refs/tags/$tag" 2>$null })) {
+$previousEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+git rev-parse --verify "refs/tags/$tag" > $null 2>&1
+$tagMissing = ($LASTEXITCODE -ne 0)
+$ErrorActionPreference = $previousEap
+if ($tagMissing) {
     git tag -a $tag -m "RoudaMix $Version" $meta.commit
     if ($LASTEXITCODE -ne 0) { throw "git tag $tag failed" }
 }
