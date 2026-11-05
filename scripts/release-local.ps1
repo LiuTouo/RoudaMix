@@ -150,15 +150,21 @@ $env:TAURI_SIGNING_PRIVATE_KEY = Get-Content -LiteralPath $keyPath -Raw
 $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($KeyPassword)
 try { $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) }
 finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
+# Guard: masked console input can arrive empty (observed on this machine); an empty
+# password would pass the probe via tauri's interactive "Password:" rescue prompt
+# and then fail the build with a misleading "Wrong password" error.
+if ([string]::IsNullOrEmpty($env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD)) {
+    throw 'KeyPassword arrived EMPTY (masked input issue or Enter pressed). Re-run and type the password carefully (Ctrl+V paste works).'
+}
 # Fail fast on a wrong key password: probe-sign a temp file via the same env vars the
 # bundler uses, instead of discovering the wrong password minutes into the build.
-# npm.cmd（npm.ps1 shim 在函式内呼叫時參數會被搞壞）；直接呼叫（scriptblock 包裹在本機
-# 會把變數參數換成 -encodedCommand）；stdout 導向 null 保持回傳值乾淨，stderr 保留可見。
+# stdin=NUL so tauri can never fall back to an interactive prompt here; stdout to NUL
+# keeps the boolean clean, stderr stays visible for diagnosis.
 $probe = Join-Path ([IO.Path]::GetTempPath()) 'roudamix-sign-probe.txt'
 Set-Content -LiteralPath $probe -Value 'signing probe' -Encoding ascii
 $previousEap = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
-npm.cmd run tauri -- signer sign $probe > $null
+cmd /c "npm.cmd run tauri -- signer sign `"$probe`" < NUL > NUL"
 $signOk = ($LASTEXITCODE -eq 0)
 $ErrorActionPreference = $previousEap
 Remove-Item -LiteralPath $probe, "$probe.sig" -Force -ErrorAction SilentlyContinue
