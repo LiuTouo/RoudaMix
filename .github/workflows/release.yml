@@ -23,9 +23,11 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # A+B 單一 job：同一台 runner 先跑完整測試再打包（build-release.ps1 內建順序），
+  # 省掉原本與打包平行的整台 windows test runner，降低 Actions 額度消耗。
   build:
     runs-on: windows-2022
-    timeout-minutes: 90
+    timeout-minutes: 120
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
@@ -73,18 +75,30 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Rust installation failed' }
           rustup default 1.97.1
           if ($LASTEXITCODE -ne 0) { throw 'Rust selection failed' }
-      # 從 main 的 release-cache job 讀取依賴；不同 tag 不能互讀快取。
+      # 從 main 的 CI 讀取依賴；不同 tag 不能互讀快取。
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: windows-release-v1
           save-if: 'false'
-      - name: Build portable, installer and corresponding source
+      # 打包前先在同 job 跑完整測試，補上 test profile 依賴（與 main CI 共用，唯讀）。
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: windows-test-v1
+          save-if: 'false'
+      # loudness-reference.test.mjs 以 ffmpeg ebur128 為響度參考基準（build-release.ps1 內的 test-all.ps1 需要）
+      - name: Install ffmpeg
+        shell: pwsh
+        run: |
+          choco install ffmpeg --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'ffmpeg installation failed' }
+      # 不帶 -SkipTests：build-release.ps1 會先建全部 engine 目標、跑完整測試，再做打包。
+      - name: Test, build portable, installer and corresponding source
         shell: pwsh
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.version }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: ./scripts/build-release.ps1 -Version $env:RELEASE_VERSION -SkipTests
+        run: ./scripts/build-release.ps1 -Version $env:RELEASE_VERSION
       - name: Preserve release assets
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -96,63 +110,9 @@ jobs:
           retention-days: 7
           compression-level: 0
 
-  # 完整測試與打包平行跑，縮短關鍵路徑；publish 仍以兩個 job 全綠為門檻。
-  test:
-    runs-on: windows-2022
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          submodules: recursive
-          persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            ui/package-lock.json
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
-        with:
-          python-version: '3.12'
-      - name: Install Rust toolchain
-        shell: pwsh
-        run: |
-          rustup toolchain install 1.97.1 --profile minimal
-          if ($LASTEXITCODE -ne 0) { throw 'Rust installation failed' }
-          rustup default 1.97.1
-          if ($LASTEXITCODE -ne 0) { throw 'Rust selection failed' }
-      # 與 main CI 共用 test profile，但不與 release profile 爭用不可變快取。
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          shared-key: windows-test-v1
-          save-if: 'false'
-      - name: Restore dependencies
-        shell: pwsh
-        run: |
-          npm ci
-          if ($LASTEXITCODE -ne 0) { throw 'npm ci failed (root)' }
-          npm --prefix ui ci
-          if ($LASTEXITCODE -ne 0) { throw 'npm ci failed (ui)' }
-      - name: Build engine
-        shell: pwsh
-        run: |
-          cmake -S engine -B engine/build -A x64
-          if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed' }
-          cmake --build engine/build --config Release --parallel 4
-          if ($LASTEXITCODE -ne 0) { throw 'CMake build failed' }
-      # loudness-reference.test.mjs 以 ffmpeg ebur128 為響度參考基準
-      - name: Install ffmpeg
-        shell: pwsh
-        run: |
-          choco install ffmpeg --yes --no-progress
-          if ($LASTEXITCODE -ne 0) { throw 'ffmpeg installation failed' }
-      - name: Run full test suite
-        shell: pwsh
-        run: ./scripts/test-all.ps1
-
+  # 測試與打包已合併進單一 build job；publish 以該 job 全綠為門檻。
   publish:
-    needs: [build, test]
+    needs: [build]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

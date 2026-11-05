@@ -14,9 +14,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # A+B 單一 job：先跑完整測試（A），main push 再於同一台 runner 預熱 release 依賴快取（B），
+  # 省掉原本每個 main push 一整台 windows runner 的 release-cache job，降低 Actions 額度消耗。
   test:
     runs-on: windows-2022
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -67,46 +69,20 @@ jobs:
       - name: Run full test suite
         shell: pwsh
         run: ./scripts/test-all.ps1
-
-  # 預熱與正式打包相同的 Release 依賴；無簽章金鑰、不建立 release。
-  release-cache:
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    runs-on: windows-2022
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          submodules: recursive
-          persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            ui/package-lock.json
-      - name: Install Rust toolchain
-        shell: pwsh
-        run: |
-          rustup toolchain install 1.97.1 --profile minimal
-          if ($LASTEXITCODE -ne 0) { throw 'Rust installation failed' }
-          rustup default 1.97.1
-          if ($LASTEXITCODE -ne 0) { throw 'Rust selection failed' }
+      # （B）預熱與正式打包相同的 Release 依賴；無簽章金鑰、不建立 release。
+      # engine/build 已在測試階段 configure 過，直接增量建目標即可。
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         id: release-cache
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         with:
           shared-key: windows-release-v1
+          save-if: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
       # 快取僅存依賴；命中後不必為每次 UI 修改再跑一次預熱編譯。
+      # node_modules 沿用測試階段的安裝，不重跑 npm ci。
       - name: Warm release dependencies on cache miss
-        if: steps.release-cache.outputs.cache-hit != 'true'
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && steps.release-cache.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
-          npm ci
-          if ($LASTEXITCODE -ne 0) { throw 'npm ci failed (root)' }
-          npm --prefix ui ci
-          if ($LASTEXITCODE -ne 0) { throw 'npm ci failed (ui)' }
-          cmake -S engine -B engine/build -A x64
-          if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed' }
           cmake --build engine/build --config Release --parallel 4 --target roudamix-engine roudamix-worker
           if ($LASTEXITCODE -ne 0) { throw 'CMake build failed' }
           npm run tauri -- build --ci --no-bundle -- --locked
