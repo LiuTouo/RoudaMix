@@ -1,9 +1,9 @@
 name: Release
 run-name: Release ${{ inputs.version || github.ref_name }}
 
+# 暫時改為本地腳本發布（scripts/release-local.ps1，帳號 Actions 額度鎖定期間省額度）。
+# 恢復 CI 發布：把 push: tags: ['v*'] 觸發加回即可。
 on:
-  push:
-    tags: ['v*']
   workflow_dispatch:
     inputs:
       version:

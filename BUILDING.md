@@ -19,6 +19,13 @@ git submodule update --init --recursive
 輸出位於 `output/release`。版本由 tag 或手動輸入注入 Tauri 建置設定，並記錄於 `BUILD-INFO.json`。
 新版本應使用乾淨 checkout，避免舊 NSIS 檔案或來源包混入。
 
+## 發布
+
+暫時以本地腳本發布（帳號 Actions 額度鎖定期間）：`scripts/release-local.ps1 -Version X.Y.Z`
+會在本機執行原本 release.yml 的全部步驟（完整測試、打包、SHA256 驗證、建 tag 推送、
+建立 GitHub Release，簽章金鑰讀取 `~/.tauri/roudamix.key`）。`-Draft` 先留草稿檢查，
+`-ValidateOnly` 只跑前置檢查。恢復 CI 發布時，把 release.yml 的 `push: tags: ['v*']` 觸發加回。
+
 ## CI 發布加速與驗證
 
 Release 的測試與打包合併為單一 `build` job（同一台 runner 先跑完整測試再打包，即 build-release.ps1
