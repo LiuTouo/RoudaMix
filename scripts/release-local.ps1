@@ -138,6 +138,15 @@ $env:TAURI_SIGNING_PRIVATE_KEY = Get-Content -LiteralPath $keyPath -Raw
 $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($KeyPassword)
 try { $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) }
 finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
+# Fail fast on a wrong key password: probe-sign a temp file via the same env vars the
+# bundler uses, instead of discovering the wrong password minutes into the build.
+$probe = Join-Path ([IO.Path]::GetTempPath()) 'roudamix-sign-probe.txt'
+Set-Content -LiteralPath $probe -Value 'signing probe' -Encoding ascii
+$signOk = Test-CommandResult { npm run tauri -- signer sign $probe }
+Remove-Item -LiteralPath $probe, "$probe.sig" -Force -ErrorAction SilentlyContinue
+if (-not $signOk) {
+    throw 'Updater signing probe failed (error above); wrong -KeyPassword for the key generated 2026-09-16?'
+}
 $buildArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'scripts/build-release.ps1', '-Version', $Version)
 if ($SkipTests) { $buildArgs += '-SkipTests' }
 Invoke-ReleaseCommand powershell $buildArgs
