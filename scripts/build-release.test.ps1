@@ -5,15 +5,17 @@ $root = Split-Path $PSScriptRoot
 $release = Get-Content "$root/.github/workflows/release.yml" -Raw
 $ci = Get-Content "$root/.github/workflows/ci.yml" -Raw
 $buildScript = Get-Content $source -Raw
-# Tripwires for the split-job release contract (workflow syntax is checked by actionlint).
-foreach ($required in @('needs: [build, test]', 'run: ./scripts/test-all.ps1',
+# Tripwires for the release contract (workflow syntax is checked by actionlint).
+# Tests and packaging live in the single build job: the gate is build-release.ps1
+# invoked without -SkipTests; the exact run line below catches any regression.
+foreach ($required in @('needs: [build]', 'run: ./scripts/build-release.ps1 -Version $env:RELEASE_VERSION',
         'shared-key: windows-release-v1', 'shared-key: windows-test-v1',
         'sha256sum --check SHA256SUMS.txt', 'gh release create', '--draft')) {
     if (-not $release.Contains($required)) { throw "Missing release gate: $required" }
 }
 foreach ($required in @('shared-key: windows-release-v1', 'shared-key: windows-test-v1',
         "if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'",
-        "if: steps.release-cache.outputs.cache-hit != 'true'",
+        "steps.release-cache.outputs.cache-hit != 'true'",
         'npm run tauri -- build --ci --no-bundle -- --locked')) {
     if (-not $ci.Contains($required)) { throw "Missing cache contract: $required" }
 }
