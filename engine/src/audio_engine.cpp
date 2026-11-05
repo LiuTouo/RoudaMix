@@ -1701,6 +1701,7 @@ std::optional<Failure> AudioEngine::track_set_dests(std::uint32_t track_id,
     if (!swap_graph()) {
         t->dests = old;
         (void)ensure_monitor_shadows();
+        (void)swap_graph();
         return failure(Err::kBadCommand, "PDC plan exceeds latency or memory safety limits");
     }
     return std::nullopt;
@@ -1757,6 +1758,7 @@ std::optional<Failure> AudioEngine::track_set_sidechain(std::uint32_t track_id,
     if (!swap_graph()) {
         rollback();
         (void)ensure_monitor_shadows();
+        (void)swap_graph();
         return failure(Err::kBadCommand, "PDC plan exceeds latency or memory safety limits");
     }
     return std::nullopt;
@@ -2000,6 +2002,7 @@ std::optional<Failure> AudioEngine::add_plugin(std::uint32_t track_id, const std
     if (!swap_graph()) {
         t->chain.pop_back();
         (void)ensure_monitor_shadows();
+        (void)swap_graph();
         return failure(Err::kPluginLoadFailed, "PDC plan exceeds latency or memory safety limits");
     }
     return std::nullopt;
@@ -2070,6 +2073,7 @@ std::optional<Failure> AudioEngine::load_placeholder(std::uint32_t instance_id,
     if (!swap_graph()) {
         *s = previous;
         (void)ensure_monitor_shadows();
+        (void)swap_graph();
         return failure(Err::kPluginLoadFailed, "PDC plan exceeds latency or memory safety limits");
     }
     return std::nullopt;
