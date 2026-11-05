@@ -121,26 +121,38 @@ fn migrate(mut raw: Value) -> Value {
     raw
 }
 
-/// 讀到的原始 JSON → typed Settings。known field 型別錯/值非法 = 回預設 + warning;
-/// 未知鍵不擋(寫回時由 merge 保留)。
-pub fn normalize(raw: Value) -> (Settings, Vec<String>) {
+/// 讀到的原始 JSON → (normalized 文件, typed Settings, warnings)。
+/// known field 型別錯/值非法 = 回預設 + warning(UI 可呈現);
+/// 未知鍵保留在文件中(向前相容,寫回時由 merge 合併);
+/// 檔案版本比本程式新時 typed 帶原版本號,寫回不得降級。
+pub fn normalize(raw: Value) -> (Value, Settings, Vec<String>) {
     let mut s = Settings::default();
     let mut warnings = Vec::new();
     let Value::Object(obj) = raw else {
-        return (s, vec!["settings 檔不是 JSON 物件,已回復全部預設".into()]);
+        return (
+            Value::Object(Default::default()),
+            s,
+            vec!["settings 檔不是 JSON 物件,已回復全部預設".into()],
+        );
     };
     for (k, v) in &obj {
         match k.as_str() {
             "schemaVersion" => {
                 if v.as_u64() != Some(SCHEMA_VERSION as u64) {
-                    if let Some(n) = v.as_u64() {
-                        if n > SCHEMA_VERSION as u64 {
+                    match v.as_u64() {
+                        Some(n) if n > SCHEMA_VERSION as u64 => {
                             warnings.push(format!(
                                 "settings 檔版本(v{n})比本程式(v{SCHEMA_VERSION})新,已知欄位照讀"
                             ));
+                            // typed 帶原版本號,merge 寫回時才不會把新版檔降級
+                            if let Ok(n) = u32::try_from(n) {
+                                s.schema_version = n;
+                            }
                         }
-                    } else {
-                        warnings.push("settings.schemaVersion 型別錯誤,已回復預設".into());
+                        Some(_) => {}
+                        None => {
+                            warnings.push("settings.schemaVersion 型別錯誤,已回復預設".into())
+                        }
                     }
                 }
             }
@@ -217,10 +229,10 @@ pub fn normalize(raw: Value) -> (Settings, Vec<String>) {
                 Err(()) => warnings
                     .push("settings.uiFontFamily 值不合法,已回復預設 IBM Plex Sans TC".into()),
             },
-            _ => {} // 未知鍵:保留策略(merge 寫回)
+            _ => {} // 未知鍵:保留在文件中(merge 寫回)
         }
     }
-    (s, warnings)
+    (Value::Object(obj), s, warnings)
 }
 
 fn opt_str(v: &Value) -> Result<Option<String>, ()> {
@@ -374,8 +386,8 @@ pub fn load_from(p: &Path) -> (Settings, Vec<String>) {
     };
     match serde_json::from_str::<Value>(&text) {
         Ok(raw) => {
-            let migrated = migrate(raw);
-            normalize(migrated)
+            let (_, s, w) = normalize(migrate(raw));
+            (s, w)
         }
         Err(e) => (
             Settings::default(),
@@ -384,14 +396,27 @@ pub fn load_from(p: &Path) -> (Settings, Vec<String>) {
     }
 }
 
+/// 單次讀檔+解析(原先雙重讀檔雙重解析);文件帶 migrate+normalize 後形狀(未知鍵保留)。
 fn load_raw(app: &AppHandle) -> (Value, Settings, Vec<String>) {
     let p = path(app).unwrap_or_default();
-    let (s, w) = load_from(&p);
-    let raw = fs::read_to_string(&p)
-        .ok()
-        .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or_else(|| Value::Object(Default::default()));
-    (raw, s, w)
+    let Ok(text) = fs::read_to_string(&p) else {
+        return (
+            Value::Object(Default::default()),
+            Settings::default(),
+            Vec::new(),
+        );
+    };
+    match serde_json::from_str::<Value>(&text) {
+        Ok(raw) => {
+            let (doc, s, w) = normalize(migrate(raw));
+            (doc, s, w)
+        }
+        Err(e) => (
+            Value::Object(Default::default()),
+            Settings::default(),
+            vec![format!("settings 檔損壞({e}),已回復全部預設")],
+        ),
+    }
 }
 
 #[derive(Serialize)]
@@ -413,15 +438,20 @@ pub fn set_settings(app: AppHandle, patch: Value) -> Result<SettingsReply, Strin
     let _io = SETTINGS_IO.lock().unwrap_or_else(|e| e.into_inner());
     let p = path(&app).ok_or("no app data dir")?;
     let (mut raw, _, mut warnings) = load_raw(&app);
-    // patch 先進 raw(未知鍵保留、known 鍵覆蓋),再一次 normalize 全量驗證
-    if let (Value::Object(dst), Value::Object(src)) = (&mut raw, patch) {
-        for (k, v) in src {
-            dst.insert(k, v);
+    // 非 Object patch = 前端程式錯誤;靜默略過會照樣改寫檔案,必須回 Err
+    let Value::Object(patch_obj) = patch else {
+        return Err("settings patch 必須是 JSON 物件".into());
+    };
+    // patch 先進文件(未知鍵保留、known 鍵覆蓋),再一次 normalize 全量驗證
+    if let Value::Object(raw_obj) = &mut raw {
+        for (k, v) in patch_obj {
+            raw_obj.insert(k, v);
         }
     }
-    let (cur, w2) = normalize(migrate(raw));
+    let (doc, cur, w2) = normalize(migrate(raw));
     warnings.extend(w2);
-    save_to(&p, &merge(serde_json::to_value(&cur).unwrap_or_default(), &cur))?;
+    // 寫回基底用 normalized 文件(帶未知鍵與原版本號),而非純 typed 序列化
+    save_to(&p, &merge(doc, &cur))?;
     Ok(SettingsReply { settings: cur, warnings })
 }
 
@@ -463,11 +493,11 @@ mod tests {
 
     #[test]
     fn update_preference_defaults_validates_and_persists() {
-        assert!(normalize(serde_json::json!({})).0.check_updates_on_startup);
-        let (invalid, warnings) = normalize(serde_json::json!({"checkUpdatesOnStartup": "yes"}));
+        assert!(normalize(serde_json::json!({})).1.check_updates_on_startup);
+        let (_, invalid, warnings) = normalize(serde_json::json!({"checkUpdatesOnStartup": "yes"}));
         assert!(invalid.check_updates_on_startup);
         assert_eq!(warnings.len(), 1);
-        let (settings, warnings) = normalize(serde_json::json!({"checkUpdatesOnStartup": false, "lastWorkingBuffer": 256}));
+        let (_, settings, warnings) = normalize(serde_json::json!({"checkUpdatesOnStartup": false, "lastWorkingBuffer": 256}));
         assert!(warnings.is_empty());
         let path = tmp_path("update-preference");
         save_to(&path, &merge(serde_json::json!({}), &settings)).unwrap();
@@ -479,24 +509,24 @@ mod tests {
 
     #[test]
     fn ui_scale_defaults_validates_and_persists() {
-        let (legacy, warnings) = normalize(migrate(json!({"schemaVersion": 2})));
+        let (_, legacy, warnings) = normalize(migrate(json!({"schemaVersion": 2})));
         assert_eq!(legacy.ui_scale, 100);
         assert!(warnings.is_empty());
         assert_eq!(serde_json::from_value::<Settings>(json!({})).unwrap().ui_scale, 100);
 
         for scale in [75, 100, 125, 150] {
-            let (settings, warnings) = normalize(json!({"uiScale": scale}));
+            let (_, settings, warnings) = normalize(json!({"uiScale": scale}));
             assert_eq!(settings.ui_scale, scale);
             assert!(warnings.is_empty());
         }
         for value in [json!(0), json!(-1), json!(74), json!(151), json!(100.5), json!("125"), json!(null), json!(true)] {
-            let (settings, warnings) = normalize(json!({"uiScale": value}));
+            let (_, settings, warnings) = normalize(json!({"uiScale": value}));
             assert_eq!(settings.ui_scale, 100);
             assert_eq!(warnings.len(), 1);
         }
 
         let path = tmp_path("ui-scale");
-        let (settings, _) = normalize(json!({"uiScale": 125, "lastWorkingBuffer": 256}));
+        let (_, settings, _) = normalize(json!({"uiScale": 125, "lastWorkingBuffer": 256}));
         save_to(&path, &merge(json!({}), &settings)).unwrap();
         let (loaded, warnings) = load_from(&path);
         assert_eq!(loaded.ui_scale, 125);
@@ -507,7 +537,7 @@ mod tests {
 
     #[test]
     fn normalize_defaults_on_bad_types() {
-        let (s, w) = normalize(json!({
+        let (_, s, w) = normalize(json!({
             "startupMode": 123,
             "sessionDir": 42,
             "lastWorkingBuffer": "big",
@@ -522,7 +552,7 @@ mod tests {
 
     #[test]
     fn normalize_accepts_valid() {
-        let (s, w) = normalize(json!({
+        let (_, s, w) = normalize(json!({
             "startupMode": "folder",
             "sessionDir": "C:/x",
             "startupFile": "a.rmsession",
@@ -540,17 +570,17 @@ mod tests {
 
     #[test]
     fn normalize_monitor_hotkey() {
-        let (s, w) = normalize(json!({"monitorHotkey": "Ctrl+Shift+M"}));
+        let (_, s, w) = normalize(json!({"monitorHotkey": "Ctrl+Shift+M"}));
         assert_eq!(s.monitor_hotkey.as_deref(), Some("Ctrl+Shift+M"));
         assert!(w.is_empty());
 
         // 未綁定(null)合法
-        let (s, w) = normalize(json!({"monitorHotkey": null}));
+        let (_, s, w) = normalize(json!({"monitorHotkey": null}));
         assert_eq!(s.monitor_hotkey, None);
         assert!(w.is_empty());
 
         // 型別錯 → 回預設 None + warning
-        let (s, w) = normalize(json!({"monitorHotkey": 42}));
+        let (_, s, w) = normalize(json!({"monitorHotkey": 42}));
         assert_eq!(s.monitor_hotkey, None);
         assert_eq!(w.len(), 1);
     }
@@ -560,13 +590,13 @@ mod tests {
         // WASAPI master 沒有 buffer:persistLastWorking("wasapi", null) 會存 null。
         // null = 合法「無偏好」,不得警告 —— 否則每次 set_settings(含存 Session 後的
         // rememberLastSession)都會誤報「設定有部分值不合法」。
-        let (s, w) = normalize(json!({"lastWorkingDevice": "wasapi", "lastWorkingBuffer": null}));
+        let (_, s, w) = normalize(json!({"lastWorkingDevice": "wasapi", "lastWorkingBuffer": null}));
         assert_eq!(s.last_working_device.as_deref(), Some("wasapi"));
         assert_eq!(s.last_working_buffer, None);
         assert!(w.is_empty());
 
         // 使用者實際 settings.json 形狀:null 已被 serde 序列化存檔,每欄位重驗也要零警告
-        let (s, w) = normalize(json!({
+        let (_, s, w) = normalize(json!({
             "checkUpdatesOnStartup": true,
             "closeBehavior": "tray",
             "lastSessionPath": "D:/x/liut.rmsession",
@@ -583,21 +613,21 @@ mod tests {
         assert_eq!(s.last_working_device.as_deref(), Some("wasapi"));
 
         // 超出上限仍是非法值
-        let (s, w) = normalize(json!({"lastWorkingBuffer": 9999}));
+        let (_, s, w) = normalize(json!({"lastWorkingBuffer": 9999}));
         assert_eq!(s.last_working_buffer, None);
         assert_eq!(w.len(), 1);
     }
 
     #[test]
     fn normalize_rejects_unknown_mode_value() {
-        let (s, w) = normalize(json!({"startupMode": "yolo"}));
+        let (_, s, w) = normalize(json!({"startupMode": "yolo"}));
         assert_eq!(s.startup_mode, StartupMode::Blank);
         assert_eq!(w.len(), 1);
     }
 
     #[test]
     fn normalize_non_object_is_default() {
-        let (s, w) = normalize(json!("oops"));
+        let (_, s, w) = normalize(json!("oops"));
         assert_eq!(s, Settings::default());
         assert_eq!(w.len(), 1);
     }
@@ -632,21 +662,21 @@ mod tests {
 
     #[test]
     fn normalize_input_silence_alert() {
-        let (s, w) = normalize(json!({"inputSilenceAlert": false}));
+        let (_, s, w) = normalize(json!({"inputSilenceAlert": false}));
         assert!(!s.input_silence_alert);
         assert!(w.is_empty());
 
         // 缺欄位 = 預設開啟(既有使用者升級後行為不變)
-        let (s, w) = normalize(json!({}));
+        let (_, s, w) = normalize(json!({}));
         assert!(s.input_silence_alert);
         assert!(w.is_empty());
 
-        let (s, w) = normalize(json!({"inputSilenceAlert": "off"}));
+        let (_, s, w) = normalize(json!({"inputSilenceAlert": "off"}));
         assert!(s.input_silence_alert);
         assert_eq!(w.len(), 1);
 
         let path = tmp_path("input-silence-alert");
-        let (s, _) = normalize(json!({"inputSilenceAlert": false}));
+        let (_, s, _) = normalize(json!({"inputSilenceAlert": false}));
         save_to(&path, &merge(json!({}), &s)).unwrap();
         let (loaded, w) = load_from(&path);
         assert!(!loaded.input_silence_alert);
@@ -656,15 +686,15 @@ mod tests {
 
     #[test]
     fn normalize_close_behavior() {
-        let (tray, tray_warnings) = normalize(json!({"closeBehavior": "tray"}));
+        let (_, tray, tray_warnings) = normalize(json!({"closeBehavior": "tray"}));
         assert_eq!(tray.close_behavior, Some(CloseBehavior::Tray));
         assert!(tray_warnings.is_empty());
 
-        let (exit, exit_warnings) = normalize(json!({"closeBehavior": "exit"}));
+        let (_, exit, exit_warnings) = normalize(json!({"closeBehavior": "exit"}));
         assert_eq!(exit.close_behavior, Some(CloseBehavior::Exit));
         assert!(exit_warnings.is_empty());
 
-        let (invalid, invalid_warnings) = normalize(json!({"closeBehavior": "later"}));
+        let (_, invalid, invalid_warnings) = normalize(json!({"closeBehavior": "later"}));
         assert_eq!(invalid.close_behavior, None);
         assert_eq!(invalid_warnings.len(), 1);
     }
@@ -677,6 +707,42 @@ mod tests {
         let out = merge(raw, &s);
         assert_eq!(out["unknownKey"], json!("kept"));
         assert_eq!(out["startupMode"], json!("folder"));
+    }
+
+    #[test]
+    fn normalize_preserves_unknown_keys_and_newer_version() {
+        // 向前相容契約:未知鍵留在 normalized 文件;較新版本號 typed 帶原值
+        let (doc, s, w) = normalize(json!({
+            "schemaVersion": 4,
+            "futureKey": {"a": 1},
+            "startupMode": "last"
+        }));
+        assert_eq!(doc["futureKey"], json!({"a": 1}));
+        assert_eq!(doc["schemaVersion"], json!(4));
+        assert_eq!(s.schema_version, 4);
+        assert_eq!(s.startup_mode, StartupMode::Last);
+        assert_eq!(w.len(), 1); // 新版本警告
+
+        // 寫回管線(同 set_settings 的 merge(doc, typed)):不得抹掉未知鍵、不得降級版本
+        let out = merge(doc, &s);
+        assert_eq!(out["futureKey"], json!({"a": 1}));
+        assert_eq!(out["schemaVersion"], json!(4));
+        assert_eq!(out["startupMode"], json!("last"));
+    }
+
+    #[test]
+    fn settings_write_roundtrip_keeps_unknown_keys_and_version() {
+        // set_settings 寫回路徑的檔案級回歸:讀 v4 檔 → 改寫 → 未知鍵與版本仍在
+        let path = tmp_path("forward-compat");
+        fs::write(&path, r#"{"schemaVersion":4,"futureKey":1,"startupMode":"folder"}"#).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        let raw: Value = serde_json::from_str(&text).unwrap();
+        let (doc, cur, _) = normalize(migrate(raw));
+        save_to(&path, &merge(doc, &cur)).unwrap();
+        let re = fs::read_to_string(&path).unwrap();
+        assert!(re.contains("\"schemaVersion\": 4"), "版本號不得降級: {re}");
+        assert!(re.contains("futureKey"), "未知鍵不得丟失: {re}");
+        let _ = fs::remove_file(&path);
     }
 
     #[test]
@@ -729,16 +795,16 @@ mod tests {
     #[test]
     fn ui_font_family_normalizes() {
         // 合法字族名保留；null = 預設；非法字元/過長/非字串 → 預設 + warning
-        let (s, w) = normalize(json!({"uiFontFamily": "Segoe UI"}));
+        let (_, s, w) = normalize(json!({"uiFontFamily": "Segoe UI"}));
         assert_eq!(s.ui_font_family.as_deref(), Some("Segoe UI"));
         assert!(w.is_empty());
 
-        let (s, w) = normalize(json!({"uiFontFamily": null}));
+        let (_, s, w) = normalize(json!({"uiFontFamily": null}));
         assert_eq!(s.ui_font_family, None);
         assert!(w.is_empty());
 
         for bad in [json!(123), json!("a\"b"), json!("a;b"), json!("a\\b"), json!("a{b"), json!("A".repeat(65))] {
-            let (s, w) = normalize(json!({"uiFontFamily": bad}));
+            let (_, s, w) = normalize(json!({"uiFontFamily": bad}));
             assert_eq!(s.ui_font_family, None, "bad value {bad} 應回預設");
             assert_eq!(w.len(), 1, "bad value {bad} 應帶 warning");
         }
