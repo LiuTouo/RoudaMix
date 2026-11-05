@@ -55,6 +55,22 @@ function Test-CommandResult {
 foreach ($tool in @('git', 'gh', 'node', 'npm', 'cmake', 'python', 'cargo', '7z')) { Assert-Tool $tool }
 if (-not $SkipTests) { Assert-Tool 'ffmpeg' }
 
+# 本機 engine/build 若以不同產生器平台配置過（例如預設 Win32），與 CI 同步的 -A x64 不符，
+# cmake 會拒絕重新配置。偵測到不符時移除過期快取（純建置產物，可安全重建）。
+$cache = Join-Path $repoRoot 'engine/build/CMakeCache.txt'
+if (Test-Path -LiteralPath $cache) {
+    $cachedPlatform = ((Get-Content $cache | Where-Object { $_ -like 'CMAKE_GENERATOR_PLATFORM:*' }) -replace '^CMAKE_GENERATOR_PLATFORM:INTERNAL=', '')
+    if ($cachedPlatform -ne 'x64') {
+        $shown = if ($cachedPlatform) { $cachedPlatform } else { '<default Win32>' }
+        if ($ValidateOnly) {
+            Write-Warning "engine/build was configured for platform '$shown', not x64; it will be removed and reconfigured during release."
+        } else {
+            Write-Host "Removing stale engine/build (platform '$shown'); reconfiguring for x64 during build..."
+            Remove-Item -LiteralPath (Join-Path $repoRoot 'engine/build') -Recurse -Force
+        }
+    }
+}
+
 # 只要求 tracked 檔案乾淨；untracked 的本機工具目錄不影響 release.py 的來源打包（僅收 tracked 檔）。
 $dirty = git status --porcelain --untracked-files=no
 if ($dirty) { throw "Working tree has uncommitted tracked changes; commit or stash first:`n$dirty" }
