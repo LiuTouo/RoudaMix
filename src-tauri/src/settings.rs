@@ -378,45 +378,53 @@ pub fn save_to(p: &Path, v: &Value) -> Result<(), String> {
     })
 }
 
-/// 讀 + migrate + normalize。檔案不見/讀不動 = 預設值(乾淨啟動,不算 warning);
-/// 壞 JSON/壞欄位 = 預設 + warning。
-pub fn load_from(p: &Path) -> (Settings, Vec<String>) {
-    let Ok(text) = fs::read_to_string(p) else {
-        return (Settings::default(), Vec::new());
-    };
-    match serde_json::from_str::<Value>(&text) {
-        Ok(raw) => {
-            let (_, s, w) = normalize(migrate(raw));
-            (s, w)
+/// 主檔讀不到時回退 `.bak`(save_to 兩段 rename 之間崩潰會讓主檔瞬間不存在)。
+fn read_text_with_bak(p: &Path) -> Option<(String, bool)> {
+    match fs::read_to_string(p) {
+        Ok(t) => Some((t, false)),
+        Err(_) => {
+            let mut bak = p.to_path_buf();
+            bak.set_extension("json.bak");
+            fs::read_to_string(&bak).ok().map(|t| (t, true))
         }
-        Err(e) => (
-            Settings::default(),
-            vec![format!("settings 檔損壞({e}),已回復全部預設")],
-        ),
     }
+}
+
+/// 讀檔+解析成 raw 文件,回傳「檔案層」warning(主檔遺失由 .bak 回復/檔案損壞)。
+/// 欄位層警告刻意不在此產生:set_settings 二次 normalize 時才判,避免同壞欄位回報兩次。
+fn read_doc(p: &Path) -> (Value, Vec<String>) {
+    let mut warnings = Vec::new();
+    let Some((text, from_bak)) = read_text_with_bak(p) else {
+        return (Value::Object(Default::default()), warnings);
+    };
+    if from_bak {
+        warnings.push("settings 主檔遺失,已由 .json.bak 備份回復".into());
+    }
+    match serde_json::from_str::<Value>(&text) {
+        Ok(raw) => (raw, warnings),
+        Err(e) => {
+            warnings.push(format!("settings 檔損壞({e}),已回復全部預設"));
+            (Value::Object(Default::default()), warnings)
+        }
+    }
+}
+
+/// 讀 + migrate + normalize。檔案不見 = 預設值(乾淨啟動,不算 warning);
+/// 壞 JSON/壞欄位 = 預設 + warning。生產路徑走 load_raw;此函式供測試以路徑操作。
+#[allow(dead_code)]
+pub fn load_from(p: &Path) -> (Settings, Vec<String>) {
+    let (raw, mut warnings) = read_doc(p);
+    let (_, s, w) = normalize(migrate(raw));
+    warnings.extend(w);
+    (s, warnings)
 }
 
 /// 單次讀檔+解析(原先雙重讀檔雙重解析);文件帶 migrate+normalize 後形狀(未知鍵保留)。
 fn load_raw(app: &AppHandle) -> (Value, Settings, Vec<String>) {
-    let p = path(app).unwrap_or_default();
-    let Ok(text) = fs::read_to_string(&p) else {
-        return (
-            Value::Object(Default::default()),
-            Settings::default(),
-            Vec::new(),
-        );
-    };
-    match serde_json::from_str::<Value>(&text) {
-        Ok(raw) => {
-            let (doc, s, w) = normalize(migrate(raw));
-            (doc, s, w)
-        }
-        Err(e) => (
-            Value::Object(Default::default()),
-            Settings::default(),
-            vec![format!("settings 檔損壞({e}),已回復全部預設")],
-        ),
-    }
+    let (raw, mut warnings) = read_doc(&path(app).unwrap_or_default());
+    let (doc, s, w) = normalize(migrate(raw));
+    warnings.extend(w);
+    (doc, s, warnings)
 }
 
 #[derive(Serialize)]
@@ -437,7 +445,8 @@ pub fn get_settings(app: AppHandle) -> SettingsReply {
 pub fn set_settings(app: AppHandle, patch: Value) -> Result<SettingsReply, String> {
     let _io = SETTINGS_IO.lock().unwrap_or_else(|e| e.into_inner());
     let p = path(&app).ok_or("no app data dir")?;
-    let (mut raw, _, mut warnings) = load_raw(&app);
+    // 檔案層 warning(.bak 回復/損壞)只此一份;欄位層以 patch 合併後的 normalize 為準
+    let (mut raw, mut warnings) = read_doc(&p);
     // 非 Object patch = 前端程式錯誤;靜默略過會照樣改寫檔案,必須回 Err
     let Value::Object(patch_obj) = patch else {
         return Err("settings patch 必須是 JSON 物件".into());
@@ -489,6 +498,42 @@ mod tests {
         bak.set_extension("json.bak");
         let _ = fs::remove_file(&bak);
         p
+    }
+
+    #[test]
+    fn load_falls_back_to_bak_when_primary_missing() {
+        let p = tmp_path("bak-fallback");
+        let s: Settings = serde_json::from_value(json!({"uiScale": 125})).unwrap();
+        save_to(&p, &merge(json!({}), &s)).unwrap();
+        let mut bak = p.clone();
+        bak.set_extension("json.bak");
+        // 模擬 save_to 兩段 rename 之間崩潰:主檔已搬走、新檔尚未就位
+        fs::rename(&p, &bak).unwrap();
+        let (loaded, warnings) = load_from(&p);
+        assert_eq!(loaded.ui_scale, 125);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains(".bak"));
+        let _ = fs::remove_file(&bak);
+    }
+
+    #[test]
+    fn load_without_primary_and_bak_is_clean_defaults() {
+        let p = tmp_path("bak-clean");
+        let (s, warnings) = load_from(&p);
+        assert_eq!(s, Settings::default());
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn file_level_and_field_level_warnings_are_separate() {
+        let p = tmp_path("warn-split");
+        fs::write(&p, "{\"uiScale\": 999}").unwrap(); // 壞欄位:不在檔案層警告
+        let (raw, file_warnings) = read_doc(&p);
+        assert!(raw.is_object());
+        assert!(file_warnings.is_empty());
+        let (_, _, w) = normalize(migrate(raw));
+        assert_eq!(w.len(), 1); // 欄位警告由 normalize 統一判,set_settings 不會重複
+        fs::remove_file(&p).unwrap();
     }
 
     #[test]
