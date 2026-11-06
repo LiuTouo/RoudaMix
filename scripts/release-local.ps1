@@ -1,12 +1,14 @@
 ﻿# 暫時性本地發布腳本：帳號 Actions 額度鎖定期間，以本機取代 release.yml 的 build+publish。
 # 步驟與 CI 完全對齊：版本/衝突驗證 -> 建置+完整測試+打包 -> SHA256/資產檢查 -> 建 tag -> 推送 -> GitHub Release。
 # 恢復 CI 發布：把 release.yml 的 push: tags: ['v*'] 觸發加回即可。
-# 前置：gh 已登入、rust 1.97.1、7z、ffmpeg、~/.tauri/roudamix.key（加密金鑰，每次執行輸入 -KeyPassword）。
+# 前置：gh 已登入、rust 1.97.1、7z、ffmpeg、~/.tauri/roudamix.key。
+# 密碼輸入：本機主控台的遮罩輸入（Read-Host -AsSecureString）會被吃掉（實測），
+# 因此預設改從剪貼簿讀取：先把密碼複製到剪貼簿再執行；或用 -KeyPassword 傳入。
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$Version,
-    # 簽章金鑰密碼（每次執行都必須提供；省略參數時會以遮罩提示輸入，不落地環境變數或檔案）。
-    [Parameter(Mandatory = $true)][securestring]$KeyPassword,
+    # 簽章金鑰密碼。本機主控台的遮罩輸入不可靠，預設從剪貼簿讀；也可用 -KeyPassword 傳入。
+    [securestring]$KeyPassword,
     # 保留為 GitHub 草稿 release，先檢查下載檔案再手動公開。
     [switch]$Draft,
     # 緊急時略過完整測試（不建議；正式發布應保留測試門檻）。
@@ -147,15 +149,24 @@ if ($ValidateOnly) {
 
 # --- 建置 + 完整測試 + 打包（= CI build job 的 Test, build portable... 步驟）---
 $env:TAURI_SIGNING_PRIVATE_KEY = Get-Content -LiteralPath $keyPath -Raw
-$bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($KeyPassword)
-try { $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) }
-finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
-# Guard: masked console input can arrive empty (observed on this machine); an empty
-# password would pass the probe via tauri's interactive "Password:" rescue prompt
-# and then fail the build with a misleading "Wrong password" error.
-if ([string]::IsNullOrEmpty($env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD)) {
-    throw 'KeyPassword arrived EMPTY (masked input issue or Enter pressed). Re-run and type the password carefully (Ctrl+V paste works).'
+$plainKeyPassword = $null
+if ($KeyPassword) {
+    $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($KeyPassword)
+    try { $plainKeyPassword = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) }
+    finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
 }
+if ([string]::IsNullOrEmpty($plainKeyPassword)) {
+    # 本機主控台會吃掉遮罩輸入（實測：masked length=0, plain=3），改讀剪貼簿；
+    # 僅去除結尾換行（複製時常見），不動其他字元。
+    Write-Host 'KeyPassword not provided/empty; reading password from clipboard...'
+    $clip = Get-Clipboard | Out-String
+    $plainKeyPassword = $clip -replace '[\r\n]+$', ''
+}
+if ([string]::IsNullOrEmpty($plainKeyPassword)) {
+    throw 'No signing password: copy it to the clipboard first, or pass -KeyPassword.'
+}
+$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = $plainKeyPassword
+Remove-Variable plainKeyPassword, clip -ErrorAction SilentlyContinue
 # Fail fast on a wrong key password: probe-sign a temp file via the same env vars the
 # bundler uses, instead of discovering the wrong password minutes into the build.
 # stdin=NUL so tauri can never fall back to an interactive prompt here; stdout to NUL
