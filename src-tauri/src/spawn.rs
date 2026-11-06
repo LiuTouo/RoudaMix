@@ -15,6 +15,7 @@ const DETACHED_PROCESS: u32 = 0x0000_0008;
 #[link(name = "kernel32")]
 unsafe extern "system" {
     fn CreateJobObjectW(attrs: *const core::ffi::c_void, name: *const u16) -> *mut core::ffi::c_void;
+    fn CloseHandle(h: *mut core::ffi::c_void) -> i32;
     fn SetInformationJobObject(
         h: *mut core::ffi::c_void,
         info_class: i32,
@@ -53,10 +54,18 @@ fn kill_on_close_job() -> Option<isize> {
             info.len() as u32,
         ) == 0
         {
+            CloseHandle(job);
             return None;
         }
-        let _ = JOB.set(job as isize);
-        Some(job as isize)
+        match JOB.set(job as isize) {
+            Ok(()) => Some(job as isize),
+            // 輸家(併發同時通過前述 get 檢查):關掉自己的 handle,回傳贏家的,
+            // 避免 job 重複建立與 handle 洩漏
+            Err(_) => {
+                CloseHandle(job);
+                JOB.get().copied()
+            }
+        }
     }
 }
 
