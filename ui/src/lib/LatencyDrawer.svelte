@@ -83,8 +83,10 @@
     if (!open) return;
     if (!meters?.pluginLoads) return;
     const next = { ...untrack(() => loadView) };
+    const live = new Set<string>();
     for (const load of meters.pluginLoads) {
       const key = loadKey(load.instanceId, load.variant);
+      live.add(key);
       const previous = next[key]?.ewma ?? load.processLoad;
       const ewma = previous + (load.processLoad - previous) / 30;
       const history = loadHistory.get(key) ?? [];
@@ -93,6 +95,9 @@
       loadHistory.set(key, history);
       next[key] = { ewma, peak: Math.max(...history) };
     }
+    // 驅逐不在目前圖上的 instance(已移除的 plugin):Drawer 常駐,不清會無限成長
+    for (const key of loadHistory.keys()) if (!live.has(key)) loadHistory.delete(key);
+    for (const key of Object.keys(next)) if (!live.has(key)) delete next[key];
     loadView = next;
   });
 </script>
