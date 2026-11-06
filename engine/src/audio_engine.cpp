@@ -726,14 +726,20 @@ void AudioEngine::stop() noexcept {
     // RT 停 callback 後退 graph、卸 plugin(下次 start 依新 rate 重建)
     retire_graph();
     // driver stop 後仍可能有最後一個 in-flight callback 持舊圖 reader;
-    // 與 save/load preset 同契約:排空才 terminate,避免與 setProcessing(false) 併發
-    wait_rt_blocks_drained(2000);
-    for (auto& t : tracks_)
-        for (auto& slot : t.chain)
-            if (slot.plugin) {
-                slot.plugin->terminate();
-                if (slot.monitor_shadow) slot.monitor_shadow->terminate();
-            }
+    // 與 save/load preset 同契約:排空才 terminate,避免與 setProcessing(false) 併發。
+    // 排不乾(RT 停滯>逾時):跳過 terminate —— plugin 留 initialized 殘態由下次
+    // start 收,好過與 in-flight process 併發 terminate 弄崩 engine 進程。
+    if (wait_rt_blocks_drained(2000) || wait_rt_blocks_drained(4000)) {
+        for (auto& t : tracks_)
+            for (auto& slot : t.chain)
+                if (slot.plugin) {
+                    slot.plugin->terminate();
+                    if (slot.monitor_shadow) slot.monitor_shadow->terminate();
+                }
+    } else {
+        std::fprintf(stderr,
+                     "[engine] stop: RT blocks not drained in time; plugin terminate skipped\n");
+    }
     stop_captures();
     stop_mics();
     stop_renders();
@@ -882,6 +888,9 @@ bool AudioEngine::commit_graph_candidate() {
     }
 
     const TrackGraph* active_graph = rt_graph_.load(std::memory_order_acquire);
+    // monitor crossfade 是對與現行 graph 共用的 TrackRt 下副作用 —— commit 成立後才執行;
+    // 先收集,下方任何 abort(return false)都不得讓舊圖多跑一次折返 blend
+    std::vector<std::shared_ptr<TrackRt>> crossfade_bufs;
     for (std::size_t ti = 0; ti < fresh->nodes.size(); ++ti) {
         auto& track = fresh->nodes[ti];
         const auto& track_plan = fresh->route_plan.tracks[ti];
@@ -898,7 +907,7 @@ bool AudioEngine::commit_graph_candidate() {
             }
         }
         if (monitor_path_changed && running_rate > 0)
-            track.buf->monitor_crossfade.request(static_cast<std::uint32_t>(plan_rate / 50u));
+            crossfade_bufs.push_back(track.buf);
     }
     std::unordered_set<std::uint64_t> active_dry_keys;
     struct PendingDryDelay {
@@ -1015,6 +1024,8 @@ bool AudioEngine::commit_graph_candidate() {
     // seq_cst:與 acquire_graph 的「登記→取圖」SC 全序成對(#15)
     TrackGraph* old = rt_graph_.exchange(fresh.get(), std::memory_order_seq_cst);
     fresh.release();  // 所有權已移轉 rt_graph_;以下絕不可再刪新圖
+    for (const auto& buf : crossfade_bufs)
+        buf->monitor_crossfade.request(static_cast<std::uint32_t>(plan_rate / 50u));
     // Commit 已成立;收尾丟例外(retire/reap 的 vector push)只允許「舊圖晚刪/
     // 漏刪一次」,不得回報失敗(呼叫端會回滾 control 狀態,與已 commit 的圖落差)
     try {
