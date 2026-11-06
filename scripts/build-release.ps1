@@ -62,7 +62,8 @@ Set-Content -LiteralPath (Join-Path $stage 'portable.flag') -Value 'RoudaMix por
 # Verify PE architecture and CRT dependencies without requiring dumpbin on PATH.
 Invoke-ReleaseCommand $Python @('scripts/verify-release.py', '--stage', $stage)
 Compress-Archive -LiteralPath $stage -DestinationPath (Join-Path $artifactRoot "$portableName.zip") -CompressionLevel Optimal
-$installers = @(Get-ChildItem target/release/bundle/nsis -Filter '*.exe' -File)
+# 只認當前版本：本地 target/ 會累積舊版殘骸（CI 永遠乾淨 checkout 不會遇到）。
+$installers = @(Get-ChildItem target/release/bundle/nsis -Filter "RoudaMix_${Version}_x64-setup.exe" -File)
 if ($installers.Count -ne 1) { throw 'Expected exactly one NSIS installer.' }
 Invoke-ReleaseCommand 7z @('x', $installers[0].FullName, '-otarget/release-installer-check', '-y')
 Invoke-ReleaseCommand $Python @('scripts/verify-installer.py', '--directory', 'target/release-installer-check')
