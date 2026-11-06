@@ -22,6 +22,8 @@ use crate::protocol::{make_command, parse_frame, Frame, IpcChannel, MAX_FRAME_BY
 use crate::spawn;
 
 const REPLY_TIMEOUT: Duration = Duration::from_secs(30);
+// engine 停讀 pipe 時 write_all 會永久掛住,寫入(含鎖等待)必須有上限
+const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 const CONNECT_RETRY: Duration = Duration::from_millis(500);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// 連線中 keepalive:meter 走 SHM、指令全由使用者觸發,pipe 可能長時間無
@@ -217,7 +219,9 @@ impl Bridge {
             return Err(CommandError::new("bad_frame", "frame too large"));
         }
 
-        let w = {
+        // 寫入(含鎖等待)一併納入逾時:engine 停讀 pipe 時 write_all 永不返回,
+        // 後續命令會全卡在寫鎖上且 pending 無限累積;逾時視同斷線由 keepalive 觸發重連
+        let w = match tokio::time::timeout(WRITE_TIMEOUT, async {
             let mut guard = self.inner.write.lock().await;
             match guard.as_mut() {
                 Some(h) => {
@@ -231,6 +235,11 @@ impl Bridge {
                 }
                 None => None, // 未連線
             }
+        })
+        .await
+        {
+            Ok(w) => w,
+            Err(_) => None, // 寫入逾時:當斷線
         };
 
         match w {
