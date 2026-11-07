@@ -15,6 +15,7 @@
   import { LoudnessController, emptyLoudnessView } from "./lib/loudness";
   import UpdatePanel from "./lib/UpdatePanel.svelte";
   import { resetPluginTransfer } from "./lib/pluginTransfer";
+  import { observeLatencyRuntimeStates } from "./lib/latencyRuntime";
   import LatencyDrawer from "./lib/LatencyDrawer.svelte";
   import ContextMenu from "./lib/ContextMenu.svelte";
   import type { PluginMenuItem } from "./lib/pluginMenu";
@@ -211,26 +212,9 @@
   function observeLatencyRuntime(tracks: Track[]): void {
     revisionDirty = transitionRevisionDirty(revisionDirty, { type: "runtimeObserved" });
     if (!latencyEnabled) return;
-    for (const track of tracks) {
-      for (const plugin of track.plugins) {
-        for (const [variant, state] of [
-          ["primary", plugin.runtimeState ?? "active"],
-          ["monitor", plugin.monitorState ?? "active"],
-        ] as const) {
-          const key = `${plugin.instanceId}:${variant}`;
-          const previous = latencyRuntimeStates.get(key);
-          latencyRuntimeStates.set(key, state);
-          if (state === previous) continue;
-          const role = variant === "monitor" ? "Monitor Shadow" : "Primary";
-          if (state === "suspended" || state === "degraded")
-            addNotice(
-              "error",
-              `${plugin.name} 的 ${role} 已${state === "suspended" ? "暫停" : "降級"}，受影響路徑改送 dry audio。`,
-            );
-          else if (state === "active" && previous && previous !== "active")
-            addNotice("info", `${plugin.name} 的 ${role} 已恢復。`, undefined, 3000);
-        }
-      }
+    for (const notice of observeLatencyRuntimeStates(latencyRuntimeStates, tracks)) {
+      if (notice.level === "error") addNotice("error", notice.text);
+      else addNotice("info", notice.text, undefined, 3000);
     }
   }
   /** P1-O:可複製診斷(WebView2 secure context 下 clipboard 可用;失敗 = 提示) */
@@ -554,6 +538,7 @@
           currentSessionPath = null; // 新 engine 尚未成功恢復任何檔案，不得覆寫上一代 Session
           scanJob = transitionScanJob(scanJob, { type: "reset" }).state;
           resetInputAlarms(); // K:engine 換代,輸入警示全收
+          latencyRuntimeStates.clear(); // 換代後 instanceId 重編,stale 狀態不得誤導通知比對
         }
         conn = c;
         if (c.connected && devices.length === 0) void refreshDevices();
