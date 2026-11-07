@@ -403,6 +403,16 @@ fn read_doc(p: &Path) -> (Value, Vec<String>) {
     match serde_json::from_str::<Value>(&text) {
         Ok(raw) => (raw, warnings),
         Err(e) => {
+            // 主檔讀得到但內容壞:先試 .bak,救回内容,否则下次存檔會把
+            // 壞主檔輪替進 .bak,唯一好備份同時被刪(全設定不可逆遺失)。
+            let mut bak = p.to_path_buf();
+            bak.set_extension("json.bak");
+            if let Ok(bak_text) = fs::read_to_string(&bak) {
+                if let Ok(raw) = serde_json::from_str::<Value>(&bak_text) {
+                    warnings.push(format!("settings 主檔損壞({e}),已由 .json.bak 備份回復"));
+                    return (raw, warnings);
+                }
+            }
             warnings.push(format!("settings 檔損壞({e}),已回復全部預設"));
             (Value::Object(Default::default()), warnings)
         }
@@ -513,6 +523,29 @@ mod tests {
         assert_eq!(loaded.ui_scale, 125);
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains(".bak"));
+        let _ = fs::remove_file(&bak);
+    }
+
+    #[test]
+    fn load_falls_back_to_bak_when_primary_corrupt() {
+        let p = tmp_path("bak-corrupt");
+        let s: Settings = serde_json::from_value(json!({"uiScale": 125})).unwrap();
+        let doc = merge(json!({}), &s);
+        save_to(&p, &doc).unwrap();
+        save_to(&p, &doc).unwrap(); // 第二次存檔才會產生 .bak(輪替上輪主檔)
+        fs::write(&p, "{\"corrupt").unwrap(); // 主檔讀得到但 JSON 壞
+        let (loaded, warnings) = load_from(&p);
+        assert_eq!(loaded.ui_scale, 125);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains(".bak"));
+        // 救回後再存檔:主檔是好內容,不得被回復成預設
+        let _ = save_to(&p, &merge(json!({}), &loaded));
+        let (reloaded, reloaded_warnings) = load_from(&p);
+        assert_eq!(reloaded.ui_scale, 125);
+        assert!(reloaded_warnings.is_empty());
+        let _ = fs::remove_file(&p);
+        let mut bak = p.clone();
+        bak.set_extension("json.bak");
         let _ = fs::remove_file(&bak);
     }
 
