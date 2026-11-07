@@ -1952,7 +1952,10 @@ std::optional<Failure> AudioEngine::insert_plugin_snapshot(const PluginSnapshot&
         return failure(Err::kPluginStateFailed, std::move(error));
     const auto live_rate = rt_sample_rate_.load(std::memory_order_relaxed);
     const auto rate = live_rate > 0 ? live_rate : (last_sample_rate_ > 0 ? last_sample_rate_ : 48000u);
-    const auto block = live_rate > 0 ? stream_block() : 512u;
+    // 失敗 start 回滾會 close device(block=0)但 rt_sample_rate_ 殘留 >0:
+    // 此時退 512,貼上/複製不得因 block=0 必敗(kPluginLoadFailed 假訊息)
+    const auto live_block = live_rate > 0 ? stream_block() : 0u;
+    const auto block = live_block > 0 ? live_block : 512u;
     if (!slot.plugin->initialize(rate, block))
         return failure(Err::kPluginLoadFailed, slot.plugin->last_error());
     slot.param_values = snapshot.params;
@@ -2215,7 +2218,12 @@ std::optional<Failure> AudioEngine::save_preset(std::uint32_t instance_id,
     RackSlot* mut = find_slot_mut(instance_id);
     const bool orig_bypass = mut->bypass;
     mut->bypass = true;
-    swap_graph();
+    // bypass 圖 commit 失敗 = RT 仍跑舊圖(仍 process 該 plugin),不得執行
+    // getState(VST3 併發契約);現行圖未動,還原旗標即回到呼叫前狀態。
+    if (!swap_graph()) {
+        mut->bypass = orig_bypass;
+        return failure(Err::kPresetIo, "cannot quiesce plugin for preset io (graph commit failed)");
+    }
     if (!wait_rt_blocks_drained(2000)) {
         mut->bypass = orig_bypass;
         swap_graph();
@@ -2258,7 +2266,12 @@ std::optional<Failure> AudioEngine::load_preset(std::uint32_t instance_id,
     const auto original_primary_state = s->primary_state;
     const auto original_monitor_state = s->monitor_state;
     s->bypass = true;
-    (void)swap_graph();
+    // 同 save_preset:commit 失敗 = RT 仍 process,禁止 setState
+    if (!swap_graph()) {
+        s->bypass = orig_bypass;
+        result.message = "cannot quiesce plugin for preset io (graph commit failed)";
+        return result;
+    }
     if (!wait_rt_blocks_drained(2000)) {
         s->bypass = orig_bypass;
         (void)swap_graph();

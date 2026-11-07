@@ -196,6 +196,16 @@ int main(int argc, char** argv) {
         CHECK(!s.send("start", {{"deviceKey", "wasapi"}, {"sampleRate", nullptr}, {"bufferSize", nullptr}})["ok"].get<bool>());
         CHECK(fake_wasapi::clients == 0);
         fake_wasapi::fail_buffer_size = false;
+        // 失敗 start 的回滾 close 了 device(block=0)但 rt_sample_rate_ 殘留：
+        // 貼上必須仍可用(退 512 初始化)，不得回 invalid VST3 initialization state。
+        const auto failed_start_plug =
+            s.ok("add_plugin", {{"trackId", input}, {"path", argv[1]}})["instanceId"];
+        const auto failed_start_clip =
+            s.ok("copy_plugin", {{"instanceId", failed_start_plug}})["clipboardId"];
+        const auto pasted_after_failed_start =
+            s.ok("paste_plugin", {{"clipboardId", failed_start_clip}, {"trackId", input}, {"newIndex", 0}})["instanceId"];
+        s.ok("remove_plugin", {{"instanceId", pasted_after_failed_start}});
+        s.ok("remove_plugin", {{"instanceId", failed_start_plug}});
         s.ok("track_set_source", {{"trackId", input}, {"source", nullptr}});
         s.start();
         for (const auto* endpoint : {"", "mic2"}) {
