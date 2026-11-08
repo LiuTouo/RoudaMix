@@ -297,3 +297,70 @@ const _: () = {
     assert!(std::mem::offset_of!(BlockShm, plugin_load_count) == 3124);
     assert!(std::mem::offset_of!(BlockShm, plugin_loads) == 3132);
 };
+
+// meters 事件鍵名是 UI 契約(ui/src/lib/types.ts MetersFrame 手寫對應,
+// 另有 scripts/meters-parity.test.mjs 跨側比對);任一側改名兩邊測試都會攔。
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn block(strip_count: u32, spectrum_count: u32, plugin_load_count: u32) -> BlockShm {
+        let mut b: BlockShm = unsafe { std::mem::zeroed() };
+        b.magic = MAGIC;
+        b.abi_version = ABI_VERSION;
+        b.sequence = 12;
+        b.strip_count = strip_count;
+        b.spectrum_count = spectrum_count;
+        b.plugin_load_count = plugin_load_count;
+        b.strips[0] = StripShm {
+            instance_id: 7,
+            kind: 2,
+            peak_l: 0.5,
+            peak_r: 0.25,
+            rms_l: 0.1,
+            rms_r: 0.2,
+            reserved: [0; 2],
+        };
+        b.plugin_loads[0] = PluginLoadShm {
+            instance_id: 7,
+            variant: 1,
+            process_load: 0.75,
+            reserved: 0.0,
+        };
+        b
+    }
+
+    #[test]
+    fn meters_frame_serializes_ui_contract_keys() {
+        fn sorted_keys(v: &serde_json::Value) -> Vec<&str> {
+            let mut keys: Vec<&str> = v.as_object().unwrap().keys().map(|k| k.as_str()).collect();
+            keys.sort_unstable();
+            keys
+        }
+        let value = serde_json::to_value(to_json(&block(1, 1, 1))).unwrap();
+        assert_eq!(
+            sorted_keys(&value),
+            ["bufferSize", "callbackLoad", "inputLatency", "outputLatency", "pluginLoads",
+             "sampleRate", "sequence", "spectrum", "strips", "xruns"]
+        );
+        assert_eq!(
+            sorted_keys(&value["strips"][0]),
+            ["instanceId", "kind", "peakL", "peakR", "rmsL", "rmsR"]
+        );
+        assert_eq!(
+            sorted_keys(&value["pluginLoads"][0]),
+            ["instanceId", "processLoad", "variant"]
+        );
+    }
+
+    #[test]
+    fn to_json_clamps_counts_to_table_bounds() {
+        let value = serde_json::to_value(to_json(&block(u32::MAX, u32::MAX, u32::MAX))).unwrap();
+        assert_eq!(value["strips"].as_array().unwrap().len(), STRIPS);
+        assert_eq!(value["spectrum"].as_array().unwrap().len(), SPECTRUM_BINS);
+        assert_eq!(value["pluginLoads"].as_array().unwrap().len(), PLUGIN_LOADS);
+        let empty = serde_json::to_value(to_json(&block(0, 0, 0))).unwrap();
+        assert_eq!(empty["strips"], serde_json::json!([]));
+        assert_eq!(empty["spectrum"], serde_json::json!([]));
+    }
+}
