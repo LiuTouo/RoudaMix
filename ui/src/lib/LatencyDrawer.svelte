@@ -5,6 +5,7 @@
   import { engineCommand } from "./protocol-commands.generated";
   import { errorText } from "./errors";
   import { samplesToMs } from "./format";
+  import { observePluginLoads, pluginLoadKey } from "./latencyLoadView";
   import type { EngineStatus, LatencyReport, MetersFrame, RackSlot, Track } from "./types";
 
   let { open, status, meters, onClose }: { open: boolean; status: EngineStatus | null; meters: MetersFrame | null; onClose: () => void } =
@@ -21,7 +22,7 @@
   const ms = (samples: number | null | undefined) => samplesToMs(samples, rate);
   const trackName = (id: number) =>
     (report?.tracks ?? status?.tracks ?? []).find((track) => track.trackId === id)?.name ?? `#${id}`;
-  const loadKey = (instanceId: number, variant: number) => `${instanceId}:${variant}`;
+  const loadKey = pluginLoadKey;
   const loadText = (instanceId: number, variant: number) => {
     const value = loadView[loadKey(instanceId, variant)];
     return value ? `${(value.ewma * 100).toFixed(1)}% / peak ${(value.peak * 100).toFixed(1)}%` : "—";
@@ -79,26 +80,11 @@
   });
   $effect(() => {
     // 關閉(open === false)時不訂閱 meters 推流:EWMA/history/peak 全停
-    // (每 tick 攤開 + Math.max 150 筆 × plugin 數)。
+    // (每 tick 攤開 + Math.max 150 筆 × plugin 數)。驅逐已移除 instance 的
+    // 邏輯在 latencyLoadView.ts(含測試)。
     if (!open) return;
     if (!meters?.pluginLoads) return;
-    const next = { ...untrack(() => loadView) };
-    const live = new Set<string>();
-    for (const load of meters.pluginLoads) {
-      const key = loadKey(load.instanceId, load.variant);
-      live.add(key);
-      const previous = next[key]?.ewma ?? load.processLoad;
-      const ewma = previous + (load.processLoad - previous) / 30;
-      const history = loadHistory.get(key) ?? [];
-      history.push(load.processLoad);
-      if (history.length > 150) history.shift();
-      loadHistory.set(key, history);
-      next[key] = { ewma, peak: Math.max(...history) };
-    }
-    // 驅逐不在目前圖上的 instance(已移除的 plugin):Drawer 常駐,不清會無限成長
-    for (const key of loadHistory.keys()) if (!live.has(key)) loadHistory.delete(key);
-    for (const key of Object.keys(next)) if (!live.has(key)) delete next[key];
-    loadView = next;
+    loadView = observePluginLoads(loadHistory, untrack(() => loadView), meters.pluginLoads);
   });
 </script>
 
