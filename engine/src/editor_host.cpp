@@ -9,10 +9,15 @@
 // preset)必經 EditorHostCmd POST 到 main window,由 main.cpp 的 handler 鎖
 // Router 臨界區走正規路徑 —— host 的 wnd_proc 可能在 dispatch 持鎖中被
 // DestroyWindow 的 sent message 同步重入,host 自身絕不鎖(自死鎖)。
-// 視窗拓撲:host 是**無 owner 的獨立 top-level 視窗**(WS_EX_TOPMOST 浮上面)。
+// 視窗拓撲:host 是**無 owner 的獨立 top-level 視窗**。置頂是動態的:只在
+// RoudaMix(自家 process 或 UI process)為前景時掛 WS_EX_TOPMOST —— 切到別
+// 的程式就解除,編輯器不蓋住其他應用程式。狀態源 = EVENT_SYSTEM_FOREGROUND
+// hook(main thread message loop 收)+ WM_ACTIVATE/activate 時的主動重算。
 // 不可用跨 process 的 UI 主視窗當 owner:跨進程 ownership 會把兩邊 thread 的
 // input queue 接在一起,焦點/前景狀態共用,關閉 host 時的 close 手勢可能落在
-// 主視窗上(實害:彈出視窗關閉連帶主視窗被關)。
+// 主視窗上(實害:彈出視窗關閉連帶主視窗被關)。UI 主視窗 HWND 仍會經
+// set_editor_owner 傳入,但只用於前景判定與首次開窗的預設位置(中線右側),
+// 不建立任何視窗所有權。
 #include "editor_host.hpp"
 
 #include "audio_engine.hpp"
@@ -136,6 +141,21 @@ void foreground_window(HWND wnd) noexcept {
             Sleep(80);  // 被拒(對方 thread 忙/沒 pump)→ 等一輪再試,共 ~160ms
         }
     }).detach();
+}
+
+// EVENT_SYSTEM_FOREGROUND:前景視窗變更 → 重算置頂。WINEVENT_OUTOFCONTEXT =
+// callback 在安裝執行緒(engine main thread,有 message loop)排程執行。
+// 安裝一次、進程生命週期不卸載;wnd 沒開時 apply_topmost 是 no-op。
+void CALLBACK foreground_hook_proc(HWINEVENTHOOK, DWORD, HWND, LONG, LONG, DWORD,
+                                   DWORD) noexcept {
+    EditorHost::instance().update_topmost(GetForegroundWindow());
+}
+
+void ensure_foreground_hook() noexcept {
+    static const HWINEVENTHOOK hook = SetWinEventHook(
+        EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr,
+        &foreground_hook_proc, 0, 0, WINEVENT_OUTOFCONTEXT);
+    (void)hook;
 }
 
 // IPlugFrame:plugin 要求 resize editor → 調 host 視窗外框(client 高 + strip)。
@@ -332,6 +352,11 @@ struct EditorHost::Impl {
     int last_client_w = -1, last_client_h = -1; // Windows 可能在 ShowWindow 重送同尺寸 WM_SIZE。
     int fit_w = 0, fit_h = 0;    // active 插件 attach 回報的原生尺寸(固定版面 = 視窗貼合尺寸)
     bool resizing_host = false; // 宿主 chrome/插件請求改外框，不向插件回送容器尺寸。
+    // 動態置頂狀態源:UI 主視窗 HWND(僅存 pid 比對用,不當 owner)與目前是否
+    // 掛著 WS_EX_TOPMOST(建窗時帶 TOPMOST,初始 true)。
+    HWND ui_wnd = nullptr;
+    DWORD ui_pid = 0;
+    bool topmost = true;
 
     ~Impl() {
         if (wnd != nullptr) DestroyWindow(wnd);  // WM_DESTROY 內 detach + 清欄位
@@ -528,6 +553,70 @@ struct EditorHost::Impl {
         InvalidateRect(wnd, &cap, FALSE);
     }
 
+    // 「只在 RoudaMix 裡面置頂」:前景屬自家 process(編輯器自己)或 UI process
+    // (主視窗/設定窗等)才算自己人;切到別的程式 = 解除 TOPMOST。
+    bool foreground_is_ours(HWND fg) const noexcept {
+        if (fg == wnd) return true;
+        if (fg == nullptr || ui_pid == 0) return false;
+        DWORD pid = 0;  // out 參數才拿得到 process id;回傳值是 thread id,不可比
+        GetWindowThreadProcessId(fg, &pid);
+        return pid == ui_pid;
+    }
+
+    void apply_topmost(bool want) noexcept {
+        if (wnd == nullptr || want == topmost) return;
+        // 同 flag 重複 SetWindowPos 會攪動 z-order;以快取 flag 擋掉重複套用。
+        // 解除置頂不能只用 HWND_NOTOPMOST:它把視窗放到「非置頂帶最頂」= 剛切
+        // 過去的前景程式立刻被編輯器蓋住,視覺上等同還在置頂(「還是置頂」症的
+        // 來源)。改插到目前前景視窗的正下方,讓前景程式直接蓋住它。
+        const HWND fg = want ? HWND_TOPMOST : GetForegroundWindow();
+        SetWindowPos(wnd, fg != nullptr && fg != wnd ? fg : HWND_NOTOPMOST,
+                     0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        std::fprintf(stderr, "[engine] editor topmost -> %d (fg pid=%lu, ui pid=%lu)\n",
+                     static_cast<int>(want),
+                     static_cast<unsigned long>([] {
+                         if (const HWND f = GetForegroundWindow()) {
+                             DWORD pid = 0;
+                             GetWindowThreadProcessId(f, &pid);
+                             return pid;
+                         }
+                         return 0ul;
+                     }()),
+                     static_cast<unsigned long>(ui_pid));
+        topmost = want;
+    }
+
+    // 預設位置:主介面(UI 主視窗)「假想中線」右側(中間靠右,與
+    // 左側的響度面板預設位對稱、彼此不重疊),垂直置中,夾在 UI 視窗所在螢幕
+    // 的工作區內。新窗流程中套用:建窗時一次(以暫估尺寸),插件 attach 撐到
+    // 原生尺寸後再對中一次;之後切換分頁/插件自行 resize 都不再改位置
+    // (使用者拖曳的位置為準)。
+    void place_at_default() noexcept {
+        if (ui_wnd == nullptr || !IsWindow(ui_wnd)) {
+            std::fprintf(stderr, "[engine] editor default pos skipped (no ui window)\n");
+            return;
+        }
+        RECT ur{};
+        if (!GetWindowRect(ui_wnd, &ur) || ur.right <= ur.left) return;
+        MONITORINFO mi{};
+        mi.cbSize = sizeof(mi);
+        const HMONITOR monitor = MonitorFromWindow(ui_wnd, MONITOR_DEFAULTTONEAREST);
+        const RECT wa = monitor != nullptr && GetMonitorInfoW(monitor, &mi)
+                            ? mi.rcWork : ur;  // 拿不到工作區就退化用 UI 視窗 rect
+        RECT wr{};
+        GetWindowRect(wnd, &wr);
+        const int w = wr.right - wr.left, h = wr.bottom - wr.top;
+        const int center = ur.left + static_cast<int>(ur.right - ur.left) / 2;
+        const LONG x = std::clamp<LONG>(center + chrome_px(12),
+                                        wa.left, (std::max)(wa.left, wa.right - w));
+        const LONG y = std::clamp<LONG>(ur.top + (static_cast<LONG>(ur.bottom - ur.top) - h) / 2,
+                                        wa.top, (std::max)(wa.top, wa.bottom - h));
+        SetWindowPos(wnd, nullptr, x, y, 0, 0,
+                     SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        std::fprintf(stderr, "[engine] editor default pos x=%ld y=%ld ui=[%ld %ld %ld %ld]\n",
+                     x, y, ur.left, ur.top, ur.right, ur.bottom);
+    }
+
     // 沒窗就建(含子視窗)。回傳「本次新建」(呼叫端在 attach 失敗時要拆)
     bool ensure_window() {
         if (wnd != nullptr) return false;
@@ -572,6 +661,8 @@ struct EditorHost::Impl {
         const COLORREF brc = kBtnBorder;
         DwmSetWindowAttribute(wnd, DWMWA_BORDER_COLOR, &brc, sizeof(brc));
         frame->hwnd = wnd;
+        topmost = true;  // 建窗即 TOPMOST(開啟當下 RoudaMix 必是前景;之後由 hook 修正)
+        place_at_default();
         tabs = CreateWindowExW(0, kTabsClassName, L"", WS_CHILD | WS_VISIBLE,
                                0, chrome_px(kCaptionH), 480, strip_h(), wnd, nullptr,
                                GetModuleHandleW(nullptr), this);
@@ -633,9 +724,14 @@ struct EditorHost::Impl {
         last_view_w = fit_w;
         last_view_h = fit_h;
         resize_to_client(fit_w, fit_h);  // chrome 再寬也不拉伸 plugin 原生 editor
+        // 建窗時的預設位置是以 480×360 暫估;插件 attach 後外框撐到原生尺寸,
+        // 窗往下長 = 視覺沉到底部。以「最終尺寸」重新對中(僅本次新窗;切分頁
+        // 或插件日後自行 resize 都不重排,使用者拖曳的位置為準)。
+        if (fresh) place_at_default();
         set_title(id);
         ShowWindow(wnd, SW_SHOW);
         foreground_window(wnd);
+        apply_topmost(true);  // 使用者剛在 UI 點開 = RoudaMix 是前景;hook 之後會接手
         render_tabs();
         sync_strip_height();
         return true;
@@ -698,11 +794,27 @@ void EditorHost::set_ui_scale(int percent) noexcept {
     InvalidateRect(impl_->tabs, nullptr, FALSE);
 }
 
-void EditorHost::set_owner(HWND /*owner*/) noexcept {
-    // 相容保留:set_editor_owner 命令仍回 ok,但**不再把 UI 主視窗掛成 owner**。
-    // 跨進程 ownership 會接合兩 process 的 input queue(焦點/前景共用),
-    // 彈出視窗關閉時的 close 手勢可能誤落在主視窗 = 主視窗連帶被關。
-    // 主視窗 HWND 從此不跨進邊界。(舊版:GWL_HWNDPARENT)
+void EditorHost::update_topmost(HWND fg) noexcept {
+    impl_->apply_topmost(impl_->foreground_is_ours(fg));
+}
+
+void EditorHost::set_owner(HWND owner) noexcept {
+    // 不再把 UI 主視窗掛成 owner(跨進程 ownership 會接合 input queue,見上)。
+    // HWND 只拿來做兩件事:1) 前景判定 —— 「只在 RoudaMix 裡面置頂」的動態
+    // WS_EX_TOPMOST;2) 首次開窗的預設位置(主介面中線右側)。無所有權。
+    ensure_foreground_hook();
+    if (owner == nullptr || !IsWindow(owner)) {
+        impl_->ui_wnd = nullptr;
+        impl_->ui_pid = 0;
+        return;
+    }
+    impl_->ui_wnd = owner;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(owner, &pid);
+    impl_->ui_pid = pid;
+    std::fprintf(stderr, "[engine] editor owner hwnd=%p pid=%lu\n",
+                 static_cast<void*>(owner), static_cast<unsigned long>(pid));
+    impl_->apply_topmost(impl_->foreground_is_ours(GetForegroundWindow()));
 }
 
 bool EditorHost::open(std::uint32_t instance_id, std::string& err) {
@@ -851,6 +963,7 @@ LRESULT CALLBACK host_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
             self->wnd = self->tabs = self->client = nullptr;
             self->active_id = 0;
             self->preset_name.clear();
+            self->topmost = false;  // 視窗已滅,重置快取;重開時建窗會重設 true
             self->opened_ids.clear();
         }
         return 0;
@@ -887,6 +1000,8 @@ LRESULT CALLBACK host_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
     case WM_ACTIVATE:
         if (self != nullptr) {
             self->active = LOWORD(wp) != WA_INACTIVE;
+            // 被點前景 = RoudaMix 前景 → 重新掛回 TOPMOST(hook 沒收到/慢半拍時的即時修正)
+            if (self->active) self->apply_topmost(true);
             RECT rc{};
             GetClientRect(h, &rc);
             const RECT cap{0, 0, rc.right, chrome_px(kCaptionH)};

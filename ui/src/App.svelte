@@ -105,19 +105,19 @@
   let pluginCopyEnabled = $state(false);
   let trackDuplicateEnabled = $state(false);
   let loudnessEnabled = $state(false);
-  let loudnessTarget = $state<{ trackId: number; anchor: HTMLElement; trigger: HTMLButtonElement } | null>(null);
+  let loudnessTarget = $state<{ trackId: number; trigger: HTMLButtonElement } | null>(null);
   let loudnessView = $state(emptyLoudnessView());
   const loudnessController = new LoudnessController(
     (view) => { loudnessView = view; },
     (message) => addNotice("error", message),
   );
-  function openLoudness(trackId: number, anchor: HTMLElement, trigger: HTMLButtonElement) {
+  function openLoudness(trackId: number, trigger: HTMLButtonElement) {
     if (!loudnessEnabled) return;
     if (loudnessTarget?.trackId === trackId) {
       document.getElementById("loudness-analysis")?.focus({ preventScroll: true });
       return;
     }
-    loudnessTarget = { trackId, anchor, trigger };
+    loudnessTarget = { trackId, trigger };
   }
   function closeLoudness(restoreFocus = true) {
     const trigger = loudnessTarget?.trigger;
@@ -2062,7 +2062,7 @@
 {/if}
 
 {#if loudnessTarget && loudnessTrack}
-  <LoudnessPopover track={loudnessTrack} anchor={loudnessTarget.anchor} view={loudnessView}
+  <LoudnessPopover track={loudnessTrack} view={loudnessView}
     {running} onClose={closeLoudness} onReset={() => loudnessController.reset()} />
 {/if}
 

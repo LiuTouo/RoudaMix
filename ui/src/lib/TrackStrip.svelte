@@ -89,7 +89,7 @@
     trackDuplicateEnabled?: boolean;
     loudnessEnabled?: boolean;
     loudnessOpen?: boolean;
-    onLoudnessOpen?: (trackId: number, anchor: HTMLElement, trigger: HTMLButtonElement) => void;
+    onLoudnessOpen?: (trackId: number, trigger: HTMLButtonElement) => void;
     scanModules?: ScanModule[];
     scanFailed?: ScanFailure[];
     scanRunning?: boolean;
@@ -108,7 +108,6 @@
     introMs?: number;
   } = $props();
 
-  let meterAnchor: HTMLDivElement;
   let err = $state("");
   let pluginPickerOpen = $state(false);
   // WASAPI render 裝置清單(focus 時拉,保持常新)
@@ -1425,13 +1424,13 @@
         />
       </div>
     </div>
-    <div class="meterwrap" bind:this={meterAnchor}>
+    <div class="meterwrap">
       {#if metered}
         <button type="button" class="meter-trigger" aria-disabled={!loudnessEnabled}
           aria-label={`開啟 ${track.name} 的響度分析`}
           aria-haspopup="dialog" aria-expanded={loudnessOpen} aria-controls={loudnessOpen ? "loudness-analysis" : undefined}
           data-tooltip={loudnessEnabled ? "開啟響度分析；右鍵清除過載標記。" : "目前引擎不支援響度分析。"}
-          onclick={(event) => { if (loudnessEnabled) onLoudnessOpen?.(track.trackId, meterAnchor, event.currentTarget); }}>
+          onclick={(event) => { if (loudnessEnabled) onLoudnessOpen?.(track.trackId, event.currentTarget); }}>          
           <MeterCanvas strip={stripOfTrack(track.trackId, meterView)} />
         </button>
       {:else}
@@ -1446,7 +1445,7 @@
         aria-label={`${track.name} 的響度分析`}
         aria-haspopup="dialog" aria-expanded={loudnessOpen} aria-controls={loudnessOpen ? "loudness-analysis" : undefined}
         data-tooltip={loudnessEnabled ? "響度分析" : "目前引擎不支援響度分析。"}
-        onclick={(event) => onLoudnessOpen?.(track.trackId, meterAnchor, event.currentTarget)}>
+        onclick={(event) => onLoudnessOpen?.(track.trackId, event.currentTarget)}>
         <span aria-hidden="true"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" focusable="false">
           <rect x="3" y="9" width="2" height="4" rx="0.5" />
           <rect x="7" y="3" width="2" height="10" rx="0.5" />

@@ -3,15 +3,16 @@
   import { loudnessDuration, loudnessValue, type LoudnessView } from "./loudness";
   import type { Track } from "./types";
 
-  let { track, anchor, view, running, onClose, onReset }: {
+  let { track, view, running, onClose, onReset }: {
     track: Track;
-    anchor: HTMLElement;
     view: LoudnessView;
     running: boolean;
     onClose: (restoreFocus?: boolean) => void;
     onReset: () => void;
   } = $props();
   let panel: HTMLDivElement;
+  let header: HTMLElement;
+  let dragging = $state(false);
   const report = $derived(view.report);
   const interrupted = $derived(!!view.error || report?.state === "error");
   const statusText = $derived(view.busy ? "開始量測…" : interrupted ? "量測中斷" :
@@ -23,45 +24,70 @@
     { key: "shortTermLufs", label: "LUFS-S", window: "短期 · 3 秒", help: "最近 3 秒的響度。" },
     { key: "integratedLufs", label: "LUFS-I", window: "整體 · 本次", help: "本次量測的整體響度，排除過低音量。" },
   ] as const;
+  const EDGE = 8;
+
+  // 浮動面板(對齊 VST 編輯器視窗行為):開啟後固定位置,不跟隨錨點、不因捲動
+  // 自動關閉;與主畫面其他內容無 z-order 競爭(popover top layer),置頂僅存在
+  // 於 RoudaMix 視窗內,切換到別的程式自然被蓋過去。
+  function clampToViewport(x: number, y: number) {
+    const rect = panel.getBoundingClientRect();
+    const maxX = Math.max(EDGE, window.innerWidth - rect.width - EDGE);
+    const maxY = Math.max(EDGE, window.innerHeight - rect.height - EDGE);
+    panel.style.left = `${Math.min(Math.max(EDGE, x), maxX)}px`;
+    panel.style.top = `${Math.min(Math.max(EDGE, y), maxY)}px`;
+  }
+
+  // 預設落在主介面「假想中線」左側(中間靠左):右緣距中線 12px,垂直置中。
+  // 與 VST 編輯器視窗的預設位(中線右側)對稱,同時開啟時彼此不重疊。
+  function placeDefault() {
+    const rect = panel.getBoundingClientRect();
+    const center = window.innerWidth / 2;
+    const x = Math.max(EDGE, center - rect.width - 12);
+    const y = Math.max(EDGE, (window.innerHeight - rect.height) / 2);
+    panel.style.left = `${x}px`;
+    panel.style.top = `${y}px`;
+  }
+
+  // 標題列 = 拖曳把手(關閉鈕除外);move/up 掛 window,游標衝出把手也跟得住。
+  function startDrag(event: PointerEvent) {
+    if (event.button !== 0) return;
+    if (event.target instanceof Element && event.target.closest("button")) return;
+    const rect = panel.getBoundingClientRect();
+    const offsetX = event.clientX - rect.left;
+    const offsetY = event.clientY - rect.top;
+    dragging = true;
+    event.preventDefault();
+    const move = (e: PointerEvent) => clampToViewport(e.clientX - offsetX, e.clientY - offsetY);
+    const up = () => {
+      dragging = false;
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+  }
 
   $effect(() => {
-    const currentAnchor = anchor;
     panel?.focus({ preventScroll: true });
-    const observer = typeof IntersectionObserver === "undefined" ? null : new IntersectionObserver((entries) => {
-      if (entries.some((entry) => !entry.isIntersecting)) onClose(false);
-    });
-    observer?.observe(currentAnchor);
-    return () => observer?.disconnect();
   });
 
   onMount(() => {
     panel.showPopover();
     panel.focus({ preventScroll: true });
-    let raf = 0;
-    let lastPosition = "";
-    const position = () => {
-      if (!anchor.isConnected) { onClose(false); return; }
-      const rect = anchor.getBoundingClientRect();
-      const edge = 8;
-      const width = Math.min(440, Math.max(0, window.innerWidth - edge * 2));
-      const maxHeight = Math.max(0, window.innerHeight - edge * 2);
-      panel.style.width = `${width}px`;
-      panel.style.maxHeight = `${maxHeight}px`;
-      const height = Math.min(panel.getBoundingClientRect().height, maxHeight);
-      const right = rect.right + edge;
-      const left = right + width <= window.innerWidth - edge ? right : rect.left - width - edge;
-      const x = Math.max(edge, Math.min(left, window.innerWidth - width - edge));
-      const y = Math.max(edge, Math.min(rect.top, window.innerHeight - height - edge));
-      const key = `${x},${y}`;
-      if (key !== lastPosition) {
-        panel.style.left = `${x}px`;
-        panel.style.top = `${y}px`;
-        lastPosition = key;
-      }
-      // Track transforms/reordering as well as scroll; only one open panel runs this loop.
-      raf = requestAnimationFrame(position);
+    placeDefault();
+    // 鍵盤搬移:面板聚焦(panel 開啟即聚焦)時用方向鍵微調位置 = 拖曳的鍵盤替代。
+    const onPanelKey = (event: KeyboardEvent) => {
+      const deltas: Record<string, [number, number]> = {
+        ArrowLeft: [-16, 0], ArrowRight: [16, 0], ArrowUp: [0, -16], ArrowDown: [0, 16],
+      };
+      const delta = deltas[event.key];
+      if (!delta || event.altKey || event.ctrlKey || event.metaKey) return;
+      const rect = panel.getBoundingClientRect();
+      clampToViewport(rect.left + delta[0], rect.top + delta[1]);
+      event.preventDefault();
     };
-    position();
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented || document.querySelector("dialog[open]")) return;
       if (event.target instanceof Element) {
@@ -73,9 +99,10 @@
       onClose(true);
     };
     window.addEventListener("keydown", onKey);
+    panel.addEventListener("keydown", onPanelKey);
     return () => {
-      cancelAnimationFrame(raf);
       window.removeEventListener("keydown", onKey);
+      panel.removeEventListener("keydown", onPanelKey);
       panel.hidePopover();
     };
   });
@@ -83,7 +110,9 @@
 
 <div bind:this={panel} id="loudness-analysis" class="loudness-popup" popover="manual"
   role="dialog" tabindex="-1" aria-labelledby="loudness-heading">
-  <header>
+  <!-- 拖曳把手:指標拖曳;鍵盤以 panel 焦點 + 方向鍵搬移(onPanelKey) -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <header bind:this={header} class:dragging onpointerdown={startDrag}>
     <h2 id="loudness-heading">響度分析 <span>· {track.name}</span></h2>
     <button type="button" class="dialog-close" aria-label="關閉響度分析" data-tooltip="關閉並停止量測。"
       onclick={() => onClose(true)}>×</button>
@@ -130,6 +159,8 @@
 <style>
   .loudness-popup {
     position: fixed; inset: auto; margin: 0; padding: 16px; box-sizing: border-box;
+    width: min(440px, calc(100vw - 16px));
+    max-height: calc(100vh - 16px);
     overflow: auto;
     /* 底色/框線/圓角/投影由 console.css 浮層規則統一 */
     color: var(--text);
@@ -137,9 +168,12 @@
   }
   .loudness-popup::backdrop { background: transparent; pointer-events: none; }
   header, footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  header { cursor: grab; user-select: none; touch-action: none; margin: 0 -16px; padding: 0 16px 8px;
+    border-bottom: 1px solid var(--border); }
+  header.dragging { cursor: grabbing; }
   h2 { margin: 0; font-size: 14px; min-width: 0; overflow-wrap: anywhere; }
   h2 span { font-weight: 400; }
-  .status { margin: 0 0 12px; color: var(--text-dim); font-size: 12px; }
+  .status { margin: 12px 0; color: var(--text-dim); font-size: 12px; }
   .loudness-values { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding: 4px 0 20px; }
   .metric { display: flex; flex-direction: column; align-items: center; gap: 2px; }
   .metric-label, .metric-window { color: var(--text-dim); font-size: 12px; }

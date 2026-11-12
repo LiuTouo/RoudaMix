@@ -28,9 +28,7 @@ let status: EngineStatus;
 let capabilities: string[];
 let current: LoudnessReport | null;
 let nextId: number;
-let anchorRect: DOMRect;
 const frames = new Map<number, FrameRequestCallback>();
-const observers: Array<{ target?: Element; disconnected: boolean; callback: (entries: Array<{ isIntersecting: boolean }>) => void }> = [];
 const originalShow = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "showPopover");
 const originalHide = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "hidePopover");
 const originalAnimate = Object.getOwnPropertyDescriptor(Element.prototype, "animate");
@@ -48,8 +46,7 @@ beforeEach(() => {
   status = { running: true, deviceKey: "wasapi", sampleRate: 48000, bufferSize: 128,
     inputLatency: 0, outputLatency: 128, xruns: 0, trackCount: 3, pluginFails: 0,
     revision: 0, telemetryStrips: [], tracks: [track(1, "麥克風"), track(2, "監聽", "monitor"), track(3, "串流", "stream")], error: null };
-  current = null; nextId = 0; frames.clear(); observers.length = 0;
-  anchorRect = new DOMRect(200, 100, 46, 330);
+  current = null; nextId = 0; frames.clear();
   command.mockReset().mockImplementation(async (kind, payload) => {
     if (kind === "get_snapshot") return { snapshot: { status, lastScan: [], capabilities } };
     if (kind === "list_devices") return { devices: [] };
@@ -67,21 +64,16 @@ beforeEach(() => {
   invoke.mockReset().mockImplementation(async (name) => name === "connect_status"
     ? { connected: true, epoch: 1, engineVersion: "test" } : { settings, warnings: [] });
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} unobserve() {} });
-  vi.stubGlobal("IntersectionObserver", class {
-    item: (typeof observers)[number];
-    constructor(callback: (entries: Array<{ isIntersecting: boolean }>) => void) {
-      this.item = { disconnected: false, callback }; observers.push(this.item);
-    }
-    observe(target: Element) { this.item.target = target; }
-    disconnect() { this.item.disconnected = true; }
-  });
   let frameId = 0;
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { frames.set(++frameId, callback); return frameId; });
   vi.stubGlobal("cancelAnimationFrame", (id: number) => frames.delete(id));
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function () {
-    if (this.classList.contains("meterwrap")) return anchorRect;
-    return new DOMRect(0, 0, this.classList.contains("loudness-popup") ? 440 : 1024, 340);
+    if (!this.classList.contains("loudness-popup")) return new DOMRect(0, 0, 1024, 340);
+    // 浮動面板:回傳 style 位置(未定位前 = 0),拖曳/方向鍵的 delta 運算才與真實一致
+    const x = Number.parseFloat(this.style.left) || 0;
+    const y = Number.parseFloat(this.style.top) || 0;
+    return new DOMRect(x, y, 440, 340);
   });
   Object.defineProperty(HTMLElement.prototype, "showPopover", { configurable: true, value() { this.dataset.open = "true"; } });
   Object.defineProperty(HTMLElement.prototype, "hidePopover", { configurable: true, value() { delete this.dataset.open; } });
@@ -111,10 +103,6 @@ function emitStatus(patch: Partial<EngineStatus>) {
   status = { ...status, ...patch };
   listeners.get("engine-event")!({ payload: { kind: "status", payload: status } });
 }
-function frame() {
-  const pending = [...frames.values()]; frames.clear();
-  for (const callback of pending) callback(performance.now());
-}
 
 it("ellipsis and meter open the same unique persistent panel without resetting it", async () => {
   await show();
@@ -138,8 +126,6 @@ it("ellipsis and meter open the same unique persistent panel without resetting i
   expect(popup()?.textContent).toContain("監聽");
   expect(popup()?.textContent).toContain("實際輸出（含監聽）");
   expect(starts()).toHaveLength(2);
-  expect(observers[0].disconnected).toBe(true);
-  expect(observers.at(-1)?.target).toBe(more(1).parentElement);
 });
 
 it("preserves right-click clipping reset, Esc closes and restores focus", async () => {
@@ -244,18 +230,32 @@ it.each(["remove", "disconnect", "load"])("cleans up on %s", async (action) => {
   expect(command).toHaveBeenCalledWith("stop_loudness", { measurementId: "measure-1" });
 });
 
-it("flips at viewport edge, follows anchor geometry, and stops when clipped out", async () => {
-  anchorRect = new DOMRect(940, 600, 46, 330);
+it("opens left of the viewport centre line, stays put while measuring, and drags by its header", async () => {
   await show(); more().click(); await settle();
-  expect(Number.parseFloat(popup()!.style.left)).toBeLessThan(anchorRect.left);
-  expect(Number.parseFloat(popup()!.style.top) + 340).toBeLessThanOrEqual(window.innerHeight - 8);
-  anchorRect = new DOMRect(100, 40, 46, 330);
-  frame(); await settle();
-  expect(popup()!.style.left).toBe("154px");
-  expect(popup()!.style.top).toBe("40px");
-  observers.at(-1)!.callback([{ isIntersecting: false }]); await settle();
-  expect(popup()).toBeNull();
-  expect(current).toBeNull();
+  const el = popup()!;
+  expect(el.getAttribute("popover")).toBe("manual");
+  const left = Number.parseFloat(el.style.left);
+  // 預設位置:「中間靠左」—— 右緣距視窗中線 12px(與 VST 編輯器預設位對稱,不重疊)
+  expect(left).toBeGreaterThanOrEqual(8);
+  expect(left + 440).toBeLessThanOrEqual(window.innerWidth / 2 - 12);
+  // 量測中面板不跟隨、不因背景捲動/幾何變化關閉(rAF 迴圈已移除)
+  await vi.advanceTimersByTimeAsync(200); await settle();
+  expect(popup()).not.toBeNull();
+  expect(Number.parseFloat(el.style.left)).toBe(left);
+  // 標題列拖曳:移動面板且夾在視窗邊界內;關閉鈕不觸發拖曳
+  const header = el.querySelector("header")!;
+  header.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, clientX: 100, clientY: 20 }));
+  window.dispatchEvent(new MouseEvent("pointermove", { bubbles: true, clientX: 260, clientY: 60 }));
+  window.dispatchEvent(new MouseEvent("pointerup", { bubbles: true }));
+  await settle();
+  const dragged = Number.parseFloat(el.style.left);
+  expect(dragged).toBeGreaterThan(left);
+  expect(dragged + 440).toBeLessThanOrEqual(window.innerWidth - 8);
+  expect(popup()).not.toBeNull();
+  // 鍵盤搬移:面板聚焦時方向鍵微調,同樣夾在邊界內
+  el.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true, cancelable: true }));
+  await settle();
+  expect(Number.parseFloat(el.style.left)).toBe(dragged - 16);
 });
 
 it("does not consume Esc already handled by another dialog", async () => {

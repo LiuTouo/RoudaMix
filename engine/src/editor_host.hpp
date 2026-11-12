@@ -42,8 +42,10 @@ public:
     void set_ui_scale(int percent) noexcept;
     // 舊版曾掛 UI 主視窗當跨進程 owner —— 會接合兩 process 的 input queue,
     // 關彈出視窗時 close 手勢可能誤落主視窗。已改為獨立視窗(見 editor_host.cpp
-    // 檔頭);此命令保留接受、引擎端 no-op,協定不變。
+    // 檔頭);此命令保留接受、HWND 只用於前景判定與預設位置,不當 owner。
     void set_owner(HWND owner) noexcept;
+    // 以給定前景視窗重算動態置頂(前景 hook 與測試共用的單一入口)
+    void update_topmost(HWND fg) noexcept;
     // open_editor 命令:開/切換到該 plugin(已顯示 = 帶前景);err 帶原因
     bool open(std::uint32_t instance_id, std::string& err);
     // close_editor 命令:active = detach + 自動切下一個開著的,沒有則關窗;

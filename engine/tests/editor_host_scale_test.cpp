@@ -5,6 +5,7 @@
 #include <windowsx.h>
 
 #include "command_contract.hpp"
+#include "editor_host.hpp"
 #include "router.hpp"
 
 #define CHECK(x) do { if (!(x)) { std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #x); std::exit(EXIT_FAILURE); } } while (0)
@@ -66,14 +67,48 @@ void check_editor(const std::string& module, int mode, int initial_percent, HWND
     const auto track = ok("track_add", {{"kind", "audio"}, {"name", "Test"}})["trackId"];
     const auto plugin = ok("add_plugin", {{"trackId", track}, {"path", module}})["instanceId"];
     ok("set_plugin_name", {{"instanceId", plugin}, {"name", "A"}});
+    // 具真實 rect 的 UI 主視窗替身(message-only target 的 GetWindowRect 是空的,
+    // 測不了預設位置):預設位置與動態置頂都以它為基準。
+    const HWND ui_owner = CreateWindowExW(0, L"RmxScaleTestTarget", L"", WS_OVERLAPPED,
+                                          200, 100, 800, 600, nullptr, nullptr,
+                                          GetModuleHandleW(nullptr), nullptr);
+    CHECK(ui_owner != nullptr);
+    MoveWindow(ui_owner, 200, 100, 800, 600, FALSE);
+    ok("set_editor_owner", {{"hwnd", static_cast<std::uintptr_t>(
+        reinterpret_cast<std::uintptr_t>(ui_owner))}});
     ok("open_editor", {{"instanceId", plugin}});
-    pump();
     const HWND host = FindWindowW(L"RmxVST3Editor", nullptr);
     CHECK(host != nullptr);
     const HWND tabs = FindWindowExW(host, nullptr, L"RmxEditorTabs", nullptr);
     const HWND client = FindWindowExW(host, nullptr, L"RmxEditorClient", nullptr);
     const HWND child = FindWindowExW(client, nullptr, L"RmxEditorScaleFixture", nullptr);
     CHECK(tabs && client && child);
+    // 預設位置:主介面假想中線右側(左緣 >= 中線 + 12px 隨縮放)、垂直置中
+    // (插件 attach 撐到原生尺寸後重新對中,中心不偏離 UI 視窗中心)。
+    // 建窗即 TOPMOST(開啟當下 RoudaMix 必是前景)。兩者都必須在 pump 之前
+    // 檢查:pump 會派送真實前景 hook 事件(測試機前景是 console = 非自家 →
+    // 正確解除 TOPMOST)。
+    const auto owner_rect = bounds(ui_owner);
+    const auto host_rect = bounds(host);
+    CHECK(host_rect.left >= owner_rect.left + (owner_rect.right - owner_rect.left) / 2
+              + MulDiv(12, initial_percent, 100));
+    const LONG ui_cy = owner_rect.top + (owner_rect.bottom - owner_rect.top) / 2;
+    const LONG ed_cy = host_rect.top + (host_rect.bottom - host_rect.top) / 2;
+    CHECK((ed_cy > ui_cy ? ed_cy - ui_cy : ui_cy - ed_cy)
+              <= MulDiv(24, initial_percent, 100));
+    CHECK((GetWindowLongPtrW(host, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0);
+    pump();
+    // 受控前景的動態置頂(直接餵 hwnd 給 update_topmost,不依賴測試機真實
+    // 前景;hook 事件只在 pump 派送,不會插入這幾行同步呼叫):
+    if (HWND shell = GetShellWindow();
+        shell != nullptr && GetWindowThreadProcessId(shell, nullptr) != GetCurrentProcessId()) {
+        rmx::EditorHost::instance().update_topmost(shell);
+        CHECK((GetWindowLongPtrW(host, GWL_EXSTYLE) & WS_EX_TOPMOST) == 0);
+        rmx::EditorHost::instance().update_topmost(ui_owner);
+        CHECK((GetWindowLongPtrW(host, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0);
+        rmx::EditorHost::instance().update_topmost(host);
+        CHECK((GetWindowLongPtrW(host, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0);
+    }
     const auto child_initial = bounds(child);
     CHECK(child_initial.right - child_initial.left == (mode == 3 ? 360 : 300));
     CHECK(child_initial.bottom - child_initial.top == (mode == 3 ? 220 : 180));
@@ -148,6 +183,7 @@ void check_editor(const std::string& module, int mode, int initial_percent, HWND
     CHECK(GetGuiResources(GetCurrentProcess(), GR_GDIOBJECTS) <= objects + 3);
     ok("close_editor", {{"instanceId", plugin}});
     CHECK(!IsWindow(host));
+    DestroyWindow(ui_owner);
     ok("open_editor", {{"instanceId", plugin}});
     const HWND reopened = FindWindowW(L"RmxVST3Editor", nullptr);
     CHECK(reopened != nullptr);
