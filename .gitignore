@@ -23,3 +23,7 @@ node_modules/
 # pi agent session artifacts
 /.pi/
 /ui/.impeccable/
+
+# 本機代理設定與索引(不入 Git)
+/AGENTS.md
+/.codegraph/
