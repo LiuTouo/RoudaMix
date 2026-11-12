@@ -95,7 +95,7 @@
 }
 #app input[type="checkbox"] { accent-color: var(--active); }
 /* 浮層本體較面板亮；其內容與操作再向上取色，不從 DOM 深度推算。 */
-#app :is(dialog:not(.ctxdlg), .latency-drawer, .destination-popup, .ctx, .capsule, .gaintip) {
+#app :is(dialog:not(.ctxdlg), .latency-drawer, .destination-popup, .ctx, .capsule, .gaintip, .loudness-popup) {
   --surface: var(--flat-3);
   --section: var(--flat-3);
   --control: var(--flat-4);

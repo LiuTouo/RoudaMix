@@ -157,43 +157,55 @@
 </div>
 
 <style>
+  /* 浮動面板掛在 .audio-console 之外,自帶浮層語彙(DESIGN.md 浮層):
+     console-surface 底 + 1px hairline + 3px 圓角 + 無投影;token 由
+     flat-theme.css 浮層規則(.loudness-popup 列入浮層同名單)供給。 */
   .loudness-popup {
     position: fixed; inset: auto; margin: 0; padding: 16px; box-sizing: border-box;
     width: min(440px, calc(100vw - 16px));
     max-height: calc(100vh - 16px);
     overflow: auto;
-    /* 底色/框線/圓角/投影由 console.css 浮層規則統一 */
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--flat-radius);
+    box-shadow: none;
     color: var(--text);
-    font: 13px/1.5 var(--font-ui);
+    font: 12px/1.45 var(--font-ui);
   }
   .loudness-popup::backdrop { background: transparent; pointer-events: none; }
   header, footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  header { cursor: grab; user-select: none; touch-action: none; margin: 0 -16px; padding: 0 16px 8px;
+  header { cursor: grab; user-select: none; touch-action: none; margin: 0 -16px; padding: 0 16px 10px;
     border-bottom: 1px solid var(--border); }
   header.dragging { cursor: grabbing; }
-  h2 { margin: 0; font-size: 14px; min-width: 0; overflow-wrap: anywhere; }
-  h2 span { font-weight: 400; }
-  .status { margin: 12px 0; color: var(--text-dim); font-size: 12px; }
-  .loudness-values { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding: 4px 0 20px; }
-  .metric { display: flex; flex-direction: column; align-items: center; gap: 2px; }
-  .metric-label, .metric-window { color: var(--text-dim); font-size: 12px; }
-  .metric-value { font: 600 27px/1.4 var(--mono); font-variant-numeric: tabular-nums; }
-  dl { border-top: 1px solid var(--border); margin: 0; padding: 12px 0; }
+  /* 標題 = DESIGN Title:600/14px/+0.3px(全系統最大字級) */
+  h2 { margin: 0; font: 600 14px/1.45 var(--font-ui); letter-spacing: .3px; min-width: 0; overflow-wrap: anywhere; }
+  h2 span { font-weight: 400; letter-spacing: 0; }
+  .status { margin: 10px 0 12px; color: var(--text-dim); }
+  /* 三讀值欄以暗分割線分段(DESIGN:同群組次級分割),數值 mono + tabular-nums */
+  .loudness-values { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 4px 0 16px; }
+  .metric { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 2px 8px; }
+  .metric + .metric { border-left: 1px solid var(--divider); }
+  .metric-label, .metric-window { color: var(--text-dim); font-size: 11px; }
+  .metric-value { font: 600 14px/1.4 var(--mono); font-variant-numeric: tabular-nums; }
+  dl { border-top: 1px solid var(--border); margin: 0; padding: 10px 0; }
   dl > div { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; }
-  dt { color: var(--text-dim); }
-  dd { margin: 0; white-space: nowrap; font-variant-numeric: tabular-nums; font-weight: 600; }
-  dd span { font-weight: 400; }
-  .reference { border-top: 1px solid var(--border); padding: 12px 0; }
-  .reference h3 { display: flex; align-items: baseline; gap: 8px; margin: 0 0 8px; font-size: 12px; font-weight: 500; }
-  .reference h3 span, .reference-targets span { color: var(--text-dim); font-size: 12px; font-weight: 400; }
+  dt { color: var(--text-dim); font-size: 11px; }
+  dd { margin: 0; white-space: nowrap; font: 600 12px var(--mono); font-variant-numeric: tabular-nums; }
+  dd span { font: 400 11px var(--font-ui); color: var(--text-dim); }
+  .reference { border-top: 1px solid var(--border); padding: 10px 0 12px; }
+  .reference h3 { display: flex; align-items: baseline; gap: 8px; margin: 0 0 8px;
+    font-size: 11px; font-weight: 500; letter-spacing: .04em; }
+  .reference h3 span { font: 400 11px var(--mono); color: var(--text-dim); letter-spacing: 0; }
+  .reference-targets span { color: var(--text-dim); font-size: 11px; font-weight: 400; }
   .reference-targets { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
   .reference-targets > div { display: flex; flex-direction: column; gap: 2px; }
-  .reference strong { font-variant-numeric: tabular-nums; font-weight: 500; }
-  .reference-peak { margin: 8px 0 0; font-size: 12px; }
+  .reference strong { font: 500 12px var(--mono); font-variant-numeric: tabular-nums; }
+  .reference-peak { margin: 8px 0 0; font-size: 11px; }
+  .reference-peak strong { font-weight: 500; }
   .reference .note { margin-top: 4px; }
-  footer { border-top: 1px solid var(--border); padding-top: 12px; color: var(--text-dim); font-size: 12px; }
-  footer button { min-height: 36px; }
+  footer { border-top: 1px solid var(--border); padding-top: 10px; color: var(--text-dim); font-size: 11px; }
+  footer button { min-height: 28px; }
   time { font-variant-numeric: tabular-nums; }
-  .note { margin: 10px 0 0; color: var(--text-dim); font-size: 12px; }
+  .note { margin: 10px 0 0; color: var(--text-dim); font-size: 11px; }
   .error { color: var(--err); overflow-wrap: anywhere; }
 </style>
