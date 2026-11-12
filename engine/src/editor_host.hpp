@@ -46,6 +46,10 @@ public:
     void set_owner(HWND owner) noexcept;
     // 以給定前景視窗重算動態置頂(前景 hook 與測試共用的單一入口)
     void update_topmost(HWND fg) noexcept;
+    // UI 主視窗 LOCATIONCHANGE(拖曳/縮放/最小化;hwnd=主視窗、idObject=
+    // OBJID_WINDOW 才有效)→ 編輯器同量平移跟隨,保留相對位置
+    // (hook 與測試共用的單一入口)
+    void ui_moved(HWND hwnd, LONG id_object) noexcept;
     // open_editor 命令:開/切換到該 plugin(已顯示 = 帶前景);err 帶原因
     bool open(std::uint32_t instance_id, std::string& err);
     // close_editor 命令:active = detach + 自動切下一個開著的,沒有則關窗;

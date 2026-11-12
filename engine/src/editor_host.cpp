@@ -11,8 +11,10 @@
 // DestroyWindow 的 sent message 同步重入,host 自身絕不鎖(自死鎖)。
 // 視窗拓撲:host 是**無 owner 的獨立 top-level 視窗**。置頂是動態的:只在
 // RoudaMix(自家 process 或 UI process)為前景時掛 WS_EX_TOPMOST —— 切到別
-// 的程式就解除,編輯器不蓋住其他應用程式。狀態源 = EVENT_SYSTEM_FOREGROUND
-// hook(main thread message loop 收)+ WM_ACTIVATE/activate 時的主動重算。
+// 的程式就解除並沉到非置頂帶最底(HWND_BOTTOM),任何程式的視窗都蓋得住它
+// = 編輯器只在 RoudaMix 裡浮在上層。狀態源 = EVENT_SYSTEM_FOREGROUND
+// hook(main thread message loop 收)+ WM_ACTIVATE 同步重算(失前景立即降,
+// 不等 hook 派送)。
 // 不可用跨 process 的 UI 主視窗當 owner:跨進程 ownership 會把兩邊 thread 的
 // input queue 接在一起,焦點/前景狀態共用,關閉 host 時的 close 手勢可能落在
 // 主視窗上(實害:彈出視窗關閉連帶主視窗被關)。UI 主視窗 HWND 仍會經
@@ -60,6 +62,9 @@ constexpr UINT kEditorResizeMessage = WM_APP + 10;
 // 只換算宿主 chrome；不更動 process/thread DPI awareness 或插件座標。
 int ui_scale_percent = 100;
 int chrome_px(int value) noexcept { return MulDiv(value, ui_scale_percent, 100); }
+
+// ui_left/ui_top 未同步的哨兵（LONG_MIN 不可能是真實視窗座標）
+constexpr LONG kNoUiPos = LONG_MIN;
 
 constexpr wchar_t kHostClassName[] = L"RmxVST3Editor";   // 沿用:m3b probe 以 class 數窗
 constexpr wchar_t kTabsClassName[] = L"RmxEditorTabs";
@@ -155,6 +160,25 @@ void ensure_foreground_hook() noexcept {
     static const HWINEVENTHOOK hook = SetWinEventHook(
         EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr,
         &foreground_hook_proc, 0, 0, WINEVENT_OUTOFCONTEXT);
+    (void)hook;
+}
+
+// EVENT_OBJECT_LOCATIONCHANGE（限 UI process）：主視窗被拖曳/縮放/最小化 →
+// 編輯器同量平移跟隨（保留相對位置；響度面板是主視窗內的 WebView 元素自然
+// 會跟，編輯器是跨 process 獨立視窗必須自己做）。限 idProcess=ui_pid 濾掉
+// 其他程式的高頻事件；callback 再以 hwnd==ui_wnd && OBJID_WINDOW 濾掉
+// WebView 內容物件。OUTOFCONTEXT = 在 engine main thread 派送，與前景 hook
+// 同執行緒模型。安裝一次、進程生命週期不卸載（UI 重啟 → engine 被 job
+// object 帶走重 spawn，pid 不會變）。測試另以 ui_moved 同步入口直接驗。
+void CALLBACK ui_move_hook_proc(HWINEVENTHOOK, DWORD, HWND hwnd, LONG id_object,
+                                LONG, DWORD, DWORD) noexcept {
+    EditorHost::instance().ui_moved(hwnd, id_object);
+}
+
+void ensure_ui_move_hook(DWORD pid) noexcept {
+    static const HWINEVENTHOOK hook = SetWinEventHook(
+        EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_LOCATIONCHANGE, nullptr,
+        &ui_move_hook_proc, pid, 0, WINEVENT_OUTOFCONTEXT);
     (void)hook;
 }
 
@@ -352,11 +376,14 @@ struct EditorHost::Impl {
     int last_client_w = -1, last_client_h = -1; // Windows 可能在 ShowWindow 重送同尺寸 WM_SIZE。
     int fit_w = 0, fit_h = 0;    // active 插件 attach 回報的原生尺寸(固定版面 = 視窗貼合尺寸)
     bool resizing_host = false; // 宿主 chrome/插件請求改外框，不向插件回送容器尺寸。
-    // 動態置頂狀態源:UI 主視窗 HWND(僅存 pid 比對用,不當 owner)與目前是否
-    // 掛著 WS_EX_TOPMOST(建窗時帶 TOPMOST,初始 true)。
+    // 動態置頂狀態源：UI 主視窗 HWND（僅存 pid 比對用，不當 owner）與目前是否
+    // 掛著 WS_EX_TOPMOST（建窗時帶 TOPMOST，初始 true）。
     HWND ui_wnd = nullptr;
     DWORD ui_pid = 0;
     bool topmost = true;
+    // 跟隨平移基準：上次看到的 UI 主視窗左上角。delta 累加 = 中間事件掉了也
+    // 會收斂；使用者拖過的編輯器位置以「相對 UI 左上角 offset」形式完整保留。
+    LONG ui_left = kNoUiPos, ui_top = kNoUiPos;
 
     ~Impl() {
         if (wnd != nullptr) DestroyWindow(wnd);  // WM_DESTROY 內 detach + 清欄位
@@ -566,11 +593,14 @@ struct EditorHost::Impl {
     void apply_topmost(bool want) noexcept {
         if (wnd == nullptr || want == topmost) return;
         // 同 flag 重複 SetWindowPos 會攪動 z-order;以快取 flag 擋掉重複套用。
-        // 解除置頂不能只用 HWND_NOTOPMOST:它把視窗放到「非置頂帶最頂」= 剛切
-        // 過去的前景程式立刻被編輯器蓋住,視覺上等同還在置頂(「還是置頂」症的
-        // 來源)。改插到目前前景視窗的正下方,讓前景程式直接蓋住它。
-        const HWND fg = want ? HWND_TOPMOST : GetForegroundWindow();
-        SetWindowPos(wnd, fg != nullptr && fg != wnd ? fg : HWND_NOTOPMOST,
+        // 解除置頂要沉到「非置頂帶最底」:HWND_BOTTOM 順帶剝掉 WS_EX_TOPMOST。
+        // 不能只插到目前前景視窗正下方 —— z-order 是全系統一條,插在前景下面
+        // 只輸給那一個視窗,其他所有程式的視窗都還在編輯器之下 = Alt+Tab 切走
+        // 後編輯器照樣浮在別人上面(「還是置頂」症;前景不與編輯器重疊時更是
+        // 完全沒變)。也不能用 HWND_NOTOPMOST:它放到「非置頂帶最頂」= 剛切
+        // 過去的程式立刻被蓋住,同一症狀。沉底後任何程式都蓋得住;切回 RoudaMix
+        // 為前景時由 hook/WM_ACTIVATE 重新掛回 TOPMOST。
+        SetWindowPos(wnd, want ? HWND_TOPMOST : HWND_BOTTOM,
                      0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         std::fprintf(stderr, "[engine] editor topmost -> %d (fg pid=%lu, ui pid=%lu)\n",
                      static_cast<int>(want),
@@ -615,6 +645,58 @@ struct EditorHost::Impl {
                      SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
         std::fprintf(stderr, "[engine] editor default pos x=%ld y=%ld ui=[%ld %ld %ld %ld]\n",
                      x, y, ur.left, ur.top, ur.right, ur.bottom);
+    }
+
+    // UI 主視窗被拖曳/縮放/最小化 → 編輯器同量平移（保留相對位置，響度面板
+    // 同語意：它們都「屬於」主視窗）。縮小化（rect 變 -32000）= 編輯器跟著
+    // 移出螢幕，還原時帶回 —— 與 owned 視窗隨主窗最小化同語意。
+    void on_ui_moved(HWND hwnd, LONG id_object) noexcept {
+        if (hwnd != ui_wnd || id_object != OBJID_WINDOW) return;
+        RECT ur{};
+        if (!GetWindowRect(ui_wnd, &ur)) return;
+        if (ui_left == kNoUiPos) {
+            ui_left = ur.left;
+            ui_top = ur.top;
+            return;  // 首個事件只建立基準，不動編輯器
+        }
+        const LONG dx = ur.left - ui_left;
+        const LONG dy = ur.top - ui_top;
+        ui_left = ur.left;
+        ui_top = ur.top;
+        if ((dx == 0 && dy == 0) || wnd == nullptr) return;
+        RECT wr{};
+        if (!GetWindowRect(wnd, &wr)) return;
+        LONG x = wr.left + dx;
+        LONG y = wr.top + dy;
+        // 夾限只在「編輯器整個落到虛擬桌面之外」才介入。不可夾在「編輯器所在
+        // 螢幕」工作區內:主視窗跨螢幕時,編輯器必須暫時越過所在螢幕邊界才
+        // 走得過去,夾在舊螢幕內 = 被釘在邊緣永遠過不去(「跨螢幕留在原地」
+        // 之因)。全程在虛擬桌面內(含局部越界、跨到別螢幕)一律照 delta 走;
+        // 極端 offset 把整個編輯器推出桌面外時,拉回 UI 主視窗所在螢幕的工作
+        // 區(與 place_at_default 同基準),保證找得回來。主視窗縮小化中
+        // (rect -32000)不拉回:跟著出屏、還原時 delta 帶回原相對位置,
+        // owned 視窗語意。
+        const LONG w = wr.right - wr.left, h = wr.bottom - wr.top;
+        RECT vr{GetSystemMetrics(SM_XVIRTUALSCREEN), GetSystemMetrics(SM_YVIRTUALSCREEN),
+                0, 0};
+        vr.right = vr.left + GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        vr.bottom = vr.top + GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        const RECT moved{x, y, x + w, y + h};
+        RECT inter{};
+        IntersectRect(&inter, &moved, &vr);
+        if (IsRectEmpty(&inter) && !IsIconic(ui_wnd)) {
+            const HMONITOR monitor = MonitorFromWindow(ui_wnd, MONITOR_DEFAULTTONEAREST);
+            MONITORINFO mi{};
+            mi.cbSize = sizeof(mi);
+            if (monitor != nullptr && GetMonitorInfoW(monitor, &mi)) {
+                const RECT& wa = mi.rcWork;
+                x = std::clamp<LONG>(x, wa.left, (std::max)(wa.left, wa.right - w));
+                y = std::clamp<LONG>(y, wa.top, (std::max)(wa.top, wa.bottom - h));
+            }
+        }
+        if (x != wr.left || y != wr.top)
+            SetWindowPos(wnd, nullptr, x, y, 0, 0,
+                         SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
     }
 
     // 沒窗就建(含子視窗)。回傳「本次新建」(呼叫端在 attach 失敗時要拆)
@@ -798,6 +880,10 @@ void EditorHost::update_topmost(HWND fg) noexcept {
     impl_->apply_topmost(impl_->foreground_is_ours(fg));
 }
 
+void EditorHost::ui_moved(HWND hwnd, LONG id_object) noexcept {
+    impl_->on_ui_moved(hwnd, id_object);
+}
+
 void EditorHost::set_owner(HWND owner) noexcept {
     // 不再把 UI 主視窗掛成 owner(跨進程 ownership 會接合 input queue,見上)。
     // HWND 只拿來做兩件事:1) 前景判定 —— 「只在 RoudaMix 裡面置頂」的動態
@@ -812,6 +898,15 @@ void EditorHost::set_owner(HWND owner) noexcept {
     DWORD pid = 0;
     GetWindowThreadProcessId(owner, &pid);
     impl_->ui_pid = pid;
+    ensure_ui_move_hook(pid);
+    // 立即建立跟隨平移基準（之後 LOCATIONCHANGE 以 delta 累加平移編輯器）
+    RECT ur{};
+    if (GetWindowRect(owner, &ur)) {
+        impl_->ui_left = ur.left;
+        impl_->ui_top = ur.top;
+    } else {
+        impl_->ui_left = impl_->ui_top = kNoUiPos;
+    }
     std::fprintf(stderr, "[engine] editor owner hwnd=%p pid=%lu\n",
                  static_cast<void*>(owner), static_cast<unsigned long>(pid));
     impl_->apply_topmost(impl_->foreground_is_ours(GetForegroundWindow()));
@@ -1000,8 +1095,12 @@ LRESULT CALLBACK host_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
     case WM_ACTIVATE:
         if (self != nullptr) {
             self->active = LOWORD(wp) != WA_INACTIVE;
-            // 被點前景 = RoudaMix 前景 → 重新掛回 TOPMOST(hook 沒收到/慢半拍時的即時修正)
+            // WM_ACTIVATE 是同步 send,比 OUTOFCONTEXT hook 早到:變前景 = 自己
+            // 人(編輯器本身)→ 掛回 TOPMOST;失前景 → 立即以當下前景重算,
+            // 切走(Alt+Tab/點別的程式)即刻沉底,不等 hook 派送;若此刻前景
+            // 仍是自己人,冪等不動
             if (self->active) self->apply_topmost(true);
+            else self->apply_topmost(self->foreground_is_ours(GetForegroundWindow()));
             RECT rc{};
             GetClientRect(h, &rc);
             const RECT cap{0, 0, rc.right, chrome_px(kCaptionH)};

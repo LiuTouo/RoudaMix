@@ -109,6 +109,42 @@ void check_editor(const std::string& module, int mode, int initial_percent, HWND
         rmx::EditorHost::instance().update_topmost(host);
         CHECK((GetWindowLongPtrW(host, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0);
     }
+    // 跟隨:UI 主視窗移動(拖到別處/別螢幕)→ 編輯器同量平移保留相對位置;
+    // 落點在虛擬桌面內(含跨螢幕/局部越界)= 照 delta 走不夾限(夾在所在
+    // 螢幕會把跨螢幕的編輯器釘在舊螢幕邊緣),整個出桌面才拉回 UI 所在螢幕
+    // 工作區。期望值與 on_ui_moved 同構鏡像,任何桌面拓撲下都確定性。同步
+    // 入口後,pump 派送的真實 hook 事件 delta 已歸零,冪等不會二次平移。
+    LONG prev_ui_left = 200, prev_ui_top = 100;
+    const auto move_ui_and_expect = [&](LONG new_left, LONG new_top) {
+        const auto hb0 = bounds(host);  // 實作是鏈式:當前位置 + 本次 delta
+        MoveWindow(ui_owner, new_left, new_top, 800, 600, FALSE);
+        rmx::EditorHost::instance().ui_moved(ui_owner, OBJID_WINDOW);
+        const LONG w = hb0.right - hb0.left;
+        const LONG h = hb0.bottom - hb0.top;
+        LONG ex = hb0.left + (new_left - prev_ui_left);
+        LONG ey = hb0.top + (new_top - prev_ui_top);
+        RECT vr{GetSystemMetrics(SM_XVIRTUALSCREEN), GetSystemMetrics(SM_YVIRTUALSCREEN),
+                0, 0};
+        vr.right = vr.left + GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        vr.bottom = vr.top + GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        RECT moved{ex, ey, ex + w, ey + h}, inter{};
+        IntersectRect(&inter, &moved, &vr);
+        if (IsRectEmpty(&inter)) {
+            MONITORINFO mi{};
+            mi.cbSize = sizeof(mi);
+            CHECK(GetMonitorInfoW(MonitorFromWindow(ui_owner, MONITOR_DEFAULTTONEAREST), &mi));
+            const RECT& wa = mi.rcWork;
+            ex = std::clamp<LONG>(ex, wa.left, (std::max)(wa.left, wa.right - w));
+            ey = std::clamp<LONG>(ey, wa.top, (std::max)(wa.top, wa.bottom - h));
+        }
+        const auto hb = bounds(host);
+        CHECK(hb.left == ex && hb.top == ey);
+        prev_ui_left = new_left;
+        prev_ui_top = new_top;
+    };
+    move_ui_and_expect(337, 57);         // 一般拖曳(含跨螢幕落點)= 同量平移
+    move_ui_and_expect(337 - 2400, 57);  // 極端 offset:整個出桌面 → 拉回 UI 螢幕
+
     const auto child_initial = bounds(child);
     CHECK(child_initial.right - child_initial.left == (mode == 3 ? 360 : 300));
     CHECK(child_initial.bottom - child_initial.top == (mode == 3 ? 220 : 180));
