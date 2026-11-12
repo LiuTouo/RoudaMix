@@ -478,6 +478,9 @@ int main() {
             if (t.name == "O") o10 = &t;
         }
         CHECK(a10 != nullptr && f10n != nullptr && o10 != nullptr);
+        // 純黑(0)是合法自訂色:存檔的 color 0 載入後不得被調色盤覆寫(重開變土黃 bug)
+        CHECK(a10->color == 0);
+        CHECK(f10n->color == 0);
         CHECK(a10->dests.size() == 1 && a10->dests[0] == o10->track_id);
         CHECK(f10n->dests.size() == 1 && f10n->dests[0] == o10->track_id);
     }

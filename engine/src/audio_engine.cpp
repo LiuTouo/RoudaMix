@@ -1403,8 +1403,8 @@ std::optional<Failure> AudioEngine::track_add(TrackKind kind, const std::string&
         else ++largest[digit - 1];
         t.name = prefix + largest;
     }
-    if (color == 0) {
-        // 調色盤輪替:8 色循環,不用使用者挑
+    if (color == kTrackColorUnset) {
+        // 調色盤輪替:8 色循環,不用使用者挑(僅未指定;明確傳 0 = 純黑合法色)
         static constexpr std::uint32_t kPalette[] = {0x4da3ff, 0x3ddc84, 0xffb454, 0xff5c5c,
                                                      0xb48cff, 0x4dd0e1, 0xf06292, 0xaed581};
         t.color = kPalette[(t.track_id - 1) % 8];

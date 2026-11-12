@@ -123,6 +123,9 @@ constexpr std::uint32_t kNoStrip = 0xFFFFFFFFu;  // 超出 telemetry 預算 = �
 // 一條 2s PDC delay,無上限 = 極小檔案放大成 GB 級配置。合法場景遠低於此
 // (telemetry strip 也只有 64);超限 = track_add 回 kBadCommand、session 載入
 // 多餘軌/plugin/params 略過。
+// color sentinel:0xRRGGBB 之外 = 未指定 → 調色盤輪替;純黑(0x000000)是合法自訂色
+constexpr std::uint32_t kTrackColorUnset = 0x1000000;
+
 constexpr std::size_t kMaxTracks = 128;    // 軌數(含系統輸出)
 constexpr std::size_t kMaxChain = 256;     // 每軌 plugin 數(= kPluginLoadEntries)
 constexpr std::size_t kMaxParams = 4096;   // 每 plugin host 參數表筆數

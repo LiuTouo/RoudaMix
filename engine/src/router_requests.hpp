@@ -37,7 +37,7 @@ struct Start {
 struct TrackAdd {
     TrackKind kind{TrackKind::kAudio};
     std::string name;
-    std::uint32_t color{};
+    std::uint32_t color{kTrackColorUnset};  // 未帶 color = 調色盤輪替
 
     explicit TrackAdd(const nlohmann::json& payload) {
         const auto value = payload.at("kind").get<std::string>();

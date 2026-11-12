@@ -366,7 +366,7 @@ std::optional<Failure> load(AudioEngine& engine, const std::filesystem::path& fi
             std::uint32_t color =
                 st.contains("color") && st["color"].is_number_unsigned()
                     ? st["color"].get<std::uint32_t>()
-                    : 0u;
+                    : kTrackColorUnset;  // 缺 color = 調色盤;存檔的 0(純黑)原樣保留
             std::uint32_t new_id = 0;
             if (engine.track_add(kind, name, color, new_id)) continue;
             if (st.contains("trackId") && st["trackId"].is_number_unsigned()) {
