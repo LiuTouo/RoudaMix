@@ -13,8 +13,9 @@
 // RoudaMix(自家 process 或 UI process)為前景時掛 WS_EX_TOPMOST —— 切到別
 // 的程式就解除並沉到非置頂帶最底(HWND_BOTTOM),任何程式的視窗都蓋得住它
 // = 編輯器只在 RoudaMix 裡浮在上層。狀態源 = EVENT_SYSTEM_FOREGROUND
-// hook(main thread message loop 收)+ WM_ACTIVATE 同步重算(失前景立即降,
-// 不等 hook 派送)。
+// hook(main thread message loop 收)+ WM_ACTIVATE 同步重算(失前景立即降，
+// 不等 hook 派送)。例外：caption 左側釘選鈕——釘選中永遠 WS_EX_TOPMOST，
+// 不隨前景切換解除(跨程式置頂，使用者明確要求)。
 // 不可用跨 process 的 UI 主視窗當 owner:跨進程 ownership 會把兩邊 thread 的
 // input queue 接在一起,焦點/前景狀態共用,關閉 host 時的 close 手勢可能落在
 // 主視窗上(實害:彈出視窗關閉連帶主視窗被關)。UI 主視窗 HWND 仍會經
@@ -370,6 +371,7 @@ struct EditorHost::Impl {
     bool hover_tracked = false;
     bool cap_hover = false;      // 關閉鈕 hover(自繪 caption)
     bool cap_hover_tracked = false;
+    bool pin_hover = false;      // 釘選鈕 hover(自繪 caption)
     bool active = false;         // 視窗是否前景(標題文字亮度)
     std::wstring title;          // 自繪 caption 文字快取
     int last_view_w = -1, last_view_h = -1;  // 插件的原生尺寸，與 chrome 最小寬度分開。
@@ -381,6 +383,8 @@ struct EditorHost::Impl {
     HWND ui_wnd = nullptr;
     DWORD ui_pid = 0;
     bool topmost = true;
+    // 使用者釘選(跨程式永遠置頂)：覆寫「只在 RoudaMix 裡置頂」的動態邏輯
+    bool pinned = false;
     // 跟隨平移基準：上次看到的 UI 主視窗左上角。delta 累加 = 中間事件掉了也
     // 會收斂；使用者拖過的編輯器位置以「相對 UI 左上角 offset」形式完整保留。
     LONG ui_left = kNoUiPos, ui_top = kNoUiPos;
@@ -592,6 +596,7 @@ struct EditorHost::Impl {
 
     void apply_topmost(bool want) noexcept {
         if (wnd == nullptr || want == topmost) return;
+        if (!want && pinned) return;  // 釘選中：前景切到別的程式也不解除
         // 同 flag 重複 SetWindowPos 會攪動 z-order;以快取 flag 擋掉重複套用。
         // 解除置頂要沉到「非置頂帶最底」:HWND_BOTTOM 順帶剝掉 WS_EX_TOPMOST。
         // 不能只插到目前前景視窗正下方 —— z-order 是全系統一條,插在前景下面
@@ -977,6 +982,51 @@ namespace {
 // 自繪 caption 的關閉鈕：24x?;方塊內 × 與帶列控制同語彙（hover 淡底亮字）
 RECT close_btn_rect(int cw) noexcept { return {cw - chrome_px(kCaptionH), 0, cw, chrome_px(kCaptionH)}; }
 
+// 釘選鈕：caption 最左同尺寸方塊；釘選 = 視窗跨程式永遠置頂(不隨前景切換解除)
+RECT pin_btn_rect() noexcept { return {0, 0, chrome_px(kCaptionH), chrome_px(kCaptionH)}; }
+
+void draw_pin_glyph(HDC dc, bool pinned, bool hover) noexcept {
+    const RECT r = pin_btn_rect();
+    if (hover) {
+        const HBRUSH bg = CreateSolidBrush(kTabActiveBg);
+        FillRect(dc, &r, bg);
+        DeleteObject(bg);
+    }
+    ensure_gdiplus();
+    Gdiplus::Graphics g(dc);
+    g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+    // 與主程式響度面板同一顆圖釘(lucide pin:頭身圓角矩形 + 外擴底托 + 針桿),
+    // 兩邊視覺統一;啟用狀態只以色分辨 —— 釘選 = 淡紫 #C4B5FD,未釘 = 暗灰。
+    const Gdiplus::Color color = pinned ? Gdiplus::Color(255, 0xc4, 0xb5, 0xfd)
+                                 : hover ? Gdiplus::Color(255, 0xd8, 0xdc, 0xe2)
+                                         : Gdiplus::Color(255, 0x8a, 0x91, 0x9b);
+    const float cx = (r.left + r.right) / 2.0f;
+    const float cy = (r.top + r.bottom) / 2.0f;
+    const float k = static_cast<float>(r.right - r.left) / 24.0f * 0.8f;  // 24 格座標系
+    g.TranslateTransform(cx, cy);
+    g.ScaleTransform(k, k);
+    g.TranslateTransform(-12.0f, -12.0f);  // 原點移到 24 格中心
+    Gdiplus::Pen pen(color, 1.7f);  // 線寬在縮放座標系 = 等比縮放
+    pen.SetStartCap(Gdiplus::LineCapRound);
+    pen.SetEndCap(Gdiplus::LineCapRound);
+    pen.SetLineJoin(Gdiplus::LineJoinRound);
+    // 針桿 + 底托外擴 + 橫桿 + 頭身圓角矩形 + 頂部掛環
+    g.DrawLine(&pen, 12.0f, 17.0f, 12.0f, 22.0f);
+    g.DrawLine(&pen, 9.0f, 12.0f, 5.6f, 14.9f);
+    g.DrawLine(&pen, 15.0f, 12.0f, 18.4f, 14.9f);
+    g.DrawLine(&pen, 5.6f, 16.0f, 18.4f, 16.0f);
+    Gdiplus::GraphicsPath body;
+    body.AddArc(9.0f, 6.0f, 2.6f, 2.6f, 180.0f, 90.0f);   // 左上角
+    body.AddArc(12.4f, 6.0f, 2.6f, 2.6f, 270.0f, 90.0f);  // 右上角
+    body.AddArc(12.4f, 9.4f, 2.6f, 2.6f, 0.0f, 90.0f);    // 右下角
+    body.AddArc(9.0f, 9.4f, 2.6f, 2.6f, 90.0f, 90.0f);    // 左下角
+    body.CloseFigure();
+    g.DrawPath(&pen, &body);
+    g.DrawArc(&pen, 10.0f, 1.4f, 4.0f, 4.0f, 180.0f, 180.0f);  // 掛環上半圓
+    g.DrawLine(&pen, 10.0f, 3.4f, 10.0f, 6.0f);
+    g.DrawLine(&pen, 14.0f, 3.4f, 14.0f, 6.0f);
+}
+
 void draw_close_glyph(HDC dc, int cw, bool hover, bool pressed) noexcept {
     const RECT r = close_btn_rect(cw);
     if (hover) {
@@ -1041,6 +1091,8 @@ LRESULT CALLBACK host_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
                 cr = close_btn_rect(rc.right);
                 const POINT cpt{x, y};  // client 座標（pt 是螢幕座標，不能直接比）
                 if (PtInRect(&cr, cpt)) return HTCLIENT;
+                const RECT pinr = pin_btn_rect();
+                if (PtInRect(&pinr, cpt)) return HTCLIENT;
                 return HTCAPTION;
             }
         }
@@ -1059,6 +1111,7 @@ LRESULT CALLBACK host_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
             self->active_id = 0;
             self->preset_name.clear();
             self->topmost = false;  // 視窗已滅,重置快取;重開時建窗會重設 true
+            self->pinned = false;  // 釘選隨窗滅,重開預設未釘選
             self->opened_ids.clear();
         }
         return 0;
@@ -1077,17 +1130,19 @@ LRESULT CALLBACK host_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
         // caption/帶列 分隔線（同帶1/帶2 分隔線語彙）
         RECT div{0, caption_h - 1, cw, caption_h};
         FillRect(dc, &div, hairline_brush());
-        // 標題：前景亮、失焦暗（WM_ACTIVATE 重繪一次，無動畫）
+        // 標題：前景亮、失焦暗（WM_ACTIVATE 重繪一次，無動畫）。左側讓位給釘選鈕
         if (self != nullptr && !self->title.empty()) {
             SetBkMode(dc, TRANSPARENT);
             SelectObject(dc, strip_font());
-            RECT tr{chrome_px(10), 0, cw - caption_h - chrome_px(8), caption_h - 1};
+            RECT tr{chrome_px(kCaptionH) + chrome_px(8), 0, cw - caption_h - chrome_px(8), caption_h - 1};
             SetTextColor(dc, self->active ? kTextActive : kTextIdle);
             DrawTextW(dc, self->title.c_str(), -1, &tr,
                       DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         }
-        if (self != nullptr)
+        if (self != nullptr) {
+            draw_pin_glyph(dc, self->pinned, self->pin_hover);
             draw_close_glyph(dc, cw, self->cap_hover, self->cap_hover);
+        }
         RestoreDC(dc, saved_dc);
         EndPaint(h, &ps);
         return 0;
@@ -1120,8 +1175,11 @@ LRESULT CALLBACK host_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
         GetClientRect(h, &rc);
         cr = close_btn_rect(rc.right);
         const bool over = PtInRect(&cr, pt) != FALSE;
-        if (over != self->cap_hover) {
+        const RECT pinr = pin_btn_rect();
+        const bool over_pin = PtInRect(&pinr, pt) != FALSE;
+        if (over != self->cap_hover || over_pin != self->pin_hover) {
             self->cap_hover = over;
+            self->pin_hover = over_pin;
             RECT rc2{};
             GetClientRect(h, &rc2);
             const RECT cap{0, 0, rc2.right, chrome_px(kCaptionH)};
@@ -1131,8 +1189,9 @@ LRESULT CALLBACK host_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
         return 0;
     }
     case WM_MOUSELEAVE:
-        if (self != nullptr && self->cap_hover) {
+        if (self != nullptr && (self->cap_hover || self->pin_hover)) {
             self->cap_hover = false;
+            self->pin_hover = false;
             RECT rc{};
             GetClientRect(h, &rc);
             const RECT cap{0, 0, rc.right, chrome_px(kCaptionH)};
@@ -1149,6 +1208,17 @@ LRESULT CALLBACK host_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
             cr = close_btn_rect(rc.right);
             if (pt.y < chrome_px(kCaptionH) && PtInRect(&cr, pt)) {
                 PostMessageW(h, WM_CLOSE, 0, 0);
+                return 0;
+            }
+            const RECT pinr = pin_btn_rect();
+            if (pt.y < chrome_px(kCaptionH) && PtInRect(&pinr, pt)) {
+                // 釘選切換：開 = 立即掛 TOPMOST(之後前景 hook 攔不掉)；
+                // 關 = 回動態模式,以當下前景立即重算(在別的程式上就沉底)
+                self->pinned = !self->pinned;
+                if (self->pinned) self->apply_topmost(true);
+                else self->apply_topmost(self->foreground_is_ours(GetForegroundWindow()));
+                const RECT cap{0, 0, rc.right, chrome_px(kCaptionH)};
+                InvalidateRect(h, &cap, FALSE);
                 return 0;
             }
         }

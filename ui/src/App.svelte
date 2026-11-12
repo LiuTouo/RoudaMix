@@ -10,8 +10,9 @@
   } from "@tauri-apps/plugin-autostart";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
+  import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+  import { emitTo, listen } from "@tauri-apps/api/event";
   import TrackStrip from "./lib/TrackStrip.svelte";
-  import LoudnessPopover from "./lib/LoudnessPopover.svelte";
   import { LoudnessController, emptyLoudnessView } from "./lib/loudness";
   import UpdatePanel from "./lib/UpdatePanel.svelte";
   import { resetPluginTransfer } from "./lib/pluginTransfer";
@@ -114,18 +115,64 @@
   function openLoudness(trackId: number, trigger: HTMLButtonElement) {
     if (!loudnessEnabled) return;
     if (loudnessTarget?.trackId === trackId) {
-      document.getElementById("loudness-analysis")?.focus({ preventScroll: true });
+      void WebviewWindow.getByLabel("loudness").then((w) => w?.setFocus().catch(() => {})).catch(() => {});
       return;
     }
     loudnessTarget = { trackId, trigger };
+    void ensureLoudnessWindow();
   }
   function closeLoudness(restoreFocus = true) {
     const trigger = loudnessTarget?.trigger;
     loudnessTarget = null;
+    loudnessPanelReady = false;
     void loudnessController.close();
+    void WebviewWindow.getByLabel("loudness").then((w) => w?.close().catch(() => {})).catch(() => {});
     if (restoreFocus && trigger?.isConnected) trigger.focus({ preventScroll: true });
   }
-  onMount(() => () => { void loudnessController.close(); });
+  // 響度分析 = 獨立 OS 視窗(owner = 主視窗):未釘選 = 僅浮在 RoudaMix 之上(舊
+  // popover 行為),釘選 = 該視窗自身 always-on-top 跨程式置頂,不連帶主視窗。
+  // 預設位置沿用舊 popover 語意:主介面中線左側(與 VST 編輯器視窗右側對稱)。
+  let loudnessPanelReady = false;
+  async function ensureLoudnessWindow() {
+    if (await WebviewWindow.getByLabel("loudness")) return;
+    const main = getCurrentWindow();
+    const [pos, size, scale] = await Promise.all([main.outerPosition(), main.innerSize(), main.scaleFactor()]);
+    // x/y/width 選項是 logical px;outerPosition/innerSize 是 physical → 先在 physical
+    // 域算好，再除以 scale 換回（125% 顯示下直接丟 physical 會開到右下遠處）。
+    const w = 440, h = 580;
+    const xPhys = Math.max(pos.x + 8, Math.round(pos.x + size.width / 2 - w * scale - 12 * scale));
+    const yPhys = Math.max(pos.y + 8, Math.round(pos.y + (size.height - h * scale) / 2));
+    const win = new WebviewWindow("loudness", {
+      url: "/?window=loudness",
+      title: "RoudaMix 響度分析",
+      width: w,
+      height: h,
+      minWidth: 360,
+      minHeight: 320,
+      x: Math.round(xPhys / scale),
+      y: Math.round(yPhys / scale),
+      decorations: false,
+      skipTaskbar: true,
+      shadow: true,
+      resizable: true,
+      parent: main,
+    });
+    win.once("tauri://error", (e) => addNotice("error", `開啟響度分析視窗失敗:${e.payload}`));
+    // 使用者關窗(X/Esc/Alt+F4)→ 走同一條 closeLoudness 清理(controller + 狀態)
+    void win.onCloseRequested(() => closeLoudness(false)).then((u) => sub(u));
+  }
+  // 面板事件:ready = 面板掛好補推現況;reset = 面板重置鈕回投
+  onMount(() => {
+    void listen("loudness-panel:ready", () => {
+      loudnessPanelReady = true;
+      pushLoudnessPanel();
+    }).then((u) => sub(u));
+    void listen("loudness-panel:reset", () => loudnessController.reset()).then((u) => sub(u));
+  });
+  onMount(() => () => {
+    void loudnessController.close();
+    void WebviewWindow.getByLabel("loudness").then((w) => w?.close().catch(() => {})).catch(() => {});
+  });
   let latencyDrawerOpen = $state(false);
   let meters = $state<MetersFrame | null>(null);
   let devices = $state<DeviceInfo[]>([]);
@@ -453,10 +500,22 @@
 
   const tracks = $derived<Track[]>(status?.tracks ?? []);
   const loudnessTrack = $derived(tracks.find((track) => track.trackId === loudnessTarget?.trackId));
+  // 獨立視窗的即時投影:view/track/running 任一變化就推給 loudness 視窗
+  function pushLoudnessPanel() {
+    const track = loudnessTrack;
+    if (!loudnessTarget || !track || !loudnessPanelReady) return;
+    void emitTo("loudness", "loudness-panel:view", {
+      view: loudnessView,
+      trackName: track.name,
+      trackKind: track.kind,
+      running,
+    });
+  }
   $effect(() => {
     if (!loudnessTarget) return;
     if (!loudnessTrack || !conn.connected || !loudnessEnabled) { closeLoudness(false); return; }
     loudnessController.configure(loudnessTarget.trackId, status?.running ?? false, status?.sampleRate ?? 0, conn.epoch);
+    pushLoudnessPanel();
   });
   const telemetryStrips = $derived(status?.telemetryStrips ?? []);
   const meterView = $derived.by(() => {
@@ -2061,10 +2120,7 @@
   />
 {/if}
 
-{#if loudnessTarget && loudnessTrack}
-  <LoudnessPopover track={loudnessTrack} view={loudnessView}
-    {running} onClose={closeLoudness} onReset={() => loudnessController.reset()} />
-{/if}
+<!-- 響度分析改為獨立視窗(WebviewWindow "loudness"),見 ensureLoudnessWindow -->
 
 <!-- P2-M:右鍵選單(全域一份) -->
 <ContextMenu {menu} onClose={() => (menu = null)} />
