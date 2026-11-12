@@ -274,14 +274,16 @@ it("reset button reports back to the main window and is gated on running", async
   expect(emit).toHaveBeenCalledWith("loudness-panel:reset");
 });
 
-it("pin toggles always-on-top on the panel window itself (not the main window)", async () => {
+it("pin toggles always-on-top and detaches from the main window owner", async () => {
   mountPanel(); await settle();
   const pin = document.querySelector<HTMLButtonElement>('[aria-label="釘選視窗置頂"]')!;
   pin.click(); await settle();
   expect(alwaysOnTopCalls).toEqual([true]);
+  expect(invoke).toHaveBeenCalledWith("set_loudness_owner", { owned: false });
   expect(pin.getAttribute("aria-pressed")).toBe("true");
   document.querySelector<HTMLButtonElement>('[aria-label="取消視窗置頂"]')!.click(); await settle();
   expect(alwaysOnTopCalls).toEqual([true, false]);
+  expect(invoke).toHaveBeenCalledWith("set_loudness_owner", { owned: true });
 });
 
 it("Esc and the close button close the panel window", async () => {

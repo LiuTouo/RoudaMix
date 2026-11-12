@@ -153,6 +153,7 @@ pub fn run() {
             commands::connect_status,
             commands::engine_command,
             commands::respawn_engine,
+            commands::set_loudness_owner,
             commands::updater_state,
             settings::get_settings,
             settings::set_settings,

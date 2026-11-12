@@ -6,6 +6,7 @@
   // in-window popover 做不到的;未釘選時 owner 關係讓它僅浮在 RoudaMix 之上。
   import { onMount } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { invoke } from "@tauri-apps/api/core";
   import { emit, listen } from "@tauri-apps/api/event";
   import { emptyLoudnessView, loudnessDuration, loudnessValue, type LoudnessView } from "./loudness";
 
@@ -31,10 +32,18 @@
     { key: "integratedLufs", label: "LUFS-I", window: "整體 · 本次", help: "本次量測的整體響度，排除過低音量。" },
   ] as const;
 
-  // 釘選 = 本視窗跨程式永遠置頂(與 VST 編輯器視窗釘選同語意);淡紫色 = 啟用
+  // 釘選 = 本視窗跨程式永遠置頂(與 VST 編輯器視窗釘選同語意);淡紫色 = 啟用。
+  // 釘選時同步解除 owner(owner/owned 同一 activation group,不解則點本視窗會把
+  // RoudaMix 主視窗拉到前景);解除釘選掛回 owner = 回到「僅浮在 RoudaMix 上」。
   async function togglePin() {
     try {
-      await getCurrentWindow().setAlwaysOnTop(!pinned);
+      if (!pinned) {
+        await getCurrentWindow().setAlwaysOnTop(true);
+        await invoke("set_loudness_owner", { owned: false });
+      } else {
+        await invoke("set_loudness_owner", { owned: true });
+        await getCurrentWindow().setAlwaysOnTop(false);
+      }
     } catch {
       // 非 Tauri 環境(測試/原型)無視窗 API:僅更新樣式不噴錯
     }
