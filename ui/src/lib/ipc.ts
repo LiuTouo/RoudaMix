@@ -58,6 +58,8 @@ export type AppSettings = {
   inputSilenceAlert?: boolean;
   /** 主介面字型(本機已安裝字族名);null/缺欄位 = 預設 IBM Plex Sans TC。 */
   uiFontFamily?: string | null;
+  /** 頂層通知自動消失秒數(預設 5);0 = 不自動消失,按一下才消失。 */
+  noticeAutoDismissSeconds?: number;
 };
 
 /** get/set 的回覆:typed settings + 載入時的 normalize 警告(可呈現) */

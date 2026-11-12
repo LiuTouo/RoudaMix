@@ -173,11 +173,15 @@
   let notices = $state<Notice[]>([]);
   let nextNoticeId = 1;
   const latencyRuntimeStates = new Map<string, string>();
+  // 頂層通知預設時效(設定 → 通用);0 = 不自動消失(按一下才消失),明確傳入值不走此預設
+  function defaultNoticeMs(): number {
+    return (appSettings?.noticeAutoDismissSeconds ?? 5) * 1000;
+  }
   function addNotice(
     kind: Notice["kind"],
     msg: string,
     raw?: string,
-    autoDismissMs = 0,
+    autoDismissMs = defaultNoticeMs(),
     dismissible = autoDismissMs <= 0,
     onDismiss?: () => void,
   ): number {
@@ -2284,6 +2288,29 @@
         <option value="exit">關閉程式</option>
       </select>
     </div>
+    <div class="formrow">
+      <label class="formlabel" for="noticedismiss">通知顯示時間</label>
+      <select
+        id="noticedismiss"
+        value={appSettings?.noticeAutoDismissSeconds ?? 5}
+        disabled={!appSettings}
+        aria-describedby="noticedismiss-hint"
+        data-tooltip="頂層通知自動消失的秒數；選「按一下才消失」則通知會留著，直到你點擊它。"
+        onchange={(e) => {
+          if (!appSettings) return;
+          appSettings.noticeAutoDismissSeconds = Number(e.currentTarget.value);
+          persistSettings();
+        }}
+      >
+        <option value={3}>3 秒</option>
+        <option value={5}>5 秒（預設）</option>
+        <option value={10}>10 秒</option>
+        <option value={30}>30 秒</option>
+        <option value={60}>60 秒</option>
+        <option value={0}>按一下才消失</option>
+      </select>
+    </div>
+    <p id="noticedismiss-hint" class="dim indent">頂層通知在此時間後自動消失；不論哪種設定，點擊通知本體都能立即關閉。</p>
     <h2>警示</h2>
     <div class="formrow checkrow" class:disabled={!appSettings}>
       <span class="formlabel">輸入靜音警示</span>

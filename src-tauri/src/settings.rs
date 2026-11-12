@@ -63,6 +63,8 @@ pub struct Settings {
     /// 主介面字族名(本機已安裝)；None = 預設 IBM Plex Sans TC。
     /// 含引號等 CSS 字串逃脫字元的值會在 normalize 被退回預設（見 uiFont.ts 同規則）。
     pub ui_font_family: Option<String>,
+    /// 頂層通知自動消失秒數(0 = 不自動消失,按一下才消失);預設 5 秒。
+    pub notice_auto_dismiss_seconds: u32,
 }
 
 impl Default for Settings {
@@ -82,6 +84,7 @@ impl Default for Settings {
             monitor_hotkey: None,
             input_silence_alert: true,
             ui_font_family: None,
+            notice_auto_dismiss_seconds: 5,
         }
     }
 }
@@ -223,6 +226,11 @@ pub fn normalize(raw: Value) -> (Value, Settings, Vec<String>) {
             "inputSilenceAlert" => match v.as_bool() {
                 Some(value) => s.input_silence_alert = value,
                 None => warnings.push("settings.inputSilenceAlert 型別錯誤,已回復預設 true".into()),
+            },
+            "noticeAutoDismissSeconds" => match v.as_u64() {
+                Some(n) if n <= 120 => s.notice_auto_dismiss_seconds = n as u32,
+                _ => warnings
+                    .push("settings.noticeAutoDismissSeconds 值不合法,已回復預設 5 秒".into()),
             },
             "uiFontFamily" => match opt_font(v) {
                 Ok(v) => s.ui_font_family = v,
@@ -760,6 +768,25 @@ mod tests {
         assert!(!loaded.input_silence_alert);
         assert!(w.is_empty());
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn normalize_notice_auto_dismiss_seconds() {
+        // 缺欄位 = 預設 5 秒(既有使用者升級後行為改為 5 秒自動消失,零警告)
+        let (_, s, w) = normalize(json!({}));
+        assert_eq!(s.notice_auto_dismiss_seconds, 5);
+        assert!(w.is_empty());
+
+        for good in [0u64, 3, 5, 10, 120] {
+            let (_, s, w) = normalize(json!({ "noticeAutoDismissSeconds": good }));
+            assert_eq!(s.notice_auto_dismiss_seconds, good as u32);
+            assert!(w.is_empty());
+        }
+        for bad in [json!(121), json!(-1), json!(2.5), json!("5"), json!(null), json!(true)] {
+            let (_, s, w) = normalize(json!({ "noticeAutoDismissSeconds": bad }));
+            assert_eq!(s.notice_auto_dismiss_seconds, 5, "bad value {bad} 應回預設");
+            assert_eq!(w.len(), 1, "bad value {bad} 應帶 warning");
+        }
     }
 
     #[test]
