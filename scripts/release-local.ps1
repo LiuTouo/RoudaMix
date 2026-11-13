@@ -73,15 +73,17 @@ if (Test-Path -LiteralPath $cache) {
     }
 }
 
-# build-release.ps1 拒收既存的 output/release（避免混入舊版資產；CI 永遠是乾淨 checkout）。
-# 本地重跑時移除上次失敗或舊版殘留：資產全量重建，已發布版本仍存於 GitHub。
-$outputRelease = Join-Path $repoRoot 'output/release'
-if (Test-Path -LiteralPath $outputRelease) {
+# build-release.ps1 拒收既存的 output/release 與 target/release-* staging（避免混入舊版資產；
+# CI 永遠是乾淨 checkout）。本地重跑時移除上次失敗或舊版殘留：資產全量重建，已發布版本仍存於 GitHub。
+$stalePaths = @('output/release', 'target/release-source', 'target/release-portable',
+    'target/release-installer-check') | ForEach-Object { Join-Path $repoRoot $_ }
+foreach ($stalePath in $stalePaths) {
+    if (-not (Test-Path -LiteralPath $stalePath)) { continue }
     if ($ValidateOnly) {
-        Write-Warning 'output/release already exists; it will be removed before building.'
+        Write-Warning "$stalePath already exists; it will be removed before building."
     } else {
-        Write-Host 'Removing stale output/release...'
-        Remove-Item -LiteralPath $outputRelease -Recurse -Force
+        Write-Host "Removing stale $stalePath..."
+        Remove-Item -LiteralPath $stalePath -Recurse -Force
     }
 }
 
