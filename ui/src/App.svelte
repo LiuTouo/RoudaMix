@@ -611,11 +611,9 @@
         return;
       const t = e.target as HTMLElement | null;
       if (t?.isContentEditable || t?.closest?.("input, textarea, select")) return;
-      const ids = tracks.filter((tr) => tr.plugins.length > 0).map((tr) => tr.trackId);
-      if (ids.length === 0) return;
+      if (vstExpandableIds.length === 0) return;
       e.preventDefault();
-      const anyClosed = ids.some((id) => !vstOpenIds.has(id));
-      setVstOpen(anyClosed ? new Set(ids) : new Set());
+      toggleAllVst();
     };
     window.addEventListener("keydown", onVstHotkey);
     unsubs.push(() => window.removeEventListener("keydown", onVstHotkey));
@@ -1419,6 +1417,12 @@
     else next.add(id);
     setVstOpen(next);
   }
+  // VST 全域展開／收合入口（頂欄按鈕；範圍同 Ctrl+V：僅有 plugin 的音軌）
+  const vstExpandableIds = $derived(tracks.filter((t) => t.plugins.length > 0).map((t) => t.trackId));
+  const anyVstClosed = $derived(vstExpandableIds.some((id) => !vstOpenIds.has(id)));
+  function toggleAllVst(): void {
+    setVstOpen(anyVstClosed ? new Set(vstExpandableIds) : new Set());
+  }
 
   function bindLane(group: LaneGroup): HTMLDivElement | null {
     return group === "input" ? inputLaneEl : outputLaneEl;
@@ -2001,6 +2005,15 @@
       class="dim mono"
       data-tooltip="取樣率與緩衝大小；取樣率於驅動面板調整。"
       >{selDev.currentSampleRate} Hz · buf {bufSize ?? selDev.preferredBufferSize}</span
+    >
+  {/if}
+  {#if vstExpandableIds.length > 0}
+    <button
+      class="settings"
+      onclick={toggleAllVst}
+      aria-pressed={!anyVstClosed}
+      data-tooltip="展開／收合全部音軌的 VST 面板（僅有插件的音軌；同 Ctrl+V）。"
+      >{anyVstClosed ? "VST 展開全部" : "VST 收合全部"}</button
     >
   {/if}
   {#if latencyEnabled}

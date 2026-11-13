@@ -9,6 +9,9 @@ colors:
   well-black: "#090B0D"
   hairline: "#292D31"
   divider: "#1E2225"
+  channel-surface: "#22272C"
+  processing-surface: "#191D21"
+  divider-strong: "#3B444D"
   ink: "#E2E5E8"
   ink-dim: "#9CA5AE"
   master-blue: "#6EA8FE"
@@ -63,7 +66,11 @@ components:
   button-ghost-hover:
     backgroundColor: "{colors.raised}"
   strip-card:
-    backgroundColor: "{colors.raised}"
+    backgroundColor: "{colors.channel-surface}"
+    rounded: "{rounded.strip}"
+  processing-sidecar:
+    backgroundColor: "{colors.processing-surface}"
+    dividerLeft: "1px solid {colors.divider-strong}"
     rounded: "{rounded.strip}"
   group-well:
     backgroundColor: "{colors.well-black}"

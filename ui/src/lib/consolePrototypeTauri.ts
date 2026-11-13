@@ -57,6 +57,8 @@ function changed(action: string) {
   previewNotice(action);
 }
 
+// 響度視窗事件僅桌面版作用;預覽不開獨立視窗,送出即忘。
+export async function emitTo(): Promise<void> {}
 export async function listen<T>(name: string, handler: (event: { payload: T }) => void) {
   if (!handlers.has(name)) handlers.set(name, new Set());
   handlers.get(name)!.add(handler);

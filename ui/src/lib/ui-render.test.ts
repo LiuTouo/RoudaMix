@@ -102,7 +102,8 @@ test("the production App renders C with real labels, one name rail and all audio
   assert.match(consoleBody, />送至</);
   assert.match(consoleBody, />低延遲</);
   assert.equal([...consoleBody.matchAll(/>Stream<\/button>/g)].length, 1);
-  assert.match(consoleBody, /VST CHAIN \(1\)/);
+  assert.match(consoleBody, /class="vsttitle[^"]*"[^>]*>VST CHAIN</);
+  assert.match(consoleBody, /class="vstcount[^"]*"[^>]*>1</);
   assert.match(consoleBody, />\+ 加入</);
   assert.match(consoleBody, /console-gain[^>]*>100%/);
   assert.match(consoleBody, /data-console-kind="output"/);

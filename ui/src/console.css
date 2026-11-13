@@ -6,6 +6,11 @@
   --border: #292D31; --divider: #1E2225; --text: #E2E5E8; --text-dim: #9CA5AE;
   --accent: #6EA8FE; --active: #55C2A3; --ok: #55C2A3; --warn: #D9A441; --err: #DD5A5A;
   --flat-radius: 3px;
+  /* Channel Group 主從層級（V2）：主音軌面亮一階、VST 處理面暗一階；
+     兩者共用外部輪廓，內部以 --divider-strong 分隔 */
+  --channel-surface: #22272C;
+  --processing-surface: #191D21;
+  --divider-strong: #3B444D;
   /* 凹槽井(DESIGN well-black)：群組井專用近黑，非面板四階 */
   --well: #090B0D; --well-edge: #080A0C;
   /* 暖色切換對(DESIGN：mute 亮紅、rack bypass 琥珀)：底/字成對使用 */
@@ -35,7 +40,7 @@ body { background: var(--flat-0); }
   & .colhead .mini { font-size: 11px; padding: 3px 6px; }
   /* Keep the lane origin at the first strip: lanePos and spacerWidths assume no horizontal padding. */
   & .lanes { min-width: 0; overflow: auto; background: transparent; }
-  & .strip { position: relative; padding: 4px 10px 0; gap: 4px; border: 1px solid var(--border); background: var(--flat-4); }
+  & .strip { position: relative; padding: 4px 10px 0; gap: 4px; border: 1px solid var(--border); background: var(--channel-surface); }
   & .head { position: static; width: auto; height: 32px; min-height: 32px; border: 0; background: transparent; padding: 0; }
   & .sysbadge { background: none; border: 0; padding: 0; color: var(--text-dim); font: 10px var(--mono); }
   & .row { gap: 6px; }
@@ -81,13 +86,17 @@ body { background: var(--flat-0); }
   & .console-switches .rack-b.on { background: var(--rack-bg); color: var(--warn); border-color: var(--warn); }
   & button:disabled { opacity: .4; }
   & .lower { display: flex; flex-direction: row; justify-content: center; gap: 8px; min-height: 327px; }
-  & .vstside-in { background: var(--flat-4); }
-  & .vstside .vsthead { height: 18px; padding: 2px 0; background: transparent; border: 0; color: var(--text-dim); font: 11px var(--mono); letter-spacing: .04em; }
+  /* Sidecar = Secondary Processing Surface：比軌條暗一階，同一張卡的一部分；
+     左框 = 與軌條之間的 1px Divider（-1px 疊合，單一分隔線） */
+  & .vstside-in { background: var(--processing-surface); border-left-color: var(--divider-strong); }
+  & .vstside .vsthead { flex: none; height: 32px; padding: 0 4px 0 8px; background: transparent; border: 0; border-bottom: 1px solid var(--divider-strong); color: var(--text-dim); font: 11px var(--font-ui); letter-spacing: .04em; }
+  & .vstside .vsttitle { color: var(--text); font-weight: 600; letter-spacing: .06em; }
+  & .vstside .vstcount { font-size: 11px; }
   & .vst { height: auto; min-height: 72px; flex: 1 1 auto; border: 0; background: transparent; }
   & .vstlist { padding: 0; gap: 0; background: transparent; }
-  & .plug { display: grid; grid-template-columns: 24px minmax(0, 1fr); align-items: center; gap: 2px; min-height: 28px; flex: none; padding: 1px 0; border: 0; background: transparent; }
+  & .plug { display: grid; grid-template-columns: 24px minmax(0, 1fr); align-items: center; gap: 2px; min-height: 32px; flex: none; padding: 0 6px; border: 0; background: transparent; }
   & .plug:not(.placeholder):has(.monitor-badge) { grid-template-columns: 24px minmax(0, 1fr) auto; }
-  & .plug:not(.placeholder) > .plugname { grid-column: 2; grid-row: 1; font-size: 12px; padding: 0; line-height: 24px; }
+  & .plug:not(.placeholder) > .plugname { grid-column: 2; grid-row: 1; font-size: 12px; padding: 0; line-height: 20px; }
   /* 改名輸入框:非 placeholder 直接是 grid child(佔名稱格);placeholder 時深埋 .plugtitle 內,grid 語不生效 */
   & .plugrename { grid-column: 2; grid-row: 1; width: 100%; min-width: 0; background: var(--flat-2); color: var(--text); text-align: left; border: 0; border-bottom: 1px solid var(--accent); font-size: 11px; }
   & .plug:not(.placeholder) .plugactions { display: contents; }
@@ -98,8 +107,9 @@ body { background: var(--flat-0); }
   & .plug .power.off { opacity: 1; }
   & .plug .power.off::before { background: var(--warn); }
   & .plug:has(.power.off) .plugname { color: var(--text-dim); }
-  & .plug:hover { background: var(--flat-2); }
-  & .plug:focus-within { background: var(--flat-4); }
+  & .plug:hover { background: rgb(255 255 255 / 4%); }
+  /* 選取（鍵盤焦點/操作中）：明確但不刺眼的 accent 底 */
+  & .plug:focus-within { background: color-mix(in srgb, var(--accent) 12%, var(--processing-surface)); }
   & .plug .plugicon { width: 24px; min-width: 24px; height: 24px; border: 0; border-radius: 3px; }
   & .plug .plugicon:hover { background: var(--flat-4); opacity: 1; }
   & .plug.placeholder { opacity: 1; border-left: 2px solid var(--warn); grid-template-columns: minmax(0, 1fr); }
@@ -107,7 +117,7 @@ body { background: var(--flat-0); }
   & .plug.placeholder .plugtitle { grid-column: 1; }
   & .plug.placeholder .monitor-badge { grid-column: 2; align-self: start; }
   & .plug.placeholder .plugactions { grid-column: 1 / -1; height: auto; }
-  & .empty-slot { justify-content: flex-start; min-height: 28px; padding: 4px 0; border: 0; font-size: 11px; color: var(--text-dim); }
+  & .empty-slot { justify-content: flex-start; min-height: 32px; padding: 4px 6px; border: 0; font-size: 11px; color: var(--text-dim); }
   & .processing-row { background: var(--flat-2); border: 1px solid var(--divider); }
   & .processing-row:hover { background: var(--flat-4); }
   & .processing-row .proc-label { font-family: var(--mono); font-weight: 400; letter-spacing: .06em; }
@@ -127,7 +137,7 @@ body { background: var(--flat-0); }
   & .colorbar .name { padding: 4px 0; border: 0; background: transparent; text-align: left; color: var(--text); font-weight: 500; font-size: 12px; min-width: 0; max-width: 100%; }
   & .colorbar .name:hover { background: rgb(0 0 0 / 15%); color: var(--text); }
   & .colorbar:has(.barpick:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }
-  & .console-gain { margin-left: auto; font-size: 11px; color: var(--text); pointer-events: none; position: relative; }
+  & .console-gain { margin-left: auto; font-size: 11px; color: var(--text-dim); pointer-events: none; position: relative; }
   & .nameedit { background: var(--flat-2); text-align: left; border: 0; border-bottom: 1px solid var(--accent); }
   & button.danger:enabled:hover { background: var(--hot-bg); color: var(--hot-ink); }
   & button.primary { background: var(--accent); color: var(--flat-0); }

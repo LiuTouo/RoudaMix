@@ -1256,7 +1256,7 @@
 
   {#snippet identityRail()}
   <!-- 名稱與色票共用標頭空間，保留原本的改名與換色操作。 -->
-  <div class="colorbar" style="background:{matteColor(shownColor)}">
+  <div class="colorbar" style:--track-accent={cssColor(shownColor)}>
     <input
       type="color"
       class="barpick"
@@ -1322,7 +1322,9 @@
   <!-- 標題列在機架盒子外(正上方);右鍵仍可開機架選單(button 已在 rackMenu 內過濾)。 -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="vsthead" oncontextmenu={rackMenu}>
-    <span class="vsttitle">VST CHAIN ({track.plugins.length})</span>
+    <span class="vst-accent" style:--track-accent={cssColor(shownColor)} aria-hidden="true"></span>
+    <span class="vsttitle">VST CHAIN</span>
+    <span class="vstcount mono">{track.plugins.length}</span>
     {#if $pluginTransfer.busy || monitorBypassBusy}<span class="dim" role="status">處理中…</span>{/if}
     <button
       class="mini vstadd"
@@ -1530,8 +1532,20 @@
     font-size: 11px;
     font-weight: 600;
     letter-spacing: 0.05em;
-    color: var(--text-dim);
+    color: var(--text);
     white-space: nowrap;
+  }
+  /* 小型 Channel Accent Indicator:呼沨軌條色,辨識處理區屬於哪條軌 */
+  .vst-accent {
+    flex: none;
+    width: 3px;
+    height: 14px;
+    border-radius: 2px;
+    background: var(--track-accent, var(--text-dim));
+  }
+  .vstcount {
+    font-size: 11px;
+    color: var(--text-dim);
   }
   .vstadd {
     margin-left: auto;
@@ -1634,19 +1648,30 @@
   }
   .head > .sysbadge { flex: none; }
   .console-gain { flex: none; margin-left: auto; position: relative; pointer-events: none; font-size: 11px; }
-  /* 名稱色條填滿圖示與軌道操作之間的空間。 */
+  /* 名稱區 = 低飽和 Header Surface：軌道色只以 3px 細 Accent Bar + 圖示著色，
+   * 不再以大片飽和色塊主導頂部（與 Meter/Clipping/Mute 狀態爭注意力）。 */
   .colorbar {
     position: relative;
     height: 32px;
     flex: 1;
     min-width: 0;
     border-radius: 3px;
-    padding: 0 6px;
+    padding: 0 6px 0 9px;
     display: flex;
     align-items: center;
     gap: 6px;
-    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08); /* 霧面質感的上緣受光 */
+    background: color-mix(in srgb, var(--track-accent, #8a8f94) 12%, var(--channel-surface, var(--bg-panel)));
     justify-content: flex-start;
+  }
+  .colorbar::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    border-radius: 3px 0 0 3px;
+    background: var(--track-accent, #8a8f94);
   }
   /* 透明滿版色票:點色塊任何位置(名稱以外)都開原生調色盤 */
   .barpick {
