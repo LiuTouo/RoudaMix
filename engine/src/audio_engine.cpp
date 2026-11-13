@@ -2586,12 +2586,16 @@ void AudioEngine::process(const AudioBlock& block) noexcept {
 
         // RoutePlan 是唯一 slot 決策來源；同一迴圈依序執行 primary 與需要的
         // monitor variant，避免兩條分支各自重編 bypass/suspension 規則。
+        // muted 軌:鏈輸出會被 post-fader 歸零丟棄 → plugin 音訊處理整個跳過
+        // (重 plugin 如 Supertone Clear 每實例恒時 CPU,mute 不跳 = 負載白燒);
+        // 參數編輯仍以 drain 方式餵 plugin(ring 是 processor 參數唯一通道,
+        // 漏餵會在 unmute 後失同步)。
         for (std::size_t si = 0; si < n.chain.size(); ++si) {
             const RackSlot& slot = n.chain[si];
             const RouteSlotPlan& slot_plan = route_plan.slots[si];
             auto run_path = [&](const RoutePathPlan& path, Vst3Plugin* plugin,
                                 ParamRing* ring, PdcDelayLine* dry_delay,
-                                std::uint32_t cpu_index) {
+                                std::uint32_t cpu_index, bool muted_drain) {
                 if (path.action == RouteSlotAction::kDry ||
                     path.action == RouteSlotAction::kReusePrimary)
                     return;
@@ -2619,6 +2623,13 @@ void AudioEngine::process(const AudioBlock& block) noexcept {
                 const float* sc_l = n.buf->sc[0];
                 const float* sc_r = n.buf->sc[1];
                 const std::size_t count = ring->pop_all(edits, kMaxParamEditsPerBlock);
+                if (muted_drain) {
+                    if (count > 0 && path.action == RouteSlotAction::kProcess)
+                        (void)plugin->process(in_l, in_r, out_l, out_r,
+                                              static_cast<std::int32_t>(frames), edits,
+                                              count, sc_l, sc_r);
+                    return;  // 音訊結果會被 post-fader 歸零丟棄
+                }
                 if (path.action == RouteSlotAction::kDrainParameters) {
                     if (count > 0)
                         (void)plugin->process(in_l, in_r, out_l, out_r,
@@ -2663,7 +2674,8 @@ void AudioEngine::process(const AudioBlock& block) noexcept {
             };
 
             run_path(slot_plan.primary, slot.plugin.get(), slot.ring.get(),
-                     slot.primary_dry_delay.get(), slot.primary_cpu_index);
+                     slot.primary_dry_delay.get(), slot.primary_cpu_index,
+                     route_plan.muted);
             if (slot_plan.monitor.action == RouteSlotAction::kReusePrimary) {
                 if (slot_plan.monitor.bus == RouteBus::kPrimary) {
                     monitor_l = cur_l;
@@ -2672,9 +2684,10 @@ void AudioEngine::process(const AudioBlock& block) noexcept {
             } else {
                 run_path(slot_plan.monitor, slot.monitor_shadow.get(),
                          slot.monitor_ring.get(), slot.shadow_dry_delay.get(),
-                         slot.shadow_cpu_index);
+                         slot.shadow_cpu_index, route_plan.muted);
             }
-            if (si < n.chain_strips.size() && n.chain_strips[si] != kNoStrip)
+            if (!route_plan.muted && si < n.chain_strips.size() &&
+                n.chain_strips[si] != kNoStrip)
                 meter_band(meters_, n.chain_strips[si], cur_l, cur_r, frames);
         }
 

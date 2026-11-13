@@ -325,6 +325,25 @@
       err = errorText(e);
     }
   }
+  // 換色即時預覽:拖動調色盤時本地疊加即時上色(整條軌帶同步變色)，60ms 節流
+  // 送 engine(gain 拖曳同款模式)；關閉 picker 的 onchange 補最終值。
+  // Esc 取消：oncancel 清疊加；未支援的環境由下一次權威 status 對齊。
+  let dragColor = $state<number | null>(null);
+  let lastColorSent = 0;
+  const shownColor = $derived(dragColor ?? track.color);
+  function previewColor(css: string) {
+    dragColor = parseColor(css);
+    const now = performance.now();
+    if (now - lastColorSent >= 60) {
+      lastColorSent = now;
+      void setColor(css);
+    }
+  }
+  async function commitColor(css: string) {
+    dragColor = null;
+    lastColorSent = 0;
+    await setColor(css);
+  }
 
   // 音量:拖曳中顯示本地值(thumb 不被 telemetry 回推拉回),60ms 節流送 engine
   let dragGain = $state<number | null>(null);
@@ -1014,8 +1033,8 @@
     role="img"
     aria-label={identityIcon.label}
     style:--icon-src={`url("${identityIcon.src}")`}
-    style:--icon-color={cssColor(track.color)}
-    style:--icon-glow={`color-mix(in srgb, ${cssColor(track.color)} 45%, transparent)`}
+    style:--icon-color={cssColor(shownColor)}
+    style:--icon-glow={`color-mix(in srgb, ${cssColor(shownColor)} 45%, transparent)`}
   ></span>
     {@render identityRail()}
     {#if track.systemRole}
@@ -1464,14 +1483,16 @@
 
   {#snippet identityRail()}
   <!-- 名稱與色票共用標頭空間，保留原本的改名與換色操作。 -->
-  <div class="colorbar" style="background:{matteColor(track.color)}">
+  <div class="colorbar" style="background:{matteColor(shownColor)}">
     <input
       type="color"
       class="barpick"
-      value={cssColor(track.color)}
+      value={cssColor(shownColor)}
       data-tooltip="設定此軌道的識別色。"
       aria-label="軌道 {track.name} 的顏色"
-      onchange={(e) => setColor(e.currentTarget.value)}
+      oninput={(e) => previewColor(e.currentTarget.value)}
+      onchange={(e) => void commitColor(e.currentTarget.value)}
+      oncancel={() => (dragColor = null)}
     />
     {#if editing}
       <input

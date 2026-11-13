@@ -202,6 +202,8 @@
   let audioStaleDismissed = $state(false); // 膠囊 × 關閉;stale 解除後重置(下次失效再現)
   $effect(() => {
     if (!audioStale) audioStaleDismissed = false;
+    // 警示膠囊同通知時效自動收起(設定可調;恢復後再失效會重新出現)
+    else if (!audioStaleDismissed) autoClearCapsuleState(() => (audioStaleDismissed = true));
   });
   let ensuredDefaults = false; // 首次連線確保有系統輸出;engine 端保保證唯一
   const mutations = new MutationQueue((key, error, tag) => {
@@ -223,6 +225,13 @@
   // 頂層通知預設時效(設定 → 通用);0 = 不自動消失(按一下才消失),明確傳入值不走此預設
   function defaultNoticeMs(): number {
     return (appSettings?.noticeAutoDismissSeconds ?? 5) * 1000;
+  }
+  // 通知預設時效一律走設定(預設 5 秒;0 = 不自動消失)。狀態帶動的膠囊
+  // (missing/restoreError/audioStale)也同設定自動消失 —— 使用者統一控管所有通知時效。
+  // 例外:respawnRestore(崩潰救援)是一次性動作入口,自動消失會丢失還原入口 → 手動。
+  function autoClearCapsuleState(clear: () => void): void {
+    const ms = defaultNoticeMs();
+    if (ms > 0) setTimeout(clear, ms);
   }
   function addNotice(
     kind: Notice["kind"],
@@ -271,7 +280,7 @@
     if (!latencyEnabled) return;
     for (const notice of observeLatencyRuntimeStates(latencyRuntimeStates, tracks)) {
       if (notice.level === "error") addNotice("error", notice.text);
-      else addNotice("info", notice.text, undefined, 3000);
+      else addNotice("info", notice.text);
     }
   }
   /** P1-O:可複製診斷(WebView2 secure context 下 clipboard 可用;失敗 = 提示) */
@@ -339,7 +348,7 @@
     if (!alarms.raise(key)) return;
     alarmNoticeIds.set(
       key,
-      addNotice("error", alarmMsg(key), undefined, 0, true, () => {
+      addNotice("error", alarmMsg(key), undefined, undefined, undefined, () => {
         alarmNoticeIds.delete(key);
         alarms.dismiss(key); // 手動關閉:同一來源恢復訊號前不再重複警示
         syncBeeper();
@@ -473,7 +482,7 @@
 
     if (applied.deviceAccepted && applied.state.status?.error &&
         applied.state.status.error !== status?.error)
-      addNotice("error", "音訊已停止，請確認輸出裝置後按 Start", applied.state.status.error, 0, true);
+      addNotice("error", "音訊已停止，請確認輸出裝置後按 Start", applied.state.status.error);
     status = applied.state.status;
     latencyEnabled = applied.state.pluginLatencyPdcSupported;
     scanModules = applied.state.scanModules;
@@ -672,8 +681,8 @@
               "info",
               completionNotice.message,
               undefined,
-              completionNotice.autoDismissMs,
-              completionNotice.dismissible,
+              undefined,
+              undefined,
               () => {
                 scanJob = transitionScanJob(scanJob, {
                   type: "dismiss",
@@ -692,7 +701,7 @@
           });
           scanJob = transition.state;
           if (transition.accepted) {
-            addNotice("error", "VST 掃描失敗，已保留原清單", p.error, 0, true, () => {
+            addNotice("error", "VST 掃描失敗，已保留原清單", p.error, undefined, undefined, () => {
               scanJob = transitionScanJob(scanJob, {
                 type: "dismiss",
                 jobId: p.jobId,
@@ -708,7 +717,7 @@
           });
           scanJob = transition.state;
           if (transition.accepted) {
-            addNotice("info", "VST 掃描已取消，已保留原清單", undefined, 0, true, () => {
+            addNotice("info", "VST 掃描已取消，已保留原清單", undefined, undefined, undefined, () => {
               scanJob = transitionScanJob(scanJob, {
                 type: "dismiss",
                 jobId: p.jobId,
@@ -1001,6 +1010,7 @@
       rejectRevisionBaseline();
       // 檔案不存在/損壞 = 開空白 + 頂列提示,不擋啟動
       restoreError = errorText(result.error);
+      autoClearCapsuleState(() => (restoreError = ""));
     }
   }
 
@@ -1533,6 +1543,8 @@
     closeLoudness(false);
     confirmRevisionBaseline(r.revision); // 載成功才清 dirty
     missing = (r.missing as MissingPlugin[]) ?? [];
+    if (missing.length > 0)
+      autoClearCapsuleState(() => (missing = []));  // 同通知時效自動收起(設定可調)
     const dk = r.deviceKey as string | null;
     if (dk && (dk === WASAPI_DEVICE_KEY || devices.some((d) => d.deviceKey === dk))) {
       selected = dk;
@@ -1711,7 +1723,7 @@
   function toggleMonitorMute() {
     const monitor = status?.tracks.find((t) => t.systemRole === "monitor");
     if (!monitor) {
-      addNotice("info", "監聽快捷鍵無效:音訊未啟動,沒有監聽輸出軌", undefined, 4000);
+      addNotice("info", "監聽快捷鍵無效:音訊未啟動,沒有監聽輸出軌");
       return;
     }
     mutations.run(mutKey.track(monitor.trackId), "mute", () =>
@@ -2423,7 +2435,7 @@
         <option value={0}>按一下才消失</option>
       </select>
     </div>
-    <p id="noticedismiss-hint" class="dim indent">頂層通知在此時間後自動消失；不論哪種設定，點擊通知本體都能立即關閉。</p>
+    <p id="noticedismiss-hint" class="dim indent">所有頂層通知與警示膠囊（含 plugin 載入失敗摘要）在此時間後自動消失；設為 0 則改為點擊才消失。不論哪種設定，點擊通知本體都能立即關閉。例外：引擎重啟後的 Session 還原膠囊為一次性動作入口，不自動消失。</p>
     <h2>警示</h2>
     <div class="formrow checkrow" class:disabled={!appSettings}>
       <span class="formlabel">輸入靜音警示</span>

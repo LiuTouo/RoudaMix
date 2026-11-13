@@ -423,6 +423,55 @@ int main(int argc, char** argv) {
         s.ok("stop");
     }
 
+    // mute 省電:muted 軌的 plugin 鏈不跑(輸出本就會被 post-fader 歸零丟棄;
+    // 僅在有參數編輯的 block 以 drain 餵 plugin)。回歸守衛:靜音不得外漏垃圾、
+    // muted 中動參數不得炸、unmute 後鏈恢復出聲。
+    {
+        Session s;
+        const auto input =
+            s.ok("track_add", {{"kind", "audio"}, {"name", "MuteSave"}})["trackId"];
+        const auto output =
+            s.ok("track_add", {{"kind", "output"}, {"name", "Out"}})["trackId"];
+        s.ok("track_set_source",
+             {{"trackId", input}, {"source", {{"type", "sine"}, {"freq", 440}}}});
+        s.ok("track_set_dests", {{"trackId", input}, {"dests", json::array({output})}});
+        s.ok("track_set_output",
+             {{"trackId", output}, {"output", {{"type", "asioOut"}, {"channel", 0u}}}});
+        s.start();
+        const auto plugin =
+            s.ok("add_plugin", {{"trackId", input}, {"path", argv[1]}})["instanceId"];
+        eventually([] { return fake_wasapi::peak(L"master") > .01F; });
+        // mute → 靜音(鏈被跳過,輸出恆零)
+        s.ok("track_set", {{"trackId", input}, {"mute", true}});
+        Sleep(100); fake_wasapi::clear_samples(); Sleep(100);
+        CHECK(fake_wasapi::peak(L"master") == 0);
+        // muted 中動參數(drain 路徑)不炸,unmute 後恢復出聲
+        s.ok("set_param", {{"instanceId", plugin}, {"paramId", 100u}, {"value", 0.0}});
+        s.ok("track_set", {{"trackId", input}, {"mute", false}});
+        eventually([] { return fake_wasapi::peak(L"master") > .01F; });
+        s.ok("stop"); CHECK(fake_wasapi::clients == 0);
+    }
+
+    // 移除最後一個實例 → module 卸載:退休圖釋放 plugin shared_ptr → FreeLibrary,
+    // 使用者免關 RoudaMix 即可更新/刪除 plugin 檔。測試環境無 main 迴圈定時器,
+    // 直接叫 Router::idle_reap(與 WM_TIMER 同入口)。
+    {
+        Session s;
+        const auto t = s.ok("track_add", {{"kind", "audio"}, {"name", "Unload"}})["trackId"];
+        std::wstring wpath;
+        for (const char* p = argv[1]; *p; ++p) wpath.push_back(static_cast<wchar_t>(*p));
+        const auto plug = s.ok("add_plugin", {{"trackId", t}, {"path", argv[1]}})["instanceId"];
+        CHECK(GetModuleHandleW(wpath.c_str()) != nullptr);  // 載入中
+        s.ok("remove_plugin", {{"instanceId", plug}});
+        Sleep(700);          // 跨過 retire grace(500ms)
+        s.router.idle_reap();
+        CHECK(GetModuleHandleW(wpath.c_str()) == nullptr);  // 已卸載 → 檔案解鎖
+        // 重加 = 重新載入 module
+        const auto again = s.ok("add_plugin", {{"trackId", t}, {"path", argv[1]}})["instanceId"];
+        CHECK(GetModuleHandleW(wpath.c_str()) != nullptr);
+        s.ok("remove_plugin", {{"instanceId", again}});
+    }
+
     CHECK(fake_wasapi::clients == 0);
     CoUninitialize();
     std::puts("WASAPI runtime passed");

@@ -40,6 +40,10 @@ public:
                              const std::string& code, const std::string& message);
 
     void load_registry();
+    // 主迴圈定時叫喚：回收退休圖(grace 500ms + reader 歸零才刪)。移除最後一個
+    // plugin 實例後，shared_ptr 隨退休圖釋放 → module FreeLibrary → 檔案解鎖，
+    // 使用者不必關 RoudaMix 即可更新/刪除 plugin 檔。無新東西可收時為空向量掃描。
+    void idle_reap();
     void set_editor_command_target(HWND target);
     void set_capture_failed_callback(std::function<void(std::uint32_t)> callback);
     void set_latency_changed_callback(

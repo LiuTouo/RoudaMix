@@ -113,6 +113,11 @@ void Router::recover_from_structured_exception(std::uint64_t generation,
     send_protocol_error(generation, id, "internal", message);
 }
 
+void Router::idle_reap() {
+    std::lock_guard<std::mutex> lock(engine_mutex_);
+    engine_.reap_retired_graphs(false);
+}
+
 void Router::load_registry() {
     std::lock_guard<std::mutex> lock(scan_mutex_);
     vst_registry_path_ = vst_registry::cache_path_from_env();

@@ -28,6 +28,10 @@ constexpr UINT WM_APP_TASK = WM_APP + 1;
 constexpr UINT WM_APP_QUIT = WM_APP + 2;
 constexpr UINT WM_APP_CAPTURE_ERR = WM_APP + 4;
 constexpr UINT WM_APP_LATENCY_CHANGED = WM_APP + 5;
+// 退休圖定時回收(SetTimer):移除最後一個 plugin 實例後不必等下一次 mutation,
+// 舊圖（含 plugin shared_ptr → 載入的 module）逾時即釋放 → DLL 卸載、檔案解鎖。
+constexpr UINT kReapTimerId = 1;
+constexpr UINT kReapTimerMs = 600;  // > kGraceMs(500):每輪至少跨過一次 grace
 constexpr wchar_t kMainWndClass[] = L"RmxEngineMain";
 HWND g_main_hwnd = nullptr;
 
@@ -149,6 +153,13 @@ LRESULT CALLBACK main_wnd_proc(HWND window, UINT message, WPARAM word_param,
     if (message == WM_APP_LATENCY_CHANGED) {
         g_router.handle_latency_changed(static_cast<std::uint32_t>(word_param),
                                         long_param != 0);
+        return 0;
+    }
+    if (message == WM_TIMER) {
+        if (word_param == kReapTimerId) {
+            g_router.idle_reap();
+            return 0;
+        }
         return 0;
     }
     if (message == WM_APP_QUIT) {
@@ -303,6 +314,7 @@ int main() {
     RegisterClassExW(&window_class);
     g_main_hwnd = CreateWindowExW(0, kMainWndClass, L"", 0, 0, 0, 0, 0,
                                   HWND_MESSAGE, nullptr, window_class.hInstance, nullptr);
+    SetTimer(g_main_hwnd, kReapTimerId, kReapTimerMs, nullptr);
     std::fprintf(stderr, "[engine] main window hwnd=%p\n",
                  static_cast<void*>(g_main_hwnd));
 
