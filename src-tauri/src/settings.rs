@@ -57,6 +57,9 @@ pub struct Settings {
     /// 監聽系統輸出軌靜音的全域快捷鍵(Tauri Shortcut 字串,如 "Ctrl+Shift+M");
     /// None = 未綁定。註冊與觸發由前端 global-shortcut plugin 處理。
     pub monitor_hotkey: Option<String>,
+    /// 展開／收合全部 VST 面板的應用程式內快捷鍵(Shortcut 字串);
+    /// None = 預設 Ctrl+V。比對與觸發由前端 keydown 處理(非全域)。
+    pub vst_hotkey: Option<String>,
     /// P1-K 輸入靜音看門狗開關。降噪/閘門型麥克風(NVIDIA Broadcast 等)沒說話時
     /// 送出真數位零,會被看門狗誤判成斷源 —— 這類使用者需要能關掉警示。
     pub input_silence_alert: bool,
@@ -86,6 +89,7 @@ impl Default for Settings {
             check_updates_on_startup: true,
             ui_scale: 100,
             monitor_hotkey: None,
+            vst_hotkey: None,
             input_silence_alert: true,
             ui_font_family: None,
             notice_auto_dismiss_seconds: 5,
@@ -226,6 +230,12 @@ pub fn normalize(raw: Value) -> (Value, Settings, Vec<String>) {
                 Ok(v) => s.monitor_hotkey = v,
                 Err(()) => {
                     warnings.push("settings.monitorHotkey 型別錯誤,已回復預設(未綁定)".into())
+                }
+            },
+            "vstHotkey" => match opt_str(v) {
+                Ok(v) => s.vst_hotkey = v,
+                Err(()) => {
+                    warnings.push("settings.vstHotkey 型別錯誤,已回復預設 Ctrl+V".into())
                 }
             },
             "inputSilenceAlert" => match v.as_bool() {
@@ -673,6 +683,22 @@ mod tests {
         // 型別錯 → 回預設 None + warning
         let (_, s, w) = normalize(json!({"monitorHotkey": 42}));
         assert_eq!(s.monitor_hotkey, None);
+        assert_eq!(w.len(), 1);
+    }
+
+    #[test]
+    fn normalize_vst_hotkey() {
+        let (_, s, w) = normalize(json!({"vstHotkey": "Ctrl+Shift+L"}));
+        assert_eq!(s.vst_hotkey.as_deref(), Some("Ctrl+Shift+L"));
+        assert!(w.is_empty());
+
+        // null = 預設 Ctrl+V，合法
+        let (_, s, w) = normalize(json!({"vstHotkey": null}));
+        assert_eq!(s.vst_hotkey, None);
+        assert!(w.is_empty());
+
+        let (_, s, w) = normalize(json!({"vstHotkey": true}));
+        assert_eq!(s.vst_hotkey, None);
         assert_eq!(w.len(), 1);
     }
 

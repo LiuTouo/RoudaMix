@@ -54,6 +54,8 @@ export type AppSettings = {
   uiScale?: number;
   /** 監聽系統輸出軌靜音的全域快捷鍵(Tauri Shortcut 字串,如 "Ctrl+Shift+M");null = 未綁定 */
   monitorHotkey?: string | null;
+  /** 展開／收合全部 VST 面板的應用程式內快捷鍵(Shortcut 字串);null = 預設 Ctrl+V */
+  vstHotkey?: string | null;
   /** P1-K 輸入靜音看門狗(麥克風持續 30 秒全零 → 警示);降噪/閘門型麥克風沒說話時送真零,需可關閉。缺欄位 = 開啟。 */
   inputSilenceAlert?: boolean;
   /** 主介面字型(本機已安裝字族名);null/缺欄位 = 預設 IBM Plex Sans TC。 */

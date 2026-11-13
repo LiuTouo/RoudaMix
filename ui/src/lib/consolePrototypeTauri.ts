@@ -8,7 +8,7 @@ const handlers = new Map<string, Set<(event: { payload: any }) => void>>();
 const status = structuredClone({ ...initialStatus, tracks: [] as Track[] });
 let settings: AppSettings = { startupMode: 'blank', sessionDir: null, startupFile: null,
   lastSessionPath: null, closeBehavior: null, startMinimizedOnAutostart: false,
-  checkUpdatesOnStartup: false, monitorHotkey: null, uiScale: 100 };
+  checkUpdatesOnStartup: false, monitorHotkey: null, vstHotkey: null, uiScale: 100 };
 let autostart = false;
 let jobId = 0;
 let scanTimer: ReturnType<typeof setTimeout> | undefined;

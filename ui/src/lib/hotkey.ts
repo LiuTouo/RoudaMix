@@ -56,3 +56,20 @@ export function eventToShortcut(e: KeyboardEvent): string | null {
   if (e.metaKey) mods.push("Super");
   return [...mods, key].join("+");
 }
+
+/** 儲存的 shortcut 字串 → 是否比中此 keydown(與 eventToShortcut 同鍵名規則:
+ *  主鍵用 e.code、修飾鍵全等比對;應用程式內快捷鍵比對用)。 */
+export function shortcutMatches(shortcut: string, e: KeyboardEvent): boolean {
+  const parts = shortcut.split("+");
+  const key = parts.pop();
+  if (!key || codeToKey(e.code) !== key) return false;
+  const want = new Set(parts);
+  const has = new Set<string>();
+  if (e.ctrlKey) has.add("Ctrl");
+  if (e.altKey) has.add("Alt");
+  if (e.shiftKey) has.add("Shift");
+  if (e.metaKey) has.add("Super");
+  if (want.size !== has.size) return false;
+  for (const m of want) if (!has.has(m)) return false;
+  return true;
+}

@@ -1,6 +1,6 @@
 import assert from "node:assert";
 import { test } from "node:test";
-import { eventToShortcut } from "./hotkey.ts";
+import { eventToShortcut, shortcutMatches } from "./hotkey.ts";
 
 /** 最小 KeyboardEvent 假體(只帶 hotkey.ts 用到的欄位) */
 const ev = (p: Partial<KeyboardEvent>): KeyboardEvent => p as KeyboardEvent;
@@ -32,4 +32,19 @@ test("不支援的鍵 = null;支援的符號鍵轉 friendly 名", () => {
     eventToShortcut(ev({ key: "Up", code: "ArrowUp", ctrlKey: true })),
     "Ctrl+Up",
   );
+});
+
+test("shortcutMatches:儲存字串與 keydown 比對(主鍵用 code、修飾鍵全等)", () => {
+  const ctrlV = ev({ key: "v", code: "KeyV", ctrlKey: true });
+  assert.equal(shortcutMatches("Ctrl+V", ctrlV), true);
+  // 修飾鍵多/少/不同 → 不比中
+  assert.equal(shortcutMatches("Ctrl+V", ev({ key: "v", code: "KeyV" })), false);
+  assert.equal(shortcutMatches("Ctrl+V", ev({ key: "v", code: "KeyV", ctrlKey: true, shiftKey: true })), false);
+  assert.equal(shortcutMatches("Ctrl+Shift+V", ctrlV), false);
+  assert.equal(shortcutMatches("Alt+V", ctrlV), false);
+  // 主鍵不同(不含 Shift 誤差)、F 鍵、符號鍵
+  assert.equal(shortcutMatches("Ctrl+M", ctrlV), false);
+  assert.equal(shortcutMatches("F9", ev({ key: "F9", code: "F9" })), true);
+  assert.equal(shortcutMatches("Super+F9", ev({ key: "F9", code: "F9", metaKey: true })), true);
+  assert.equal(shortcutMatches("Ctrl+/", ev({ key: "/", code: "Slash", ctrlKey: true })), true);
 });

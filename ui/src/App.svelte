@@ -65,7 +65,7 @@
     register as registerShortcut,
     unregister as unregisterShortcut,
   } from "@tauri-apps/plugin-global-shortcut";
-  import { eventToShortcut } from "./lib/hotkey";
+  import { eventToShortcut, shortcutMatches } from "./lib/hotkey";
   import {
     connectStatus,
     onConnection,
@@ -597,18 +597,11 @@
     window.addEventListener("keydown", onKeyDown);
     unsubs.push(() => window.removeEventListener("keydown", onKeyDown));
 
-    // Ctrl+V = 開/收所有「有 plugin」音軌的 VST sidecar;焦點在可編輯欄位時讓給貼上
+    // 應用程式內快捷鍵 = 開/收所有「有 plugin」音軌的 VST sidecar(可自訂,預設 Ctrl+V);
+    // 焦點在可編輯欄位時讓給原生行為(如貼上)
     const onVstHotkey = (e: KeyboardEvent) => {
-      if (
-        e.defaultPrevented ||
-        e.repeat ||
-        !e.ctrlKey ||
-        e.altKey ||
-        e.metaKey ||
-        e.shiftKey ||
-        e.key.toLowerCase() !== "v"
-      )
-        return;
+      if (e.defaultPrevented || e.repeat) return;
+      if (!shortcutMatches(appSettings?.vstHotkey ?? "Ctrl+V", e)) return;
       const t = e.target as HTMLElement | null;
       if (t?.isContentEditable || t?.closest?.("input, textarea, select")) return;
       if (vstExpandableIds.length === 0) return;
@@ -849,6 +842,7 @@
     | "check-updates"
     | "close-behavior"
     | "monitor-hotkey"
+    | "vst-hotkey"
     | "preferences"
     | "last-session"
     | "last-working"
@@ -1780,7 +1774,7 @@
 
   // ---------- 監聽全域快捷鍵(設定 → 快捷鍵;切換監聽輸出軌靜音) ----------
 
-  let capturingHotkey = $state(false); // 設定頁擷取模式中
+  let capturingHotkey = $state<"monitor" | "vst" | null>(null); // 設定頁擷取模式中(哪一列)
 
   /** 捷徑觸發:切換監聽系統輸出軌靜音(與 M 按鈕同路徑;engine 權威 status 廣播回同步) */
   function toggleMonitorMute() {
@@ -1835,6 +1829,24 @@
     if (r2.status === "completed") acceptSettingsReply(revert, r2.value);
   }
 
+  // 應用程式內快捷鍵（展開／收合全部 VST 面板）：null = 預設 Ctrl+V；無需註冊，
+  // keydown 比對隨設定即時生效。存檔失敗回復原值（同 monitor 路徑模式）。
+  async function setVstHotkey(next: string | null) {
+    if (!appSettings) return;
+    const previous = appSettings.vstHotkey ?? null;
+    if (previous === next) return;
+    appSettings.vstHotkey = next;
+    const patch = { vstHotkey: next };
+    const result = await writeSettings("vst-hotkey", patch);
+    if (result.status !== "completed") {
+      appSettings.vstHotkey = previous; // 存檔失敗:persisted 未變,只回復本地
+      if (result.status === "failed")
+        addNotice("error", "快捷鍵偏好儲存失敗", errorText(result.error));
+      return;
+    }
+    acceptSettingsReply(patch, result.value);
+  }
+
   // 擷取模式:capture phase 攔 keydown(擋住 Ctrl+S 等既有快捷鍵與瀏覽器預設行為)
   let captureHint = $state<string | null>(null); // 拒絕組合的原因(無聲拒絕等於「沒反應」)
   $effect(() => {
@@ -1843,14 +1855,23 @@
       e.preventDefault();
       e.stopPropagation();
       if (e.key === "Escape") {
-        capturingHotkey = false;
+        capturingHotkey = null;
         return;
       }
       const shortcut = eventToShortcut(e);
       if (shortcut) {
+        // 兩列不得同鍵:監聽(全域)與 VST(視窗內)會同時觸發
+        const other = capturingHotkey === "monitor"
+          ? appSettings?.vstHotkey ?? "Ctrl+V"
+          : appSettings?.monitorHotkey ?? null;
+        if (other && shortcut === other) {
+          captureHint = `「${shortcut}」已綁定給 ${capturingHotkey === "monitor" ? "VST 面板" : "監聽靜音"}，請換一組；按 Esc 取消。`;
+          return;
+        }
         captureHint = null;
-        capturingHotkey = false;
-        void setMonitorHotkey(shortcut);
+        const target = capturingHotkey;
+        capturingHotkey = null;
+        void (target === "monitor" ? setMonitorHotkey(shortcut) : setVstHotkey(shortcut));
         return;
       }
       // 純修飾鍵是組合中途,不提示;其餘無法綁定的鍵當場說明原因
@@ -2012,7 +2033,7 @@
       class="settings"
       onclick={toggleAllVst}
       aria-pressed={!anyVstClosed}
-      data-tooltip="展開／收合全部音軌的 VST 面板（僅有插件的音軌；同 Ctrl+V）。"
+      data-tooltip="展開／收合全部音軌的 VST 面板（僅有插件的音軌；同設定 → 快捷鍵的「VST 面板」組合，預設 Ctrl+V）。"
       >{anyVstClosed ? "VST 展開全部" : "VST 收合全部"}</button
     >
   {/if}
@@ -2632,11 +2653,11 @@
     <h2>快捷鍵</h2>
     <div class="formrow">
       <span class="formlabel">監聽靜音(全域)</span>
-      {#if capturingHotkey}
-        <button class="primary" onclick={() => (capturingHotkey = false)}>按下快捷鍵…(點此或 Esc 取消)</button>
+      {#if capturingHotkey === "monitor"}
+        <button class="primary" onclick={() => (capturingHotkey = null)}>按下快捷鍵…(點此或 Esc 取消)</button>
       {:else}
         <button
-          onclick={() => { captureHint = null; capturingHotkey = true; }}
+          onclick={() => { captureHint = null; capturingHotkey = "monitor"; }}
           data-tooltip="點擊後按下組合鍵（需含 Ctrl/Alt/Win，或 F1–F24）；全域：背景時也能切換監聽靜音。"
         >{appSettings?.monitorHotkey ?? "未設定"}</button>
         {#if appSettings?.monitorHotkey}
@@ -2647,16 +2668,26 @@
         {/if}
       {/if}
     </div>
+    <div class="formrow">
+      <span class="formlabel">展開／收合全部 VST 面板</span>
+      {#if capturingHotkey === "vst"}
+        <button class="primary" onclick={() => (capturingHotkey = null)}>按下快捷鍵…(點此或 Esc 取消)</button>
+      {:else}
+        <button
+          onclick={() => { captureHint = null; capturingHotkey = "vst"; }}
+          data-tooltip="點擊後按下組合鍵（需含 Ctrl/Alt/Win，或 F1–F24）；僅在 RoudaMix 視窗內生效，焦點在輸入欄位時讓給原生行為。預設 Ctrl+V。"
+        >{appSettings?.vstHotkey ?? "Ctrl+V（預設）"}</button>
+        {#if appSettings?.vstHotkey}
+          <button
+            onclick={() => void setVstHotkey(null)}
+            data-tooltip="重設回預設 Ctrl+V。"
+          >重設</button>
+        {/if}
+      {/if}
+    </div>
     {#if capturingHotkey && captureHint}
       <p class="dim indent">{captureHint}</p>
     {/if}
-    <div class="formrow">
-      <span class="formlabel">展開／收合全部 VST 面板</span>
-      <span
-        class="mono"
-        data-tooltip="應用程式內固定快捷鍵（同頂欄「VST 展開全部」鈕）；焦點在輸入欄位時讓給貼上。範圍：僅有插件的音軌。"
-      >Ctrl+V（固定）</span>
-    </div>
     </div>
   {:else}
     <div class="tabpane" in:fade={{ duration: 120 }}>
