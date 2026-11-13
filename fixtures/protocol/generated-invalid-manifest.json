@@ -328,7 +328,8 @@
         "path"
       ],
       "wrongType": [
-        "path"
+        "path",
+        "deferBypassed"
       ]
     },
     "ensure_system_outputs": {

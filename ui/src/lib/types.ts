@@ -114,7 +114,7 @@ export interface RackSlot {
   runtimeState?: "active" | "preparing" | "degraded" | "suspended";
   monitorState?: "active" | "preparing" | "degraded" | "suspended";
   params: ParamValue[];
-  availability?: "ok" | "missing" | "loadFailed"; // != ok = placeholder(不參與 DSP)
+  availability?: "ok" | "missing" | "loadFailed" | "deferred"; // != ok = placeholder(不參與 DSP);deferred = bypass 中未載入(非錯誤)
   loadError?: string | null;
 }
 

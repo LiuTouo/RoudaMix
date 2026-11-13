@@ -613,6 +613,7 @@
           selected = "";
           bufSize = null;
           restoreError = "";
+          sessionProgress = null;
           pendingRespawnPath = currentSessionPath; // 崩潰救援:先救走本代實際在用的檔(null = 沒檔可救)
           currentSessionPath = null; // 新 engine 尚未成功恢復任何檔案，不得覆寫上一代 Session
           scanJob = transitionScanJob(scanJob, { type: "reset" }).state;
@@ -633,6 +634,10 @@
       await onEngineEvent((kind, payload) => {
         if (kind === "status") {
           applyAuthoritativeStatus({ status: payload as EngineStatus });
+        }
+        if (kind === "session_progress") {
+          const p = payload as { done: number; total: number; name: string };
+          if (sessionLoading) sessionProgress = p;
         }
         // 硬體面板關閉:driver 設定可能變(率),且 SSL 這類 driver 在面板動 buffer 後
         // 現有 stream 會死流 —— 一律重掃 + 重建(短暫中斷換取與硬體同步)
@@ -961,11 +966,20 @@
   }
 
   let restoreError = $state(""); // 啟動恢復失敗(檔案不存在/損壞)→ 頂列提示
+  let sessionLoading = $state(false); // load_session 在飛(重 plugin 載入可達數秒~數十秒):中央顯示「還原中」而非誤導的「引擎未啟動」
+  let sessionProgress = $state<{ done: number; total: number; name: string } | null>(null); // engine session_progress 事件:置中進度框(reply 後清除)
   type SessionMutationTag = "startup-restore" | "manual-restore";
   function restoreSession(tag: SessionMutationTag, path: string) {
     return mutations.run(mutKey.session, tag, () => {
       resetPluginTransfer();
-      return engineCommand("load_session", { path });
+      sessionLoading = true;
+      return engineCommand("load_session", {
+        path,
+        deferBypassed: appSettings?.deferBypassedPlugins === true,
+      }).finally(() => {
+        sessionLoading = false;
+        sessionProgress = null;
+      });
     });
   }
 
@@ -1872,6 +1886,25 @@
 </script>
 
 <div class="audio-console">
+{#if sessionProgress && sessionProgress.total > 0}
+  <!-- Session 還原進度:置中訊息框 + 進度條,reply 後消失(重 plugin 載入可達數秒~數十秒) -->
+  <div class="session-progress-veil" role="status" aria-live="polite">
+    <div class="session-progress-box">
+      <h3>正在還原 Session（載入插件中…）</h3>
+      <p class="session-progress-name">{sessionProgress.name || ""}</p>
+      <div
+        class="session-progress-track"
+        aria-label="插件載入進度 {sessionProgress.done}/{sessionProgress.total}"
+      >
+        <div
+          class="session-progress-fill"
+          style="width:{Math.round((sessionProgress.done / sessionProgress.total) * 100)}%"
+        ></div>
+      </div>
+      <p class="session-progress-count">{sessionProgress.done}/{sessionProgress.total}</p>
+    </div>
+  </div>
+{/if}
 <header class="bar">
   <!-- P1-L:連線細分狀態(spawning/connected/spawn_failed/version mismatch…)+ retry -->
   <span class="dot" class:ok={cv.tone === "ok"} class:err={cv.tone === "err"} data-tooltip={connTip}></span>
@@ -2064,7 +2097,7 @@
             </div>
             <p class="dim startinfo">
               裝置：{startDeviceLabel} ·
-              {running ? `引擎執行中 ${Math.round(status!.sampleRate)} Hz` : "引擎未啟動"}
+              {#if sessionLoading}正在還原 Session（載入插件中，重型插件可能需要數秒）…{:else if running}{`引擎執行中 ${Math.round(status!.sampleRate)} Hz`}{:else}引擎未啟動{/if}
             </p>
             <p class="dim startinfo">
               {systemOutputsCreated ? "監聽／串流輸出軌已建立" : "監聽／串流輸出軌尚未建立"}。
@@ -2481,6 +2514,26 @@
       </div>
     {/if}
     <h2>Session</h2>
+    <div class="formrow checkrow" class:disabled={!appSettings}>
+      <span class="formlabel">還原速度</span>
+      <input
+        id="deferbypassedplugins"
+        type="checkbox"
+        checked={appSettings?.deferBypassedPlugins === true}
+        disabled={!appSettings}
+        onchange={(e) => {
+          if (!appSettings) return;
+          appSettings.deferBypassedPlugins = e.currentTarget.checked;
+          persistSettings();
+        }}
+      />
+      <label
+        class="checklabel"
+        for="deferbypassedplugins"
+        data-tooltip="勾選後，還原 Session 時 Bypass 中的插件先不載入（改為占位，加快啟動）；解除 Bypass 或按「載入」時才真的載入。不勾 = 全部照載，需等待較久。預設不勾。"
+        >Bypass 中的插件先不載入（加快啟動）</label
+      >
+    </div>
     <div class="formrow">
       <span class="formlabel">Session</span>
       <button onclick={saveSession}>儲存 Session</button>

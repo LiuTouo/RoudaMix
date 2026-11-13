@@ -60,7 +60,7 @@ export interface CommandPayloads {
   "save_preset": { "instanceId": number; "path": string };
   "load_preset": { "instanceId": number; "path": string };
   "save_session": { "path": string | null; "deviceKey"?: string | null; "sampleRate"?: number | null; "bufferSize"?: number | null };
-  "load_session": { "path": string };
+  "load_session": { "path": string; "deferBypassed"?: boolean };
   "ensure_system_outputs": Record<string, never>;
   "set_editor_scale": { "percent": number };
   "set_editor_owner": { "hwnd": number };

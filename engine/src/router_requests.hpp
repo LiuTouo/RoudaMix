@@ -263,8 +263,13 @@ struct SaveSession {
 
 struct LoadSession {
     std::filesystem::path path;
+    // 使用者選擇:bypass 中的 plugin 延遲載入(預設 false = 全加載等待)
+    bool defer_bypassed{false};
     explicit LoadSession(const nlohmann::json& payload)
-        : path(payload.at("path").get<std::string>()) {}
+        : path(payload.at("path").get<std::string>()),
+          defer_bypassed(payload.contains("deferBypassed") &&
+                         payload["deferBypassed"].is_boolean() &&
+                         payload["deferBypassed"].get<bool>()) {}
 };
 
 struct EditorScale {

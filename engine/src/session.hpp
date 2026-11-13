@@ -4,6 +4,7 @@
 #pragma once
 
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 
@@ -29,8 +30,13 @@ std::optional<Failure> save(const AudioEngine& engine, const std::filesystem::pa
 // 讀檔 + 重建:清空全部軌 → 逐軌 track_add → source/output/gain/mute → plugins →
 // dests(舊→新 id map)。不動裝置(不自動 start);session 的 deviceKey/sampleRate/
 // bufferSize 原樣放 applied 給 caller。v2 會遷移到 v3 defaults；v1 失敗(session_io)。
+// defer_bypassed = bypass 中的 plugin 不載 module(deferred 佔位,un-bypass/retry 才載);
+// progress = 每個 plugin 處理前回報(done/total/插件名;UI 進度條用),可為空。
+using LoadProgress = std::function<void(std::uint32_t done, std::uint32_t total,
+                                        const std::string& name)>;
 std::optional<Failure> load(AudioEngine& engine, const std::filesystem::path& file,
-                            nlohmann::json& applied);
+                            nlohmann::json& applied, bool defer_bypassed = false,
+                            const LoadProgress& progress = {});
 
 // Sandbox fail-closed preflight 的單一來源:依 engine 現況推導 rate/block 後送 worker
 // preflight。回傳失敗類別(kNone = 通過);error 帶 worker 訊息。Router 的

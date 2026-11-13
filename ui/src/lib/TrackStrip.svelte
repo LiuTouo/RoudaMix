@@ -129,7 +129,7 @@
   // placeholder(missing/broken)槽:黯淡顯示 + 重試/重新定位/移除
   const isPh = (s: RackSlot) => s.availability !== undefined && s.availability !== "ok";
   const phLabel = (s: RackSlot) =>
-    s.availability === "missing" ? "遺失" : "載入失敗";
+    s.availability === "missing" ? "遺失" : s.availability === "deferred" ? "bypass 中·未載入" : "載入失敗";
 
   const dev = $derived(devices.find((d) => d.deviceKey === selectedDeviceKey) ?? null);
   const isOutput = $derived(track.kind === "output");
@@ -1279,12 +1279,16 @@
             : "拖曳調整 plugin chain 順序；按右鍵開啟操作選單。"}
         >
           {#if isPh(s)}
-            <!-- missing/broken:原鏈位保留,不參與 DSP;提供重試/重新定位/移除 -->
+            <!-- missing/broken/deferred:原鏈位保留,不參與 DSP;提供重試/重新定位/移除 -->
             <div class="plugtitle">
-              <span class="phmark" data-tooltip={`Plugin 載入失敗：${s.loadError ?? "原因未提供"}`}>⚠</span>
+              <span class="phmark" data-tooltip={s.availability === "deferred"
+                ? "Bypass 中的插件還原時未載入（加快啟動）；按重試或解除 Bypass 時才會載入。"
+                : `Plugin 載入失敗：${s.loadError ?? "原因未提供"}`}>{s.availability === "deferred" ? "⏸" : "⚠"}</span>
               <span
                 class="plugname phname"
-                data-tooltip={`Plugin 檔案：\n${s.pluginPath}\n\n載入錯誤：${s.loadError ?? "原因未提供"}`}
+                data-tooltip={s.availability === "deferred"
+                  ? `Plugin 檔案：\n${s.pluginPath}\n\nBypass 中故還原時未載入；按「載入」或解除 Bypass 時才會載入。`
+                  : `Plugin 檔案：\n${s.pluginPath}\n\n載入錯誤：${s.loadError ?? "原因未提供"}`}
               >
               <span class="phwhy">{phLabel(s)}</span>
               {#if renamingId === s.instanceId}
@@ -1299,8 +1303,10 @@
               <button
                 class="mini"
                 onclick={() => retryPlugin(s)}
-                data-tooltip="使用原始檔案路徑重新載入此 plugin。"
-                >重試</button
+                data-tooltip={s.availability === "deferred"
+                  ? "Bypass 中的插件還原時未載入；現在載入它（參數會照存檔恢復）。"
+                  : "使用原始檔案路徑重新載入此 plugin。"}
+                >{s.availability === "deferred" ? "載入" : "重試"}</button
               >
               <button
                 class="mini"

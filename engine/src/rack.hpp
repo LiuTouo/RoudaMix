@@ -65,7 +65,7 @@ struct RackSlot {
     // placeholder 語意:plugin == nullptr 且 availability != kOk。session 載入時
     // module 消失/壞檔/worker 不在 → 保留原位置與 metadata(params/bypass),
     // 不參與 DSP(等同 bypass);可 retry 載回同一 instanceId。
-    enum class Availability : std::uint8_t { kOk, kMissing, kLoadFailed };
+    enum class Availability : std::uint8_t { kOk, kMissing, kLoadFailed, kDeferred };
     using RuntimeState = RouteRuntimeState;
     std::uint32_t instance_id{};
     std::string name;  // UI 顯示(class name;placeholder 時 = session 存的名字)
@@ -114,11 +114,14 @@ inline const char* runtime_state_str(RackSlot::RuntimeState state) noexcept {
     return "active";
 }
 
-// JSON 字串(protocol/session 共用;"ok"|"missing"|"loadFailed")
+// JSON 字串(protocol/session 共用;"ok"|"missing"|"loadFailed"|"deferred")
+// deferred = session 還原時 bypass 中的 plugin 不載 module(重 plugin 初始可達
+// 數秒~數十秒),佔位保留 metadata;un-bypass/retry 才真的載。
 inline const char* availability_str(RackSlot::Availability a) noexcept {
     switch (a) {
         case RackSlot::Availability::kMissing: return "missing";
         case RackSlot::Availability::kLoadFailed: return "loadFailed";
+        case RackSlot::Availability::kDeferred: return "deferred";
         case RackSlot::Availability::kOk: break;
     }
     return "ok";

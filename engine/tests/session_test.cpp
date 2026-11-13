@@ -194,7 +194,7 @@ int main() {
         CHECK(slot.name == "XComp");
         CHECK(slot.module_path == "C:\\nope\\x.vst3");
         CHECK(slot.class_id == "ABCD");
-        CHECK(slot.bypass);
+        CHECK(slot.bypass);  // 預設(deferBypassed=false)連 bypass 中也全加載
         CHECK(slot.monitor_bypass);
         CHECK(slot.param_values.size() == 1 && slot.param_values[0].first == 1 &&
               slot.param_values[0].second == 0.75);
@@ -240,6 +240,64 @@ int main() {
         CHECK(slot.monitor_bypass);
         CHECK(applied["missing"].size() == 1);
         CHECK(applied["missing"][0]["code"] == "plugin_load_failed");
+    }
+
+    // 6c. 延遲載入(load_session deferBypassed=true):bypass 中的 plugin 還原時
+    //     不載 module = deferred 佔位(metadata/params/旗標全存、不進 missing 清單);
+    //     存檔→重載仍 deferred;預設(false)= 走全加載(6 的 bypassed:true 途徑)
+    {
+        const auto f3 = tmp / "defer.rmsession";
+        write_text(f3,
+                   R"({"roudamixSession":4,"tracks":[{"trackId":7,"kind":"audio",)"
+                   R"("name":"Mic","source":null,"dests":[],"output":null,)"
+                   R"("gain":1,"mute":false,"plugins":[{"pluginPath":"C:\\nope\\x.vst3",)"
+                   R"("classId":"ABCD","name":"XComp","bypassed":true,)"
+                   R"("monitorBypassed":true,)"
+                   R"("params":[{"paramId":1,"normalized":0.75}]}]}]})");
+        nlohmann::json applied;
+        CHECK(!rmx::session::load(e, f3, applied, /*defer_bypassed=*/true));
+        CHECK(e.tracks()[0].chain.size() == 1);
+        const auto& slot = e.tracks()[0].chain[0];
+        CHECK(slot.is_placeholder());
+        CHECK(slot.plugin == nullptr);
+        CHECK(slot.availability == rmx::RackSlot::Availability::kDeferred);
+        CHECK(slot.name == "XComp");
+        CHECK(slot.bypass);  // 佔位維持 bypass;un-bypass(Router)才真的載
+        CHECK(slot.monitor_bypass);
+        CHECK(slot.param_values.size() == 1 && slot.param_values[0].second == 0.75);
+        CHECK(slot.load_error.empty());
+        // 非錯誤:不進 missing 診斷(重 plugin 掛著不拖慢還原、不警示)
+        CHECK(applied["missing"].size() == 0);
+        // roundtrip:存檔記 deferred → 重載仍 deferred(快啟動語意持久)
+        const auto f4 = tmp / "defer2.rmsession";
+        CHECK(!rmx::session::save(e, f4));
+        const auto j = nlohmann::json::parse(read_text(f4), nullptr, false);
+        CHECK(!j.is_discarded());
+        CHECK(j["tracks"][0]["plugins"][0]["availability"] == "deferred");
+        nlohmann::json applied2;
+        CHECK(!rmx::session::load(e, f4, applied2, /*defer_bypassed=*/true));
+        const auto& slot2 = e.tracks()[0].chain[0];
+        CHECK(slot2.availability == rmx::RackSlot::Availability::kDeferred);
+        CHECK(slot2.bypass);
+        CHECK(applied2["missing"].size() == 0);
+        // 檔案說 deferred 但未 bypass(異常狀態)= 退回正常載入途徑(loadFailed)
+        write_text(f3,
+                   R"({"roudamixSession":4,"tracks":[{"trackId":7,"kind":"audio",)"
+                   R"("name":"Mic","source":null,"dests":[],"output":null,)"
+                   R"("gain":1,"mute":false,"plugins":[{"pluginPath":"C:\\nope\\x.vst3",)"
+                   R"("classId":"ABCD","name":"XComp","bypassed":false,)"
+                   R"("availability":"deferred"}]}]})");
+        nlohmann::json applied3;
+        CHECK(!rmx::session::load(e, f3, applied3, /*defer_bypassed=*/true));
+        const auto& slot3 = e.tracks()[0].chain[0];
+        CHECK(slot3.availability != rmx::RackSlot::Availability::kDeferred);
+        CHECK(applied3["missing"].size() == 1);
+        // 同檔預設(false)= 全加載等待:bypass 中也照載(這裡路徑不存在 → loadFailed)
+        nlohmann::json applied4;
+        CHECK(!rmx::session::load(e, f4, applied4, /*defer_bypassed=*/false));
+        const auto& slot4 = e.tracks()[0].chain[0];
+        CHECK(slot4.availability == rmx::RackSlot::Availability::kLoadFailed);
+        CHECK(applied4["missing"].size() == 1);
     }
 
     // 7. systemRole:檔案帶 role = 原樣;缺 role(舊 v2)= 確定性指派/補建;
@@ -620,7 +678,7 @@ int main() {
             CHECK(slot.name == "P");
             CHECK(slot.class_id == "CID");
             CHECK(slot.module_path == rmx::vst_registry::path_utf8(unapproved_mod));
-            CHECK(slot.bypass);
+            CHECK(slot.bypass);  // 預設全加載:bypass 中也過閘門/試爆
             CHECK(slot.param_values.size() == 1 && slot.param_values[0].first == 3 &&
                   slot.param_values[0].second == 0.25);
             CHECK(slot.load_error.empty() == false);

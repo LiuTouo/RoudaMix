@@ -38,6 +38,55 @@
   background: var(--flat-2);
   box-shadow: -12px 0 28px #0008;
 }
+
+/* Session 還原進度:置中訊息框(load_session 期間;重 plugin 載入可達數秒~數十秒) */
+.session-progress-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #0007;
+}
+.session-progress-box {
+  min-width: 320px;
+  max-width: min(480px, 90vw);
+  padding: 16px 18px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--flat-radius);
+  background: var(--flat-2);
+  box-shadow: 0 18px 44px #000b;
+}
+.session-progress-box h3 {
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+.session-progress-name {
+  margin: 0 0 10px;
+  color: var(--text-dim);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.session-progress-count {
+  margin: 8px 0 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  text-align: right;
+}
+.session-progress-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+}
+.session-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 120ms linear;
+}
 .drawer-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
 .drawer-head strong { flex: 1; }
 .latency-output-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; }

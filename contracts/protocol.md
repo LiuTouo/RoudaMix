@@ -132,7 +132,7 @@ render 裝置,`list_render_devices` 列 endpoints)。每軌一條 VST 鏈
 | `save_preset` | 寫 `.vstpreset`(VST3 容器:`Comp`=component state + `Cont`=controller state + `RmxP`=host 權威表私有 chunk,其他 host 會略過;class ID 為 32 hex 大寫 ASCII);非 mutation(不動 epoch/不廣播) |
 | `load_preset` | 讀 `.vstpreset` 套用(component setState → controller setComponentState);成功 = mutation(廣播 status)。host 端 param 權威值重同步:檔案帶 `RmxP` chunk 時優先採用;無 `RmxP`(外部 host 存的)且 controller 同步成功時自 controller;皆無 = 保持現值。容器缺 `Comp` chunk 或 class ID 不符回 `preset_io` |
 | `save_session` | path null = `%APPDATA%\RoudaMix\default.rmsession`;deviceKey/sampleRate/bufferSize 帶了就蓋寫進檔;寫 §8 SessionFile;非 mutation(不動 epoch/不廣播)。**P1-F 原子寫入**:同目錄 `.tmp` 完整寫入+落盤 → 舊檔搬 `.bak` → rename 替換;任何一步失敗 = 原檔不動、err 帶原因(成功保留一份 `.bak` = 上一版,手動恢復用)。revision 隨回(UI 以此定 clean 基準;失敗 = dirty 不清) |
-| `load_session` | best-effort 全軌重建(壞軌略過不整體失敗;dests 以舊 id→新 id map 重接);消失/壞掉的 plugin = 原鏈位保留 placeholder(name/path/classId/bypass/params 全存,不參與 DSP),詳情列在 `missing`;#13 信任閘門:檔案內 pluginPath 需為本機絕對路徑,且為掃描核准、內容未變的 registry 成員(app spawn 時以 `ROUDAMIX_VST_REGISTRY` 指定;env 未設 = 只擋非本機路徑,registry 檔壞 = fail closed),未過閘 = placeholder(`plugin_unapproved`),按 retry 明確核准才載;`roudamixSession != 2` 一律 `session_io` 拒載(v1 不支援,現況不動);不自動 start;成功 = mutation(廣播 status) |
+| `load_session` | best-effort 全軌重建(壞軌略過不整體失敗;dests 以舊 id→新 id map 重接);消失/壞掉的 plugin = 原鏈位保留 placeholder(name/path/classId/bypass/params 全存,不參與 DSP),詳情列在 `missing`;#13 信任閘門:檔案內 pluginPath 需為本機絕對路徑,且為掃描核准、內容未變的 registry 成員(app spawn 時以 `ROUDAMIX_VST_REGISTRY` 指定;env 未設 = 只擋非本機路徑,registry 檔壞 = fail closed),未過閘 = placeholder(`plugin_unapproved`),按 retry 明確核准才載;payload `deferBypassed: true` 時 bypass 中的 plugin 不在此時載入 module,降為 deferred 佔位(預設 false = 全加載等待;un-bypass/retry 才載,重 plugin 初始可達數秒);載入途中逐 plugin 推 `session_progress` 事件(done/total/name);`roudamixSession != 2` 一律 `session_io` 拒載(v1 不支援,現況不動);不自動 start;成功 = mutation(廣播 status) |
 | `ensure_system_outputs` | 系統輸出補齊:monitor/stream 恰好各一條(缺 = 補,重複 = 留第一個其餘降級);新 session 或載入後缺 role 時 UI 呼;沒變動 = no-op(不動 epoch) |
 | `shutdown_engine` | 回 ack 後退出 |
 
@@ -153,6 +153,7 @@ Events:
 | event | 觸發與處理語意 |
 |---|---|
 | `snapshot` | 連線建立時；自帶 engine 權威的 `telemetryStrips` table |
+| `session_progress` | `load_session` 逐 plugin 處理前(done/total/name;reply 前必達,UI 進度框用) |
 | `status` | tracks/running/xrun/latency/裝置變更，並帶當前 `telemetryStrips`（graph mutation 後更新）；`set_param` 不觸發(但 `revision` 會前進);**stream 狀態改變的失敗(start 失敗、ASIO 重建回滾等)也推** —— client 收 reply error 後以此重同步,不得顯示 stale running |
 | `scan_progress` | `start_scan` 的 job 每掃完一個 root 前 |
 | `scan_done` | 掃描 job 完成;`failed` = 壞 module quarantine(不進 registry);registry 同步寫進 `Snapshot.lastScan` |
@@ -193,9 +194,11 @@ TrackSource  = null | { type: "sine", freq: f32 } | { type: "asioIn", channel: u
 TrackOutput  = null | { type: "asioOut", channel: u32 } | { type: "wasapi", deviceId: str }
                (null = 不落地;asioOut channel = pair 基底;wasapi = WASAPI render endpoint,
                 裝置失效 = 軌 error「render device lost」)
-RackSlot     { instanceId: u32, name: str, pluginPath: str, classId: str, bypassed: bool, monitorBypassed: bool, latencySamples: u64?, effectiveLatencySamples: u64?, monitorLatencySamples: u64?, runtimeState: "active"|"preparing"|"degraded"|"suspended", monitorState: "active"|"preparing"|"degraded"|"suspended", params: [{ paramId: u32, normalized: f32 }], availability: "ok"|"missing"|"loadFailed", loadError: str? }
+RackSlot     { instanceId: u32, name: str, pluginPath: str, classId: str, bypassed: bool, monitorBypassed: bool, latencySamples: u64?, effectiveLatencySamples: u64?, monitorLatencySamples: u64?, runtimeState: "active"|"preparing"|"degraded"|"suspended", monitorState: "active"|"preparing"|"degraded"|"suspended", params: [{ paramId: u32, normalized: f32 }], availability: "ok"|"missing"|"loadFailed"|"deferred", loadError: str? }
                (availability != "ok" = placeholder:module 消失或載入失敗,原鏈位保留、
-                不參與 DSP,UI 黯淡顯示;loadError = 失敗原因)
+                不參與 DSP,UI 黯淡顯示;loadError = 失敗原因;
+                "deferred" = bypass 中未載入的佔位 — 不送 missing、非錯誤,
+                un-bypass/retry 才真的載)
 ParamInfo    { paramId: u32, name: str, normalized: f32, default: f32, bypass: bool }
 ScanModule   { path: str, classes: [PluginClass] }
 PluginClass  { uid: str, name: str, vendor: str, version: str, subcategories: str }
@@ -209,8 +212,9 @@ SessionFile.deviceKey/sampleRate/bufferSize = 最近一次成功 start 的設定
 SessionTrack { trackId: u32, kind: str, systemRole: "monitor"|"stream"|null, latencyPolicy: "fullPdc"|"lowLatency", name: str, color: u32, source: TrackSource, dests: [u32(舊 id)], output: TrackOutput, gain: f32, mute: bool, plugins: [SessionSlot] }
                (載入時 trackId 全部重發;dests 以舊→新 map 重接;app 來源存程序名,載入對不到 = 該軌靜音不失敗;
                 舊 v2 檔無 systemRole = 載入後 engine 確定性指派/補建,不可只靠名稱)
-SessionSlot  { pluginPath: str, classId: str, name: str, bypassed: bool, monitorBypassed: bool, params: [{ paramId: u32, normalized: f32 }], availability: "ok"|"missing"|"loadFailed", loadError: str? }
+SessionSlot  { pluginPath: str, classId: str, name: str, bypassed: bool, monitorBypassed: bool, params: [{ paramId: u32, normalized: f32 }], availability: "ok"|"missing"|"loadFailed"|"deferred", loadError: str? }
                (availability 缺 = "ok";!= "ok" 載入時原樣重建 placeholder、不重新試爆;
+                bypassed: true + availability "ok" 載入時直接降為 deferred(延遲載入);
                 載入詳細清單回在 load_session result.missing)
 MissingPlugin{ trackId: u32(檔案內舊 id), trackName: str, index: u32(鏈位), name: str, pluginPath: str, classId: str, code: str, message: str }
                (code: plugin_missing / plugin_load_failed / sandbox_unavailable /

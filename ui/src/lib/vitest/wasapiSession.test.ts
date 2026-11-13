@@ -99,7 +99,7 @@ it("Session 載入失敗不啟動或停止目前串流", async () => {
   command.mockRejectedValueOnce({ code: "session_io", message: "invalid session" });
   button("場景 / Session").click(); await settle();
   button("載入 Session").click(); await settle();
-  expect(command).toHaveBeenCalledExactlyOnceWith("load_session", { path: "test.rmsession" });
+  expect(command).toHaveBeenCalledExactlyOnceWith("load_session", { path: "test.rmsession", deferBypassed: false });
   expect(document.querySelector('.capsules [role="alert"]')?.textContent).toContain("Session 載入失敗");
 });
 

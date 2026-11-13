@@ -865,7 +865,10 @@
       "payload": {
         "type": "object",
         "required": ["path"],
-        "properties": { "path": { "type": "string" } }
+        "properties": {
+          "path": { "type": "string" },
+          "deferBypassed": { "type": "boolean" }
+        }
       },
       "result": {
         "type": "object",
@@ -1052,6 +1055,18 @@
   "events": [
     { "kind": "snapshot", "payload": { "$ref": "#/definitions/snapshot" } },
     { "kind": "status", "payload": { "$ref": "#/definitions/engineStatus" } },
+    {
+      "kind": "session_progress",
+      "payload": {
+        "type": "object",
+        "required": ["done", "total", "name"],
+        "properties": {
+          "done": { "$ref": "#/definitions/u32" },
+          "total": { "$ref": "#/definitions/u32" },
+          "name": { "type": "string" }
+        }
+      }
+    },
     {
       "kind": "scan_progress",
       "payload": {

@@ -52,6 +52,7 @@ RackSlot::Availability availability_from(const nlohmann::json& j) {
     const auto s = j.get<std::string>();
     if (s == "missing") return RackSlot::Availability::kMissing;
     if (s == "loadFailed") return RackSlot::Availability::kLoadFailed;
+    if (s == "deferred") return RackSlot::Availability::kDeferred;
     return RackSlot::Availability::kOk;
 }
 
@@ -267,7 +268,8 @@ sandbox::PreflightFailure preflight_plugin(const AudioEngine& engine,
 }
 
 std::optional<Failure> load(AudioEngine& engine, const std::filesystem::path& file,
-                            nlohmann::json& applied) {
+                            nlohmann::json& applied, bool defer_bypassed,
+                            const LoadProgress& progress) {
     std::FILE* f = nullptr;
     if (_wfopen_s(&f, file.c_str(), L"rb") != 0 || f == nullptr)
         return failure(Err::kSessionIo, "cannot open session file: " + file.string());
@@ -349,6 +351,24 @@ std::optional<Failure> load(AudioEngine& engine, const std::filesystem::path& fi
     };
 
     // 逐軌重建:track_add(新 id 依序重發)→ 屬性 → plugins → dests(map 重接)
+    // plugins_total:與下方主迴圈同規則的預先計數(過濾條件/每軌 kMaxChain 上限)
+    // ,餵進度回呼;plugins_done = 已完成數(載入/deferred/placeholder 各計一次)。
+    std::uint32_t plugins_total = 0;
+    if (j.contains("tracks") && j["tracks"].is_array()) {
+        for (const auto& st : j["tracks"]) {
+            if (!st.is_object() || !st.contains("plugins") || !st["plugins"].is_array())
+                continue;
+            std::size_t count = 0;
+            for (const auto& sp : st["plugins"]) {
+                if (count >= kMaxChain) break;
+                if (sp.is_object() && sp.contains("pluginPath") &&
+                    sp["pluginPath"].is_string())
+                    ++count;
+            }
+            plugins_total += static_cast<std::uint32_t>(count);
+        }
+    }
+    std::uint32_t plugins_done = 0;
     std::map<std::uint32_t, std::uint32_t> id_map;  // 舊 id → 新 id
     std::map<std::uint32_t, TrackKind> kind_map;    // 舊 id → 檔案軌種(#11 dest 過濾)
     nlohmann::json missing = nlohmann::json::array();  // structured diagnostics
@@ -415,6 +435,8 @@ std::optional<Failure> load(AudioEngine& engine, const std::filesystem::path& fi
                         class_id = sp["classId"].get<std::string>();
                     if (sp.contains("name") && sp["name"].is_string())
                         plug_name = sp["name"].get<std::string>();
+                    if (progress)
+                        progress(plugins_done, plugins_total, plug_name);
                     // 自訂名稱(v4 新檔才有;空/缺 = 未自訂)
                     std::string display_name;
                     if (sp.contains("displayName") && sp["displayName"].is_string())
@@ -467,9 +489,36 @@ std::optional<Failure> load(AudioEngine& engine, const std::filesystem::path& fi
                         });
                     };
 
-                    if (stored != RackSlot::Availability::kOk) {
+                    // 延遲載入(使用者以 load_session deferBypassed 選擇):bypass 中的
+                    // plugin 不在還原時載 module(重 plugin 如 Supertone Clear 每實例
+                    // 初始化 7~10s,鏈上掛著就拖慢整個 load_session)。佔位保留
+                    // metadata/params/旗標,route 規劃本就把 bypass 視為 0-latency
+                    // dry,未載入不影響音訊;un-bypass/retry 才真的載(Router 端把
+                    // un-bypass 導向 retry 同款流程)。存檔的 deferred 只在仍 bypass
+                    // 時維持 deferred(快啟動);檔案說 deferred 但未 bypass = 異常
+                    // 狀態,退回正常載入途徑。
+                    const bool defer = defer_bypassed && bypassed &&
+                                       (stored == RackSlot::Availability::kOk ||
+                                        stored == RackSlot::Availability::kDeferred);
+                    if (defer) {
+                        std::uint32_t instance_id = 0;
+                        (void)engine.add_placeholder_plugin(
+                            new_id, path, class_id, plug_name, true,
+                            RackSlot::Availability::kDeferred, "", params, instance_id);
+                        if (!display_name.empty())
+                            (void)engine.set_plugin_name(instance_id, display_name);
+                        if (monitor_bypassed)
+                            (void)engine.set_monitor_bypass(instance_id, true);
+                        ++plugins_done;
+                        ++chain_index;
+                        continue;  // 非載入失敗:不進 missing 清單
+                    }
+
+                    if (stored == RackSlot::Availability::kMissing ||
+                        stored == RackSlot::Availability::kLoadFailed) {
                         // 已知 placeholder:原樣重建,不重新試爆(檔案記過原因);
-                        // 遺失清單也要列(對使用者來說它仍是壞的)
+                        // 遺失清單也要列(對使用者來說它仍是壞的)。
+                        // (kDeferred 且未 bypass = 異常狀態,往下走正常載入途徑)
                         note_missing(stored == RackSlot::Availability::kMissing
                                          ? "plugin_missing"
                                          : "plugin_load_failed",
@@ -481,6 +530,7 @@ std::optional<Failure> load(AudioEngine& engine, const std::filesystem::path& fi
                                                             instance_id);
                         if (monitor_bypassed)
                             (void)engine.set_monitor_bypass(instance_id, true);
+                        ++plugins_done;
                         ++chain_index;
                         continue;
                     }
@@ -535,6 +585,7 @@ std::optional<Failure> load(AudioEngine& engine, const std::filesystem::path& fi
                         if (monitor_bypassed)
                             (void)engine.set_monitor_bypass(ph_id, true);
                     }
+                    ++plugins_done;
                     ++chain_index;
                 }
             }
@@ -590,6 +641,10 @@ std::optional<Failure> load(AudioEngine& engine, const std::filesystem::path& fi
         // 指派/補建;重複 role = 留第一個。engine 端保證,不靠 UI
         (void)engine.ensure_system_outputs();
     }
+
+    // 終止事件:進度條拉滿(reply 隨後就到,UI 靠 reply 清框;此事件確保 bar 100%)
+    if (progress && plugins_total > 0)
+        progress(plugins_total, plugins_total, "");
 
     applied = nlohmann::json{
         {"deviceKey", j.contains("deviceKey") && j["deviceKey"].is_string()

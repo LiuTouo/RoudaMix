@@ -65,6 +65,10 @@ pub struct Settings {
     pub ui_font_family: Option<String>,
     /// 頂層通知自動消失秒數(0 = 不自動消失,按一下才消失);預設 5 秒。
     pub notice_auto_dismiss_seconds: u32,
+    /// Session 還原時 bypass 中的 plugin 是否延遲載入(deferred 佔位,
+    /// un-bypass/retry 才真的載;重 plugin 初始可達數秒~數十秒)。
+    /// 預設 false = 全加載等待。
+    pub defer_bypassed_plugins: bool,
 }
 
 impl Default for Settings {
@@ -85,6 +89,7 @@ impl Default for Settings {
             input_silence_alert: true,
             ui_font_family: None,
             notice_auto_dismiss_seconds: 5,
+            defer_bypassed_plugins: false,
         }
     }
 }

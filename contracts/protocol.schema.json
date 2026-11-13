@@ -1970,6 +1970,9 @@
               "properties": {
                 "path": {
                   "type": "string"
+                },
+                "deferBypassed": {
+                  "type": "boolean"
                 }
               }
             }
@@ -2298,6 +2301,37 @@
             },
             "payload": {
               "$ref": "#/$defs/engineStatus"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "payload"
+          ],
+          "properties": {
+            "kind": {
+              "const": "session_progress"
+            },
+            "payload": {
+              "type": "object",
+              "required": [
+                "done",
+                "total",
+                "name"
+              ],
+              "properties": {
+                "done": {
+                  "$ref": "#/$defs/u32"
+                },
+                "total": {
+                  "$ref": "#/$defs/u32"
+                },
+                "name": {
+                  "type": "string"
+                }
+              }
             }
           }
         },

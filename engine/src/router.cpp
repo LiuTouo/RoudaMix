@@ -862,6 +862,24 @@ Router::Outcome Router::handle_set_plugin_name(const PluginSetNameRequest& reque
 }
 
 Router::Outcome Router::handle_bypass(const BypassRequest& request, bool monitor) {
+    // deferred 佔位(session 還原時 bypass 中未載入的 plugin)解除 bypass = 使用者
+    // 明確要它出聲 → 先載入(與 retry_plugin 同款:preflight + load + #13 核可),
+    // 失敗回錯、佔位與 bypass 旗標不動。monitor bypass 不觸發載入。
+    if (!monitor && !request.bypassed) {
+        const auto* slot = engine_.find_slot(request.instance_id);
+        if (slot != nullptr && slot->availability == RackSlot::Availability::kDeferred) {
+            const std::string module_path = slot->module_path;
+            const std::string class_id = slot->class_id;
+            std::string error;
+            if (session::preflight_plugin(engine_, module_path, class_id, error) !=
+                sandbox::PreflightFailure::kNone)
+                return failure(Err::kPluginLoadFailed, std::move(error));
+            if (auto fail = engine_.load_placeholder(request.instance_id, module_path,
+                                                     class_id))
+                return failure(std::move(*fail));
+            approve_module(module_path, engine_.find_slot(request.instance_id));
+        }
+    }
     auto fail = monitor ? engine_.set_monitor_bypass(request.instance_id, request.bypassed)
                         : engine_.set_bypass(request.instance_id, request.bypassed);
     if (fail) return failure(std::move(*fail));
@@ -1006,7 +1024,15 @@ Router::Outcome Router::handle_save_session(const SaveSessionRequest& request) {
 Router::Outcome Router::handle_load_session(const LoadSessionRequest& request) {
     plugin_clipboard_.reset();
     nlohmann::json applied;
-    if (auto fail = session::load(engine_, request.path, applied))
+    // 每個 plugin 處理前推進度事件(重 plugin 載入可達數秒~數十秒,UI 置中
+    // 進度框靠這個餵 bar;事件與 reply 同 pipe FIFO,reply 前必達)
+    const auto progress = [this](std::uint32_t done, std::uint32_t total,
+                                 const std::string& name) {
+        send_current(make_event("session_progress",
+                                {{"done", done}, {"total", total}, {"name", name}}));
+    };
+    if (auto fail = session::load(engine_, request.path, applied, request.defer_bypassed,
+                                  progress))
         return failure(std::move(*fail));
     applied["revision"] = revision_ + 1;
     return success(std::move(applied), Effect::kDirty);

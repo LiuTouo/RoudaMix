@@ -104,13 +104,13 @@ it("引擎換代救走本代 session,新代空快照升為膠囊,點擊以該路
   component = mount(App, { target: document.body }); await settle();
   // 建立本代 context:起始區「最近」載入 → currentSessionPath 指向該檔
   button("最近:show.rmsession").click(); await settle();
-  expect(command).toHaveBeenCalledWith("load_session", { path: "C:\\mix\\show.rmsession" });
+  expect(command).toHaveBeenCalledWith("load_session", { path: "C:\\mix\\show.rmsession", deferBypassed: false });
   command.mockClear();
   await crashAndRespawn(status);
   const capsule = document.querySelector(".capsule-body");
   expect(capsule?.textContent).toContain("引擎已重啟");
   capsule!.click(); await settle();
-  expect(command).toHaveBeenCalledWith("load_session", { path: "C:\\mix\\show.rmsession" });
+  expect(command).toHaveBeenCalledWith("load_session", { path: "C:\\mix\\show.rmsession", deferBypassed: false });
 });
 
 it("engine 存活的瞬斷重連(快照與自動 restart 回覆都帶活軌道)不出還原膠囊", async () => {
