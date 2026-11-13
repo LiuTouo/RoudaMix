@@ -123,9 +123,7 @@ describe("跨音軌拖曳", () => {
     expect(get(pluginTransfer).clipboard?.clipboardId).toBe("snapshot-1");
     expect([...document.querySelectorAll<HTMLElement>(".plug")].every((el) => el.style.transform === "translateY(0px)" || el.style.transform === ""))
       .toBe(true);
-    expect(document.querySelector(".drag-ghost")).not.toBeNull(); // 放手落定動畫中
-    vi.advanceTimersByTime(300);
-    expect(document.querySelector(".drag-ghost")).toBeNull();
+    expect(document.querySelector(".drag-ghost")).toBeNull(); // 直接放入：放下即移除，無滑入/淡出動畫
     vi.useRealTimers();
   });
   it("空機架顯示落點並接受副本，同軌仍是排序", async () => {

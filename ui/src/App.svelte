@@ -21,7 +21,7 @@
   import ContextMenu from "./lib/ContextMenu.svelte";
   import type { PluginMenuItem } from "./lib/pluginMenu";
   import { backdropClose } from "./lib/backdropClose";
-  import { mountDragGhost, removeDragGhost, settleDragGhost } from "./lib/ghost";
+  import { mountDragGhost, removeDragGhost } from "./lib/ghost";
   import {
     initialRevisionDirty,
     isRevisionDirty,
@@ -1479,8 +1479,13 @@
       e.dataTransfer?.setData("text/plain", el.dataset.trackId ?? "");
       if (e.dataTransfer) {
         e.dataTransfer.effectAllowed = "move";
-        const r = el.getBoundingClientRect();
-        mountDragGhost(e.dataTransfer, el, el.offsetWidth || STRIP_W, { x: e.clientX - r.left, y: e.clientY - r.top });
+        // 拿起範圍照卡片當下狀態：VST 展開 → 整卡（軌條＋sidecar）；收合 → 只拿軌條
+        // （寬度即收合寬，不帶 sidecar 框/陰影）。clone 原尺寸 1:1、無放大無大柔影
+        // （樣式 inline 於 ghost.ts）；OS 預設快照已被透明 GIF 壓掉，原地整槽淨空不雙重影像
+        const expanded = vstOpenIds.has(drag.id);
+        const card = expanded ? el : (el.querySelector<HTMLElement>(".strip") ?? el);
+        const r = card.getBoundingClientRect();
+        mountDragGhost(e.dataTransfer, card, card.offsetWidth || STRIP_W, { x: e.clientX - r.left, y: e.clientY - r.top });
       }
     };
   }
@@ -1513,28 +1518,50 @@
       const dragIdx = arr.findIndex((t) => t.trackId === drag!.id);
       if (dragIdx >= 0) {
         const pos = lanePos(group, e.clientX);
+        const laneIds = arr.map((t) => t.trackId);
         const reordered = reorderLane(
           tracks.map((t) => t.trackId),
-          arr.map((t) => t.trackId),
+          laneIds,
           drag.id,
           pos,
         );
-        const target = reordered.indexOf(drag.id);
+        const target = reordered.indexOf(drag.id); // 引擎用全域 index
         if (target !== tracks.findIndex((track) => track.trackId === drag!.id))
-          engineCommand("track_move", { trackId: drag.id, newIndex: target }).catch(() => {});
-        // 幽靈落定:滑動預覽已把被拖曳卡放到落點,取得它自身(含 transform 的現位置);
-        // 找不到(虛擬化視窗外/已移除)則滑回原處。排序由狀態更新瞬間完成
-        settleDragGhost(
-          (e.currentTarget as HTMLElement).querySelector<HTMLElement>(`[data-track-id="${drag.id}"]`),
-        );
-      }
-      onDragEnd();
+          // 失敗才立即收（排序不變、預覽歸位）；成功則等排序落地（effect），不用短保險硬切
+          // —— track_move 要重建處理圖，VST 多時回報可達數百 ms，硬切會先彈回舊排列、
+          // 排序後到再跳一次＝大幅移動閃動
+          engineCommand("track_move", { trackId: drag.id, newIndex: target }).catch(() => finishDrag());
+        // 直接放入：不播滑入/淡出 —— 幽靈原地凍結，排序落地（effect）揭示實卡
+        // 的同一幀移除（finishDrag），無空檔、無雙影。
+        // 預覽保持到引擎回報新排序才收（見 settleOrder effect）：立刻收會先彈回舊排列、
+        // 排序落地再跳一次，幽靈飛向的槽位也被別張卡占走 —— 殘影/重疊來源
+        // 比對用 lane 內 index（effect 讀 laneArr）：全域 index 在輸出帶/帶非首位時
+        // 永遠對不上，會淪為只靠保險收尾（拖很久＋隱藏軌晚揭示）
+        settleOrder = { group, id: drag.id, index: reorderLane(laneIds, laneIds, drag.id, pos).indexOf(drag.id) };
+        window.clearTimeout(settleTimer);
+        settleTimer = window.setTimeout(finishDrag, 3000); // 保險：引擎無回應也收尾，不卡在預覽
+      } else onDragEnd();
     };
   }
-  function onDragEnd() {
+  // 落定等待：音軌排序以引擎回報為準（IPC 非同步），預覽與淨空必須撐到新排序落地
+  let settleOrder = $state<{ group: LaneGroup; id: number; index: number } | null>(null); // $state:原地放下(排序不變)也要能觸發收尾
+  let settleTimer: number | undefined;
+  function finishDrag() {
+    settleOrder = null;
+    window.clearTimeout(settleTimer);
     removeDragGhost();
     drag = null;
-    dropAt = null; // Esc / 放到帶外也收尾
+    dropAt = null;
+  }
+  $effect(() => {
+    if (!settleOrder) return;
+    const idx = laneArr(settleOrder.group).findIndex((t) => t.trackId === settleOrder!.id);
+    if (idx === settleOrder.index) finishDrag(); // 排序落地：揭示實卡、同幀移除凍結的幽靈
+  });
+  function onDragEnd() {
+    // drop 緊接的 dragend 不搶先收（已進入落定等待）；Esc/拖出視窗等取消路徑立即收
+    if (settleOrder) return;
+    finishDrag();
   }
 
   // ---------- session 存/載 ----------

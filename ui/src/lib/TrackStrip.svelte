@@ -4,7 +4,7 @@
   import MeterCanvas from "./MeterCanvas.svelte";
   import { fade } from "svelte/transition";
   import { powerOff, powerOn, trackIcons } from "./icons";
-  import { mountDragGhost, removeDragGhost, settleDragGhost } from "./ghost";
+  import { mountDragGhost, removeDragGhost } from "./ghost";
   import { open as openFile } from "@tauri-apps/plugin-dialog";
   import { engineCommand } from "./protocol-commands.generated";
   import { cssColor, destCandidates, matteColor, parseColor, sidechainCandidates, stripOfTrack, type MeterStripView } from "./tracks";
@@ -772,7 +772,7 @@
         );
       }
     }
-    settleDragGhost(target); // 先落定再收尾:層已移交動畫,endPluginDrag 的清理變 no-op
+    removeDragGhost(); // 直接放入：放下即移除，無滑入/淡出動畫
     endPluginDrag();
     plugDropAt = null;
     plugPitch = 0;
@@ -1672,10 +1672,15 @@
   .strip .err {
     user-select: text;
   }
-  .track-slot.dragging .strip {
-    opacity: 0.22; /* 內容已被拿起,原地只剩空槽 */
-    border-style: dashed;
-    border-color: var(--accent);
+  .track-slot.dragging {
+    /* 整卡已被拿起（軌條＋sidecar 同一張卡）：原地完全淨空 —— 半透明殘本
+     * 會與跟隨的實體卡形成雙重殘影；排序去留由滑動預覽表達 */
+    visibility: hidden;
+  }
+  /* .vstside.open 自帶 visibility:visible，會蓋過從 .dragging 繼承的 hidden，
+   * 展開狀態拖曳時原地會殘留 VST 面板（語意錯誤：面板已跟著整卡拿起） */
+  .track-slot.dragging .vstside {
+    visibility: hidden;
   }
   /* 暫態落點:滑動預覽取代亮框染色 —— 拖曳中各卡以 transform 滑到放下後的排列。
    * transition 只在拖曳中(drag-active)開:放下時狀態與 transform 同一 flush 歸零,

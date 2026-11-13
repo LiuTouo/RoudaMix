@@ -68,9 +68,7 @@ describe("VST 拖曳落點", () => {
     drag(rows()[0], "drop", 103);
     expect(command).toHaveBeenCalledWith("move_plugin", { instanceId: 3, newIndex: 0 });
     expect(rows()[0].style.transform).toBe("translateY(0px)");
-    expect(document.querySelector(".drag-ghost")).not.toBeNull(); // 放手落定動畫中
-    vi.advanceTimersByTime(300);
-    expect(document.querySelector(".drag-ghost")).toBeNull();
+    expect(document.querySelector(".drag-ghost")).toBeNull(); // 直接放入：放下即移除，無滑入/淡出動畫
     vi.useRealTimers();
   });
   it("下移:後列上滑,放下先移除再計算最後位置", () => {
