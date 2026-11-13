@@ -11,9 +11,31 @@ export interface CatalogPlugin {
   source: string;
   searchText: string;
 }
-export interface PluginGroup {
+export interface VendorNode {
   name: string;
   plugins: CatalogPlugin[];
+}
+
+/** 樹狀瀏覽（廠牌 → 插件）：計數以唯一 class 為準；未知廠牌垫底。
+ *  分類仍納入搜尋文字，並可由 category 參數直接篩選。 */
+export function browseTree(catalog: CatalogPlugin[], query: string, category = "") {
+  const terms = normalize(query.trim()).split(/\s+/).filter(Boolean);
+  const matches = catalog.filter((plugin) =>
+    (!category || plugin.categories.includes(category)) &&
+    terms.every((term) => plugin.searchText.includes(term)));
+  const vendors = new Map<string, VendorNode>();
+  for (const plugin of matches) {
+    const key = normalize(plugin.vendor);
+    const vendor = vendors.get(key) ?? { name: plugin.vendor, plugins: [] };
+    vendor.plugins.push(plugin);
+    vendors.set(key, vendor);
+  }
+  const fallback = "未知廠牌";
+  return {
+    count: matches.length,
+    vendors: [...vendors.values()].sort((a, b) =>
+      Number(a.name === fallback) - Number(b.name === fallback) || compare(a.name, b.name)),
+  };
 }
 
 const collator = new Intl.Collator("zh-TW", { numeric: true, sensitivity: "base" });
@@ -79,21 +101,10 @@ export function buildPluginCatalog(modules: ScanModule[]): CatalogPlugin[] {
   return catalog;
 }
 
-/** 對外結果以唯一 class 計數；固定以廠牌分組，未知廠牌墊底。 */
-export function browsePlugins(catalog: CatalogPlugin[], query: string) {
-  const terms = normalize(query.trim()).split(/\s+/).filter(Boolean);
-  const matches = catalog.filter((plugin) => terms.every((term) => plugin.searchText.includes(term)));
-  const groups = new Map<string, PluginGroup>();
-  for (const plugin of matches) {
-    const key = normalize(plugin.vendor);
-    const group = groups.get(key) ?? { name: plugin.vendor, plugins: [] };
-    group.plugins.push(plugin);
-    groups.set(key, group);
-  }
-  const fallback = "未知廠牌";
-  return {
-    count: matches.length,
-    groups: [...groups.values()].sort((a, b) =>
-      Number(a.name === fallback) - Number(b.name === fallback) || compare(a.name, b.name)),
-  };
+
+/** 自動偵測目錄中實際出現過的分類（metadata 驅動），供下拉篩選。 */
+export function catalogCategories(catalog: CatalogPlugin[]): string[] {
+  const found = new Set<string>();
+  for (const plugin of catalog) for (const category of plugin.categories) found.add(category);
+  return [...found].sort(compare);
 }

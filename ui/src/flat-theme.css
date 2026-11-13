@@ -103,16 +103,16 @@
   background: var(--surface); color: var(--text); border-color: var(--border);
 }
 #app :is(.dialog-head, .drawer-head, .tabs) { background: transparent; }
-#app :is(.tabs, .plugin-thead, .latency-row) { border-color: var(--border); }
+#app :is(.tabs, .latency-row) { border-color: var(--border); }
 #app .tabs button { background: transparent; border-color: transparent; }
 #app .tabs button.on { background: var(--control); color: var(--active); border-bottom-color: var(--active); }
-#app :is(.formrow, .update-status, .latency-output, .latency-table, .plugin-thead, .plugin-group summary) {
+#app :is(.formrow, .update-status, .latency-output, .latency-table, .plugin-group summary) {
   background: var(--section); border-color: var(--flat-edge);
 }
 #app :is(.plugin-row, .app) {
   background: var(--control); border-color: var(--flat-edge);
 }
-#app :is(.categories span, .destination-count) { background: transparent; }
+#app :is(.destination-count) { background: transparent; }
 #app :is(.destination-option, .ctxitem, .plugin-group summary):hover {
   background: var(--control);
 }
@@ -126,9 +126,8 @@
 #app :is(.dot, .sys-dot, .destination-dot) { border-radius: 50%; }
 
 
-/* 保留插件清單既有間距與次要文字層級。 */
-#app .plugin-picker ul { padding: 4px 6px 10px; gap: 10px; }
-#app :is(.badge, .sysbadge, .categories span, .plugin-picker h2 span) { color: var(--text-dim); }
-#app .categories span { border-color: var(--border); }
+/* 保留插件樹目錄既有間距與次要文字層級。 */
+#app .plugin-picker ul { padding: 2px 6px 6px; gap: 2px; }
+#app :is(.badge, .sysbadge, .plugin-picker .tree-count) { color: var(--text-dim); }
 #app .vstgrip::after { opacity: .4; }
 #app input::placeholder { color: var(--text-dim); opacity: 1; }

@@ -75,36 +75,53 @@ function search(text: string) {
 const groups = () => [...document.querySelectorAll<HTMLDetailsElement>("details.plugin-group")];
 const groupNames = () => groups().map((group) => group.getAttribute("aria-label"));
 const rows = () => [...document.querySelectorAll<HTMLButtonElement>('[aria-label="插件搜尋結果"] li button')];
-const sortButton = (label: string) =>
-  [...document.querySelectorAll<HTMLButtonElement>(".plugin-thead button")]
-    .find((item) => item.getAttribute("aria-label")?.startsWith(label))!;
 const button = (text: string) => [...document.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.trim() === text)!;
 const status = () => document.querySelector('[role="status"]')?.textContent;
+const selectCategory = (value: string) => {
+  const select = document.querySelector<HTMLSelectElement>(".category-field select")!;
+  select.value = value;
+  select.dispatchEvent(new Event("change", { bubbles: true }));
+  flushSync();
+};
+const categoryOptions = () =>
+  [...document.querySelectorAll<HTMLSelectElement>(".category-field select option")].map((o) => o.value);
 
 describe("插件選擇器", () => {
-  it("預設廠牌分組全收合，展開可見表格，類型排序套用於組內", () => {
+  it("預設樹狀目錄全收合；展開廠牌即見插件，同名衝突以完整路徑區分", () => {
     show();
-    expect(document.querySelector("select")).toBeNull();
     expect(groupNames()).toEqual(["Acme", "Echo", "未知廠牌"]);
     expect(groups().every((group) => !group.open)).toBe(true);
     expect(status()).toBe("5 / 5 個插件");
-    groups()[0]!.open = true;
-    const acme = [...groups()[0]!.querySelectorAll("li button")];
-    expect(acme).toHaveLength(2);
-    // 同名衝突以完整路徑呈現來源
+    groups()[0]!.open = true; // Acme：兩個同名 Tone 10
+    const acme = [...groups()[0]!.querySelectorAll<HTMLButtonElement>("li button")];
+    expect(acme.map((row) => row.querySelector(".tree-label")?.textContent?.trim())).toEqual(["Tone 10", "Tone 10"]);
+    // 同名衝突以完整路徑呈現來源；分類以標籤列出
     expect(acme.map((row) => row.querySelector(".source")?.textContent)).toEqual(["C:\\Other\\Studio.vst3", "C:\\VST\\Studio.vst3"]);
-    groups()[1]!.open = true;
-    const echoRows = () => [...groups()[1]!.querySelectorAll("li button")];
-    sortButton("依類型")!.click();
-    flushSync();
-    expect(sortButton("依類型")!.getAttribute("aria-label")).not.toContain("遞減");
-    const ascending = echoRows().map((row) => row.querySelector("strong")?.textContent);
-    sortButton("依類型")!.click();
-    flushSync();
-    expect(sortButton("依類型")!.getAttribute("aria-label")).toContain("遞減");
-    expect(echoRows().map((row) => row.querySelector("strong")?.textContent)).toEqual([...ascending].reverse());
+    expect([...acme[1]!.querySelectorAll(".cats span")].map((chip) => chip.textContent)).toEqual(["Dynamics", "EQ"]);
+    expect([...acme[0]!.querySelectorAll(".cats span")].map((chip) => chip.textContent)).toEqual(["EQ"]);
+    expect(acme.map((row) => row.getAttribute("data-tooltip")))
+      .toContain("C:\\Other\\Studio.vst3\nAcme · 1.0");
+    expect(acme[0]!.getAttribute("data-tooltip")).toContain("1.0");
     expect(document.querySelector("[title]")).toBeNull();
-    expect(rows()[0].getAttribute("data-tooltip")).toContain("1.0");
+  });
+
+  it("分類下拉自動偵測 metadata，可單獨或與搜尋一起篩選", () => {
+    show();
+    // 目錄實際出現的分類：Dynamics/EQ（Tone 10）、Reverb（Room）、樂器（Keys）、未分類（Mystery）
+    expect(categoryOptions()).toEqual(expect.arrayContaining(["", "Dynamics", "EQ", "Reverb", "樂器", "未分類"]));
+    selectCategory("EQ");
+    expect(status()).toBe("2 / 5 個插件");
+    expect(groupNames()).toEqual(["Acme"]);
+    expect(rows()).toHaveLength(2);
+    search("tone");
+    expect(status()).toBe("2 / 5 個插件");
+    selectCategory("Reverb");
+    expect(status()).toBe("0 / 5 個插件");
+    expect(document.body.textContent).toContain("找不到符合條件的插件");
+    selectCategory("");
+    search("");
+    expect(status()).toBe("5 / 5 個插件");
+    expect(groups().every((group) => !group.open)).toBe(true);
   });
 
   it("跨欄位、不分大小寫、多詞搜尋自動展開，清除後回到全收合", () => {
@@ -140,7 +157,8 @@ describe("插件選擇器", () => {
     expect(status()).toBe("2 / 2 個插件");
     expect(groupNames()).toEqual(["Acme"]);
     groups()[0]!.open = true;
-    expect(rows().map((row) => row.querySelector("strong")?.textContent)).toEqual(["EQ 2", "EQ 10"]);
+    expect([...groups()[0]!.querySelectorAll<HTMLButtonElement>("li button")]
+      .map((row) => row.querySelector(".tree-label")?.textContent?.trim())).toEqual(["EQ 2", "EQ 10"]);
   });
 
   it("背景掃描可取消，更新資料重新篩選，取消或失敗通知保留既有結果", () => {
@@ -191,7 +209,7 @@ describe("插件選擇器", () => {
     expect(document.body.textContent).toContain("正在掃描 VST");
   });
 
-  it("選取送出正確 class，等待中避免重複加入，成功才關閉", async () => {
+  it("選取送出正確 class，選取列反白，等待中避免重複加入，成功才關閉", async () => {
     let finish!: () => void;
     const onPick = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
     const { props } = show({ onPick });
@@ -201,6 +219,7 @@ describe("插件選擇器", () => {
     row.click();
     flushSync();
     expect(onPick).toHaveBeenCalledExactlyOnceWith("C:\\VST\\Studio.vst3", "room");
+    expect(row.classList.contains("sel")).toBe(true);
     expect(row.disabled).toBe(true);
     expect(document.querySelector("dialog")?.open).toBe(true);
     finish();

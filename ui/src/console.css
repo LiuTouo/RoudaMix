@@ -137,8 +137,6 @@ body { background: var(--flat-0); }
   & :is(dialog:not(.ctxdlg), .latency-drawer, .destination-popup, .ctx, .capsule, .gaintip) { --surface: var(--flat-2); --section: var(--flat-2); --control: var(--flat-2); --hover: var(--flat-4); background: var(--surface); border: 1px solid var(--border); border-radius: 3px; box-shadow: none; }
   & :is(.dialog-head, .drawer-head, .tabs, .formrow, .update-status, .latency-output, .plugin-group summary) { background: transparent; border-color: var(--border); }
   & :is(.plugin-row, .app) { background: transparent; border: 0; border-bottom: 1px solid var(--divider); border-radius: 0; }
-  /* sticky 表頭需要不透明底，捲動時列表不透出 */
-  & .plugin-thead { background: var(--flat-2); border-bottom: 1px solid var(--divider); }
   & :is(.plugin-row, .app):enabled:hover { background: var(--flat-4); }
   & .tabs button { border: 0; border-bottom: 1px solid transparent; background: transparent; border-radius: 0; }
   & .tabs button.on { color: var(--accent); background: var(--flat-4); border-bottom-color: var(--accent); }

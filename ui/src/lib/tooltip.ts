@@ -10,7 +10,10 @@ type Anchor = { x: number; y: number };
 function tooltipTarget(value: EventTarget | null): HTMLElement | null {
   if (!(value instanceof Element)) return null;
   const target = value.closest<HTMLElement>(TOOLTIP_SELECTOR);
-  return target?.dataset.tooltip?.trim() ? target : null;
+  if (!target?.dataset.tooltip?.trim()) return null;
+  // 提示不得跨過 dialog 邊界繼承外層（backdrop 隔開的容器，例如軌道根的拖曳提示）。
+  const scope = value.closest("dialog") ?? value.ownerDocument;
+  return scope.contains(target) ? target : null;
 }
 
 /**
