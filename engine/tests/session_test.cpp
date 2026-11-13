@@ -657,6 +657,23 @@ int main() {
                   (has_worker ? "plugin_load_failed" : "sandbox_unavailable"));
         }
 
+        // 12a-2. C.7b：registry 記錄「同 fingerprint 已載入成功」的 class → 跳過
+        //        sandbox preflight（worker 在與否皆同）→ 直接 engine 載入；dummy
+        //        module 載不動 = plugin_load_failed（無 worker 環境不再 sandbox_unavailable）
+        {
+            reg.entries[0].verified = {"CID"};
+            CHECK(rmx::vst_registry::save_atomic(regfile, reg, reg_err),
+                  "verified entry save");
+            rmx::AudioEngine g;
+            nlohmann::json applied;
+            gate_load(rmx::vst_registry::path_utf8(approved_mod), applied, g);
+            CHECK(applied["missing"][0]["code"] == "plugin_load_failed",
+                  "verified class skips sandbox preflight");
+            reg.entries[0].verified.clear();
+            CHECK(rmx::vst_registry::save_atomic(regfile, reg, reg_err),
+                  "registry restored without verified");
+        }
+
         // 12b. 本機路徑、檔案存在、但不在 registry = 未核准;
         //      placeholder 佔住原鏈位,metadata 全存、不參與 DSP
         {

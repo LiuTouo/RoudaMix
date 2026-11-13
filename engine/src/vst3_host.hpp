@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -25,6 +26,10 @@ struct Vst3ClassInfo {
 // 列 module 內 Audio Effect classes(只載 factory,不 instantiate processor)
 std::vector<Vst3ClassInfo> scan_vst3_module(const std::filesystem::path& module_path,
                                             std::string& error);
+
+// bundle 內建 moduleinfo.json 直讀（不載 DLL）；無檔/壞檔/無 audio class 回 nullopt
+std::optional<std::vector<Vst3ClassInfo>> scan_moduleinfo_json(
+    const std::filesystem::path& module_path);
 
 struct Vst3ModuleScan {
     std::filesystem::path path;

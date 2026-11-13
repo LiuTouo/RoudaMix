@@ -19,6 +19,7 @@
 #include "public.sdk/source/vst/hosting/parameterchanges.h"
 #include "public.sdk/source/vst/hosting/plugprovider.h"
 #include "public.sdk/source/vst/hosting/processdata.h"
+#include "public.sdk/source/vst/moduleinfo/moduleinfoparser.h"
 #include "public.sdk/source/vst/utility/stringconvert.h"
 
 #include <windows.h>
@@ -29,6 +30,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
+#include <iterator>
 #include <limits>
 
 namespace rmx {
@@ -320,6 +323,37 @@ std::vector<Vst3ClassInfo> scan_vst3_module(const std::filesystem::path& module_
                           info.subCategoriesString()});
     }
     if (result.empty()) error = "no VST3 audio-effect class in module";
+    return result;
+}
+
+// moduleinfo.json 直讀（A.2）：VST3 bundle（SDK≥3.7）內建 class 清單，掃描免
+// LoadLibrary —— 免 DLL 初始化、免 Defender 掃 DLL（冷掃最大隱形成本）。
+// 讀不到/壞檔/無 audio class → nullopt，呼叫端退回 DLL 載入掃描。
+// shortcut: moduleinfo 與 DLL factory 失同步時清單可能出現靝 class，
+// add 時由 Vst3Plugin::load 對真 factory 校驗擋下，不影響載入路徑。
+std::optional<std::vector<Vst3ClassInfo>> scan_moduleinfo_json(
+    const std::filesystem::path& module_path) {
+    std::error_code ec;
+    if (!std::filesystem::is_directory(module_path, ec) || ec) return std::nullopt;
+    const auto json_path =
+        module_path / L"Contents" / L"Resources" / L"moduleinfo.json";
+    std::ifstream in(json_path, std::ios::binary);
+    if (!in) return std::nullopt;
+    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    if (text.empty() || text.size() > 4u * 1024 * 1024) return std::nullopt;
+    const auto info = Steinberg::ModuleInfoLib::parseJson(text, nullptr);
+    if (!info) return std::nullopt;
+    std::vector<Vst3ClassInfo> result;
+    for (const auto& c : info->classes) {
+        if (c.category != kVstAudioEffectClass) continue;
+        std::string subs;
+        for (const auto& s : c.subCategories) {
+            if (!subs.empty()) subs += '|';
+            subs += s;
+        }
+        result.push_back({c.cid, c.name, c.vendor, c.version, subs});
+    }
+    if (result.empty()) return std::nullopt;
     return result;
 }
 

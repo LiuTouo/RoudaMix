@@ -98,6 +98,28 @@ int main() {
               rmx::vst_registry::plugins_json(loaded).size() == 1,
           "roundtrip keeps successful plugin");
 
+    // C.7b verified 標記：序列化往返 + is_verified 判定（fingerprint/class 不符 = 否）
+    loaded.entries[0].verified = {"ABCDEF0123456789ABCDEF0123456789", "1111"};
+    check(rmx::vst_registry::save_atomic(cache, loaded, error), "verified save succeeds");
+    rmx::vst_registry::Registry verified_loaded;
+    check(rmx::vst_registry::load(cache, verified_loaded, error), "verified registry loads");
+    const auto& ve = verified_loaded.entries[0];
+    check(ve.verified.size() == 2 && ve.verified[0] == "ABCDEF0123456789ABCDEF0123456789",
+          "verified classes survive roundtrip");
+    check(rmx::vst_registry::is_verified(verified_loaded, module, ve.fingerprint,
+                                         "ABCDEF0123456789ABCDEF0123456789"),
+          "verified class with unchanged fingerprint passes");
+    check(!rmx::vst_registry::is_verified(verified_loaded, module, ve.fingerprint, "NOPE"),
+          "unverified class fails");
+    auto changed_fp = ve.fingerprint;
+    ++changed_fp.size;
+    check(!rmx::vst_registry::is_verified(verified_loaded, module, changed_fp,
+                                          "ABCDEF0123456789ABCDEF0123456789"),
+          "changed fingerprint invalidates verified");
+    check(!rmx::vst_registry::is_verified(verified_loaded, module, ve.fingerprint, ""),
+          "empty class id never verified");
+    loaded = verified_loaded;  // 後續測試沿用含 verified 的 registry
+
     rmx::vst_registry::Entry failed;
     failed.path = root / L"bad.vst3";
     failed.fingerprint = {10, 20};

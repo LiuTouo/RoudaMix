@@ -342,6 +342,21 @@ std::optional<Failure> load(AudioEngine& engine, const std::filesystem::path& fi
                                    const std::string& cid) -> PreflightVerdict {
         const auto key = std::make_pair(p, cid);
         if (const auto it = preflights.find(key); it != preflights.end()) return it->second;
+        // C.7b：registry 記錄「同 fingerprint 已在 engine 成功載入」的 class →
+        // 跳過 sandbox worker 往返（session 載入免二次 DLL 載入；fingerprint 在
+        // restore_allowed 才算過，這裡重算一次 stat 走訪，成本可忽略）。
+        // shortcut: verified 未鍵結 rate/block，換取樣率裝置後仍跳過驗證；
+        // plugin init 因 rate 崩潤時按 retry 重新驗。
+        if (enforce_registry && !cid.empty()) {
+            const auto local = vst_registry::path_from_utf8(p);
+            vst_registry::Fingerprint fp;
+            std::string fp_err;
+            if (vst_registry::fingerprint(local, fp, fp_err) &&
+                vst_registry::is_verified(approved_registry, local, fp, cid))
+                return preflights
+                    .emplace(key, PreflightVerdict{sandbox::PreflightFailure::kNone, {}, false})
+                    .first->second;
+        }
         if (std::chrono::steady_clock::now() - load_started >
             std::chrono::seconds(kMaxPreflightSeconds))
             return {sandbox::PreflightFailure::kWorkerUnavailable, {}, true};

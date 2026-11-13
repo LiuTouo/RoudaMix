@@ -27,6 +27,9 @@ struct Entry {
     Fingerprint fingerprint;
     nlohmann::json classes = nlohmann::json::array();
     std::string error;
+    // 已在 engine 成功載入過的 class uid（C.7b）：fingerprint 未變時 session
+    // restore 對這些 class 跳過 sandbox worker preflight（省二次 DLL 載入）。
+    std::vector<std::string> verified;
 };
 
 struct Registry {
@@ -56,6 +59,10 @@ bool save_atomic(const std::filesystem::path& file, const Registry& registry,
 const Entry* find_unchanged(const Registry& registry,
                             const std::filesystem::path& path,
                             const Fingerprint& fingerprint);
+
+// fingerprint 未變且 class uid 已驗證載入過（C.7b preflight 跳過條件）。
+bool is_verified(const Registry& registry, const std::filesystem::path& path,
+                 const Fingerprint& fingerprint, const std::string& class_uid);
 
 // worker JSONL 與 cache 共用 entry shape；嚴格驗證後才接受。
 nlohmann::json entry_json(const Entry& entry);

@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <string>
 
 namespace {
@@ -83,6 +84,55 @@ int main() {
         const auto classes = rmx::scan_vst3_module("Z:\\definitely\\not\\here.vst3", err);
         CHECK(classes.empty(), "scan of missing path should return no classes");
         CHECK(!err.empty(), "scan of missing path should set error");
+    }
+
+    {  // 1c. moduleinfo.json 直讀：bundle 內建清單免載 DLL;缺檔/壞檔/無 audio
+        //     class → nullopt(呼叫端退回 DLL 掃描)。JSON5 註解/尾逗點也要過。
+        const auto dir =
+            std::filesystem::temp_directory_path() / "rmx-moduleinfo-test";
+        std::filesystem::create_directories(dir);
+        const auto write_json = [&](const std::wstring& name, const std::string& text) {
+            const auto bundle = dir / name;
+            std::filesystem::create_directories(
+                bundle / L"Contents" / L"Resources");
+            std::ofstream out(bundle / L"Contents" / L"Resources" / L"moduleinfo.json",
+                              std::ios::binary);
+            out << text;
+            return bundle;
+        };
+        const auto good = write_json(
+            L"Good.vst3",
+            "{\"Name\":\"Good\",\"Version\":\"1.0\",\"Factory Info\":{\"Vendor\":\"V\",\"URL\":\"u\",\"E-Mail\":\"e\",\"Flags\":{\"Unicode\":true}},"
+            "\"Classes\":[{\"CID\":\"B9F9ADE1CD9C4B6DA57E61E3123535FD\","
+            "\"Category\":\"Audio Module Class\",\"Name\":\"Good FX\","
+            "\"Vendor\":\"Rouda\",\"Version\":\"1.0.0\",\"SDKVersion\":\"VST 3.7.12\","
+            "\"Class Flags\":0,\"Cardinality\":2147483647,\"Snapshots\":[],"
+            "\"Sub Categories\":[\"Fx\",\"Reverb\"]},"
+            "{\"CID\":\"1111\",\"Category\":\"Other\",\"Name\":\"skip\",\"Vendor\":\"x\",\"Version\":\"1\",\"SDKVersion\":\"s\",\"Class Flags\":0,\"Cardinality\":1,\"Snapshots\":[]}]}\n");
+        const auto parsed = rmx::scan_moduleinfo_json(good);
+        CHECK(parsed.has_value(), "moduleinfo.json bundle should parse");
+        if (parsed) {
+            CHECK(parsed->size() == 1, "only audio-module classes are listed");
+            if (!parsed->empty()) {
+                CHECK((*parsed)[0].uid == "B9F9ADE1CD9C4B6DA57E61E3123535FD",
+                      "class uid comes from moduleinfo");
+                CHECK((*parsed)[0].name == "Good FX", "class name comes from moduleinfo");
+                CHECK((*parsed)[0].subcategories == "Fx|Reverb",
+                      "sub categories join with pipe like factory scan");
+            }
+        }
+        const auto no_audio = write_json(L"NoFx.vst3",
+                                          "{\"Classes\":[{\"CID\":\"1\","
+                                          "\"Category\":\"Other\",\"Name\":\"x\"}],}");
+        CHECK(!rmx::scan_moduleinfo_json(no_audio).has_value(),
+              "moduleinfo without audio classes falls back to dll scan");
+        const auto broken = write_json(L"Broken.vst3", "{not json");
+        CHECK(!rmx::scan_moduleinfo_json(broken).has_value(),
+              "malformed moduleinfo falls back to dll scan");
+        std::error_code ec;
+        std::filesystem::remove_all(dir, ec);
+        CHECK(!rmx::scan_moduleinfo_json(dir / L"Missing.vst3").has_value(),
+              "missing moduleinfo falls back to dll scan");
     }
 
     {  // 1b. #14 validate_preset_file:pure 檔案驗證(不需 plugin)——header/class/

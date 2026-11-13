@@ -77,6 +77,7 @@ add_library(vst3_sdk STATIC
     ${VST3_SDK_DIR}/public.sdk/source/vst/hosting/pluginterfacesupport.cpp
     ${VST3_SDK_DIR}/public.sdk/source/vst/hosting/plugprovider.cpp
     ${VST3_SDK_DIR}/public.sdk/source/vst/hosting/processdata.cpp
+    ${VST3_SDK_DIR}/public.sdk/source/vst/moduleinfo/moduleinfoparser.cpp
     ${VST3_SDK_DIR}/public.sdk/source/vst/utility/stringconvert.cpp
 )
 target_include_directories(vst3_sdk SYSTEM PUBLIC ${VST3_SDK_DIR})

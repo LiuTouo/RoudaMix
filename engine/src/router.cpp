@@ -806,6 +806,7 @@ Router::Outcome Router::handle_add_plugin(const AddPluginRequest& request) {
     if (auto fail = engine_.add_plugin(request.track_id, request.path, request.class_id,
                                        instance_id))
         return failure(std::move(*fail));
+    approve_module(request.path, engine_.find_slot(instance_id));
     return success({{"instanceId", instance_id},
                     {"trackId", request.track_id},
                     {"tracks", session::tracks_json(engine_)}},
@@ -837,6 +838,7 @@ Router::Outcome Router::insert_plugin_copy(const PluginSnapshot& snapshot,
     std::uint32_t instance_id{};
     if (auto fail = engine_.insert_plugin_snapshot(snapshot, track_id, index, instance_id))
         return failure(std::move(*fail));
+    approve_module(snapshot.module_path, engine_.find_slot(instance_id));
     return success({{"instanceId", instance_id}, {"trackId", track_id},
                     {"tracks", session::tracks_json(engine_)}}, Effect::kDirty);
 }
@@ -936,6 +938,12 @@ void Router::approve_module(const std::string& module_path, const RackSlot* slot
     for (auto& existing : vst_registry_.entries) {
         if (vst_registry::path_key(existing.path) == key) {
             existing.fingerprint = fp;
+            // C.7b：成功載入過的 class 記進 verified，下次同 fingerprint session
+            // restore 跳過 sandbox preflight
+            if (slot != nullptr && !slot->class_id.empty() &&
+                std::find(existing.verified.begin(), existing.verified.end(),
+                          slot->class_id) == existing.verified.end())
+                existing.verified.push_back(slot->class_id);
             merged = true;
             break;
         }
@@ -949,6 +957,8 @@ void Router::approve_module(const std::string& module_path, const RackSlot* slot
                                  {"vendor", ""},
                                  {"version", ""},
                                  {"subcategories", ""}});
+        if (slot != nullptr && !slot->class_id.empty())
+            entry.verified.push_back(slot->class_id);
         vst_registry_.entries.push_back(std::move(entry));
         vst_registry::normalize(vst_registry_);
     }
@@ -1039,6 +1049,12 @@ Router::Outcome Router::handle_load_session(const LoadSessionRequest& request) {
     if (auto fail = session::load(engine_, request.path, applied, request.defer_bypassed,
                                   progress))
         return failure(std::move(*fail));
+    // C.7b：本次實際載入成功的 plugin 記進 registry verified，下次同 fingerprint
+    // session restore 跳過 preflight worker 往返（掃描重掃時經 entry 一起保留）。
+    for (const auto& track : engine_.tracks())
+        for (const auto& slot : track.chain)
+            if (!slot.is_placeholder() && !slot.module_path.empty())
+                approve_module(slot.module_path, &slot);
     applied["revision"] = revision_ + 1;
     return success(std::move(applied), Effect::kDirty);
 }

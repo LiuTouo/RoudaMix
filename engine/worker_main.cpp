@@ -3,7 +3,7 @@
 //   --verify <module.vst3> [classId] <sampleRate> <blockSize>
 //       載入 + instantiate + initialize + setActive(true→false);成功 exit 0。
 //   --scan <root>
-//       遞迴掃 *.vst3；fingerprint 未變時沿用 ROUDAMIX_VST_REGISTRY 快取，
+//       遞迴掃 *.vst3；bundle 內建 moduleinfo.json 直讀（免載 DLL），無/壞才載 module。fingerprint 未變時沿用快取，
 //       新增/變更才載 module。每 module 輸出一行 JSONL 並 flush；單 module
 //       SEH 攔硬體例外，worker 整體失敗時 engine 保留上一版 registry。
 #include <windows.h>
@@ -73,9 +73,14 @@ rmx::vst_registry::Entry scan_module(const std::filesystem::path& path,
                                      const rmx::vst_registry::Fingerprint& fingerprint) {
     std::string error;
     std::vector<rmx::Vst3ClassInfo> classes;
-    // load 時硬體例外(AV)攔下繼續下一顆；heap 污染的延遲炸 = worker 整顆死，
+    // moduleinfo.json 直讀優先（免 LoadLibrary/Defender 掃 DLL）；讀不到才載 DLL。
+    // 載入時硬體例外(AV)攔下繼續下一顆；heap 污染的延遲炸 = worker 整顆死，
     // engine 會把本輪視為失敗並保留上一版 registry。
-    if (scan_module_seh(&path, &classes, &error) != 0) error = "SEH exception in module";
+    if (auto via_json = rmx::scan_moduleinfo_json(path)) {
+        classes = std::move(*via_json);
+    } else if (scan_module_seh(&path, &classes, &error) != 0) {
+        error = "SEH exception in module";
+    }
     rmx::vst_registry::Entry entry;
     entry.path = path;
     entry.fingerprint = fingerprint;

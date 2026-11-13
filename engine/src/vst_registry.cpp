@@ -144,6 +144,7 @@ nlohmann::json entry_json(const Entry& entry) {
         out["error"] = entry.error;
     else
         out["classes"] = entry.classes;
+    if (!entry.verified.empty()) out["verified"] = entry.verified;
     return out;
 }
 
@@ -174,6 +175,14 @@ bool entry_from_json(const nlohmann::json& json, Entry& out) {
         candidate.classes = json["classes"];
     } else {
         return false;
+    }
+    // C.7b verified 標記（舊檔無此欄 = 空）；型別不對 = 整筆拒（與其他欄位同嚴格度）
+    if (json.contains("verified")) {
+        if (!json["verified"].is_array()) return false;
+        for (const auto& uid : json["verified"]) {
+            if (!uid.is_string()) return false;
+            candidate.verified.push_back(uid.get<std::string>());
+        }
     }
     out = std::move(candidate);
     return true;
@@ -320,6 +329,15 @@ const Entry* find_unchanged(const Registry& registry,
     for (const auto& entry : registry.entries)
         if (path_key(entry.path) == key && entry.fingerprint == value) return &entry;
     return nullptr;
+}
+
+bool is_verified(const Registry& registry, const std::filesystem::path& path,
+                 const Fingerprint& fingerprint, const std::string& class_uid) {
+    if (class_uid.empty()) return false;
+    const auto* entry = find_unchanged(registry, path, fingerprint);
+    return entry != nullptr &&
+           std::find(entry->verified.begin(), entry->verified.end(), class_uid) !=
+               entry->verified.end();
 }
 
 nlohmann::json plugins_json(const Registry& registry) {
