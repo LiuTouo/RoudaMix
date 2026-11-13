@@ -67,7 +67,7 @@
   <div class="dialog-head">
     <span class="dialog-title">VST 插件列表 — 加入「{trackName}」</span>
     <button class="dialog-close" type="button" aria-label="關閉插件選擇器"
-      data-tooltip="關閉插件選擇器，不加入其他項目。" onclick={() => dialog.close()}>×</button>
+      data-tooltip="關閉，不加入插件。" onclick={() => dialog.close()}>×</button>
   </div>
   <div class="toolbar">
     <label class="search-field">
@@ -76,7 +76,7 @@
     </label>
     <label class="category-field">
       <span>分類</span>
-      <select bind:value={category} data-tooltip="僅顯示選定分類的插件；清單來自掃描到的插件 metadata。">
+      <select bind:value={category} data-tooltip="依分類過濾；分類來自插件 metadata。">
         <option value="">全部分類</option>
         {#each categories as item (item)}<option value={item}>{item}</option>{/each}
       </select>
@@ -85,10 +85,10 @@
       onclick={() => { query = ""; search.focus(); }}>清除搜尋</button>
     {#if scanRunning}
       <button class="scan" type="button" onclick={onCancelScan}
-        data-tooltip="取消目前的背景 VST 掃描；取消後會保留掃描前的 plugin 清單。">取消掃描</button>
+        data-tooltip="取消掃描；保留掃描前清單。">取消掃描</button>
     {:else}
       <button class="scan" type="button" disabled={!scanReady} onclick={() => void onStartScan()}
-        data-tooltip="在背景掃描預設 VST3 目錄；未變更的 plugin 會沿用持久快取，不重新載入。">掃描 VST</button>
+        data-tooltip="背景掃描 VST3 目錄；未變更插件沿用快取。">掃描 VST</button>
     {/if}
   </div>
   <div class="statusline">

@@ -112,7 +112,7 @@
     aria-controls={panelId}
     aria-label={`${trackName} 的${label}：${summary}`}
     disabled={visibleOptions.length === 0}
-    data-tooltip={options.length === 0 ? emptyText : `${label}：${names.length ? names.join("、") : "未選擇"}。可勾選多個，立即套用。`}
+    data-tooltip={options.length === 0 ? emptyText : `${label}：${names.length ? names.join("、") : "未選擇"}。`}
   >
     <span class="destination-summary">{options.length === 0 ? "(無可用目的地)" : summary}</span>
     {#if selected.length > 1}<span class="destination-count" aria-hidden="true">{selected.length}</span>{/if}

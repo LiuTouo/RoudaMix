@@ -82,7 +82,7 @@
       type="button"
       aria-label="關閉程序選擇器"
       onclick={onClose}
-      data-tooltip="關閉程序選擇器，不變更目前綁定。">×</button
+      data-tooltip="關閉，不變更綁定。">×</button
     >
   </div>
   {#if savedName}

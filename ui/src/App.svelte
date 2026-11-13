@@ -1923,7 +1923,7 @@
 {/if}
 <header class="bar">
   {#if dirty}
-    <span class="dim" data-tooltip="目前 Session 有尚未儲存的變更。">● 未儲存</span>
+    <span class="dim" data-tooltip="Session 有未儲存的變更。">● 未儲存</span>
   {/if}
   <span style="flex:1"></span>
   {#if running}
@@ -1931,7 +1931,7 @@
     <span
       class="mono"
       class:warn={overloadOn}
-      data-tooltip="音訊 callback 的即時運算負載；持續達 100% 以上表示處理逾時，可能產生 xrun 或爆音。"
+      data-tooltip="音訊 callback 運算負載；持續 100% 以上會爆音。"
       >LOAD {Math.round((meters?.callbackLoad ?? 0) * 100)}%</span
     >
       <span class="console-telemetry mono">
@@ -1944,7 +1944,7 @@
   {:else if selDev?.currentSampleRate}
     <span
       class="dim mono"
-      data-tooltip="目前由音訊驅動程式提供的取樣率與緩衝大小；取樣率請於硬體控制面板調整。"
+      data-tooltip="取樣率與緩衝大小；取樣率於驅動面板調整。"
       >{selDev.currentSampleRate} Hz · buf {bufSize ?? selDev.preferredBufferSize}</span
     >
   {/if}
@@ -1954,14 +1954,14 @@
       onclick={() => (latencyDrawerOpen = !latencyDrawerOpen)}
       aria-expanded={latencyDrawerOpen}
       aria-label="開啟 Plugin 延遲與 Process Load 明細"
-      data-tooltip="Monitor／Stream 的最大有效 Plugin Path Latency；點擊開啟逐 instance 與 PDC 明細。"
+      data-tooltip="Monitor/Stream 最大插件延遲；點擊開明細。"
       >PDC M {samplesToMs(status?.pluginDelay?.monitorSamples ?? null, status?.sampleRate ?? 0)} / S {samplesToMs(status?.pluginDelay?.streamSamples ?? null, status?.sampleRate ?? 0)} ms</button
     >
   {/if}
   {#if status?.pluginFails}
     <span
       class="warn mono"
-      data-tooltip="即時音訊執行緒中的 plugin 處理失敗累計；失敗時該 plugin 會維持 bypass，避免中斷音訊。"
+      data-tooltip="音訊執行緒 plugin 失敗累計；失敗插件自動 bypass。"
       >plugin fail {status.pluginFails}</span
     >
   {/if}
@@ -1974,7 +1974,7 @@
   {#if cv.phase !== "connected"}
     <button
       class="settings"
-      data-tooltip="複製引擎連線狀態、版本與診斷原因至剪貼簿。"
+      data-tooltip="複製連線診斷資訊。"
       onclick={() =>
         void copyText(
           `phase=${cv.phase} connected=${conn.connected} epoch=${conn.epoch} engine=${conn.engineVersion} detail=${cv.detail}`,
@@ -2022,14 +2022,14 @@
         <button
           class="capsule-btn"
           onclick={() => copyNoticeText(c.msg, c.raw)}
-          data-tooltip="複製此通知的完整技術資訊至剪貼簿。"
+          data-tooltip="複製完整技術資訊。"
         >複製</button>
       {/if}
       {#if c.closable}
         <button
           class="capsule-btn"
           aria-label="關閉此警示"
-          data-tooltip="關閉此警示；狀態恢復後再次失效時會重新出現。"
+          data-tooltip="關閉；再失效時會重新出現。"
           onclick={() => onCapsuleClose(c)}
         >×</button>
       {/if}
@@ -2105,7 +2105,7 @@
                 <button
                   class="mini"
                   onclick={() => reopenLastSession()}
-                  data-tooltip={`重新開啟最近使用的 Session：\n${appSettings.lastSessionPath}`}
+                  data-tooltip={`最近 Session：\n${appSettings.lastSessionPath}`}
                   >最近:{appSettings.lastSessionPath.split(/[\\/]/).pop() ?? ""}</button
                 >
               {/if}
@@ -2210,7 +2210,7 @@
       class="dialog-close"
       type="button"
       aria-label="關閉設定視窗"
-      data-tooltip="關閉設定視窗。"
+      data-tooltip="關閉設定。"
       onclick={() => settingsDlg?.close()}>×</button
     >
   </div>
@@ -2276,8 +2276,8 @@
         onclick={openDevicePanel}
         disabled={!running || wasapiMaster}
         data-tooltip={wasapiMaster
-          ? "系統音訊（WASAPI）模式沒有 ASIO 驅動程式控制面板。"
-          : "開啟 ASIO 驅動程式控制面板以調整硬體取樣率。Buffer 大小請使用 RoudaMix 的 Buffer 選單；面板關閉後會自動同步並重建音訊引擎。"}
+          ? "WASAPI 模式無 ASIO 驅動面板。"
+          : "開啟 ASIO 驅動面板調整取樣率；關閉後自動重建音訊引擎。"}
         >ASIO</button
       >
       {#if panelOpen}
@@ -2319,7 +2319,7 @@
       <label
         class="checklabel"
         for="autostartenabled"
-        data-tooltip="在目前 Windows 使用者登入後自動啟動 RoudaMix。"
+        data-tooltip="Windows 登入後自動啟動 RoudaMix。"
         >Windows 登入後自動啟動 RoudaMix</label
       >
       {#if autostartBusy}<span class="dim">讀取中…</span>{/if}
@@ -2345,7 +2345,7 @@
       <label
         class="checklabel"
         for="startminimizedonautostart"
-        data-tooltip="只影響 Windows 自動啟動；手動開啟 RoudaMix 時仍會顯示主視窗。"
+        data-tooltip="僅影響自動啟動；手動開啟仍顯示視窗。"
         >自動啟動時縮小到系統匣</label
       >
     </div>
@@ -2363,14 +2363,14 @@
           disabled={!appSettings}
           aria-valuetext={`${uiScale}%`}
           aria-describedby="uiscale-hint"
-          data-tooltip="等比例縮放 RoudaMix 介面與 VST 視窗工具列，不改變插件內容；可拖動或使用方向鍵調整，每次 5%。"
+          data-tooltip="等比例縮放介面與 VST 工具列；方向鍵每次 5%。"
           oninput={(e) => void updateUiScale(e.currentTarget.valueAsNumber)}
           onchange={(e) => void updateUiScale(e.currentTarget.valueAsNumber, true)}
         />
         <output class="mono" for="uiscale">{uiScale}%</output>
         <button
           disabled={!appSettings}
-          data-tooltip="將主介面縮放還原為預設的 100%。"
+          data-tooltip="還原為 100%。"
           onclick={() => void updateUiScale(100, true)}>還原 100%</button
         >
       </div>
@@ -2385,7 +2385,7 @@
           value={appSettings?.uiFontFamily ?? ""}
           disabled={!appSettings}
           aria-describedby="uifont-hint"
-          data-tooltip="主介面文字的字型。清單來自本機已安裝字型；變更即時生效。"
+          data-tooltip="主介面字型；清單來自本機，即時生效。"
           onchange={(e) => updateUiFont(e.currentTarget.value)}
         >
           <option value="">預設（IBM Plex Sans TC）</option>
@@ -2423,7 +2423,7 @@
         value={appSettings?.noticeAutoDismissSeconds ?? 5}
         disabled={!appSettings}
         aria-describedby="noticedismiss-hint"
-        data-tooltip="頂層通知自動消失的秒數；選「按一下才消失」則通知會留著，直到你點擊它。"
+        data-tooltip="通知自動消失秒數；0 = 點擊才消失。"
         onchange={(e) => {
           if (!appSettings) return;
           appSettings.noticeAutoDismissSeconds = Number(e.currentTarget.value);
@@ -2456,7 +2456,7 @@
       <label
         class="checklabel"
         for="inputsilencealert"
-        data-tooltip="麥克風輪入持續 30 秒完全無訊號時發出警示（嗶聲與通知）。使用降噪／閘門型麥克風（如 NVIDIA Broadcast）沒說話時送出真正的靜音，會被誤判，請關閉此選項。來源失效與音訊未啟動的警示不受影響。"
+        data-tooltip="輸入 30 秒無訊號時警示；降噪／閘門型麥克風（如 NVIDIA Broadcast）沒說話時送出靜音會誤判，請關閉。"
         >麥克風沒聲音時警示</label
       >
     </div>
@@ -2499,7 +2499,7 @@
         <span class="formlabel"></span>
         <span
           class="dim mono dirpath"
-          data-tooltip={`啟動時開啟最近 Session：\n${appSettings.lastSessionPath ?? "尚未儲存過 Session"}`}
+          data-tooltip={`啟動時開啟：\n${appSettings.lastSessionPath ?? "尚未儲存過 Session"}`}
         >
           上一次:{appSettings.lastSessionPath ?? "(尚未存過 session)"}
         </span>
@@ -2545,7 +2545,7 @@
       <label
         class="checklabel"
         for="deferbypassedplugins"
-        data-tooltip="勾選後，還原 Session 時 Bypass 中的插件先不載入（改為占位，加快啟動）；解除 Bypass 或按「載入」時才真的載入。不勾 = 全部照載，需等待較久。預設不勾。"
+        data-tooltip="還原 Session 時，Bypass 中的插件先不載入（加快啟動）；解除 Bypass 時才載入。"
         >Bypass 中的插件先不載入（加快啟動）</label
       >
     </div>
@@ -2565,12 +2565,12 @@
       {:else}
         <button
           onclick={() => { captureHint = null; capturingHotkey = true; }}
-          data-tooltip="點擊後按下要綁定的組合鍵(需含 Ctrl/Alt/Win 修飾鍵,或為 F1–F24)。全域快捷鍵:RoudaMix 在背景時也能切換監聽靜音。"
+          data-tooltip="點擊後按下組合鍵（需含 Ctrl/Alt/Win，或 F1–F24）；全域：背景時也能切換監聽靜音。"
         >{appSettings?.monitorHotkey ?? "未設定"}</button>
         {#if appSettings?.monitorHotkey}
           <button
             onclick={() => void setMonitorHotkey(null)}
-            data-tooltip="解除監聽靜音的全域快捷鍵綁定。"
+            data-tooltip="解除快捷鍵綁定。"
           >清除</button>
         {/if}
       {/if}

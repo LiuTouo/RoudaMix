@@ -47,7 +47,7 @@ export function capsuleItems(input: CapsuleInputs): CapsuleItem[] {
       key: "respawnRestore",
       kind: "error",
       msg: `引擎已重啟，場景遺失 — 點此還原 Session「${name}」`,
-      tooltip: `引擎意外重啟，音軌全部遺失。\n點擊還原為最後使用的 Session：${input.respawnRestorePath}\n（還原的是最後一次存檔，未儲存的變更無法救回）`,
+      tooltip: `點擊還原最後 Session：\n${input.respawnRestorePath}\n（未儲存的變更無法救回）`,
       action: "respawnRestore",
       closable: true,
     });
@@ -57,7 +57,7 @@ export function capsuleItems(input: CapsuleInputs): CapsuleItem[] {
       key: "audioStale",
       kind: "error",
       msg: "音訊未啟動 — 詳情見設定",
-      tooltip: input.audioStaleDetail ? `音訊啟動異常：${input.audioStaleDetail}` : "音訊啟動異常:應該在跑但沒跑。",
+      tooltip: input.audioStaleDetail ? `音訊啟動異常：${input.audioStaleDetail}` : "音訊啟動異常（無詳細資訊）。",
       action: "openSettings",
       closable: true,
     });

@@ -218,5 +218,5 @@
   style="width:{width}px; height:calc(100% + 10px); margin: -5px 0; display:block"
   oncontextmenu={clearClipHold}
   aria-label="立體聲音頻錶；綠色為正常、橘色接近峰值、紅線為已過載。右鍵清除過載狀態。"
-  data-tooltip="音頻錶：綠色為正常、橘色接近峰值、紅線表示曾經過載；按右鍵可清除 peak 狀態。"
+  data-tooltip="綠＝正常、橘＝近峰值、紅＝曾過載；右鍵清除。"
 ></canvas>

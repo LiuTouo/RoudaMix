@@ -1031,7 +1031,7 @@
   data-console-kind={track.kind}
   role="listitem"
   aria-label="軌道 {track.name}"
-  data-tooltip="拖曳軌道空白區調整順序；點上方色塊的名稱可改名、點色塊其他處可換色；按右鍵開啟操作選單（複製音軌、排序）。"
+  data-tooltip="拖曳調整順序；點名稱改名、點色塊換色；右鍵開操作選單。"
   oncontextmenu={(e) => {
     if ((e.target as HTMLElement).closest("input, select, button, dialog")) return;
     e.preventDefault();
@@ -1052,7 +1052,7 @@
       <!-- 系統輸出:每 session 恰好一條 monitor/stream,不可刪(engine 也擋) -->
       <span
         class="sysbadge"
-        data-tooltip="系統{track.systemRole === "monitor" ? "監聽" : "串流"}輸出軌：可重新命名並調整裝置與路由；為維持固定輸出角色，無法刪除。"
+        data-tooltip="系統{track.systemRole === "monitor" ? "監聽" : "串流"}輸出軌；固定角色，無法刪除。"
         >{track.systemRole === 'monitor' ? 'MON' : 'STR'}</span
       >
     {:else}
@@ -1087,7 +1087,7 @@
         <!-- P1-C:session 恢復後未綁定(engine 不猜 PID)→ 明確選擇程式 -->
         <span
           class="dim unboundtxt"
-          data-tooltip={track.error ?? "Session 已恢復，但尚未指定捕捉程序。請手動重新綁定；引擎不會依名稱自動推測 PID。"}
+          data-tooltip={track.error ?? "請重新選擇捕捉程序；引擎不會自動推測 PID。"}
           >未綁定程序</span
         >
         <button class="mini rebind" onclick={() => (pickerOpen = true)}
@@ -1102,20 +1102,20 @@
         <button
           class="mini"
           onclick={() => (pickerOpen = true)}
-          data-tooltip="重新選擇此軌道要捕捉的程序；清單僅顯示目前正在輸出音訊的應用程式。"
+          data-tooltip="重選捕捉程序；僅列正在輸出音訊的程式。"
           >更換</button
         >
         <button
           class="mini danger"
           onclick={clearApp}
-          data-tooltip="解除目前的程序綁定；軌道與 plugin chain 會保留，並停止輸出音訊。"
+          data-tooltip="解除綁定；軌道與插件保留，音訊停止。"
           >解除</button
         >
       {/if}
     {:else if track.kind === "fx"}
       <span
         class="source-fx"
-        data-tooltip="FX 軌不直接擷取應用程式；請將上游軌道的輸出路由至此軌，作為 insert 效果鏈。"
+        data-tooltip="FX 軌不擷取應用程式；請將上游軌道路由至此作為效果鏈。"
         >FX</span
       >
     {:else}
@@ -1130,8 +1130,8 @@
         onfocus={loadRenderDevices}
         aria-label="{track.name} 輸出裝置"
         data-tooltip={track.systemRole === "monitor"
-          ? "指定監聽輸出的 ASIO channel pair。"
-          : "指定串流輸出的 WASAPI 裝置，例如 VB-CABLE 等虛擬音訊端點。"}
+          ? "監聽輸出的 ASIO channel pair。"
+          : "串流輸出的 WASAPI 裝置（如 VB-CABLE）。"}
       >
         <option value="">(無)</option>
         {#if !dev}
@@ -1168,23 +1168,23 @@
     <button class="mini mute" class:on={track.mute} aria-pressed={track.mute}
       aria-label={track.mute ? `靜音中(點此取消)` : `靜音 ${track.name}`}
       onclick={() => setMute(!track.mute)}
-      data-tooltip={track.mute ? "此軌目前已靜音；按下可取消靜音。" : "將此軌靜音。"}>M</button>
+      data-tooltip={track.mute ? "已靜音；點擊取消。" : "靜音此軌。"}>M</button>
   {/snippet}
   {#snippet rackSwitch()}
     <button class="mini mute rack-b" class:on={bypassLatched} disabled={rackPlugins.length === 0}
       aria-pressed={bypassLatched}
       aria-label={bypassLatched ? `恢復 ${track.name} bypass 前啟用的 plugin(目前全軌 bypass 中)` : `Bypass ${track.name} 全部 plugin`}
       onclick={bypassAll}
-      data-tooltip={bypassLatched ? "此軌 plugin 目前全軌 bypass 中(已記憶啟用狀態)；按下只恢復 bypass 前啟用的插件。" : "將此軌所有 plugin 一次切為 bypass(並記憶當下啟用狀態)；再按一次只恢復原本啟用的插件。"}>B</button>
+      data-tooltip={bypassLatched ? "全軌 bypass 中；點擊恢復原啟用插件。" : "全部插件切為 bypass（記憶啟用狀態）；再按恢復原啟用。"}>B</button>
   {/snippet}
-  <div class="row routing-row" data-tooltip={track.kind === "fx" ? "側鏈:來源軌訊號只進此軌插件的 aux input,不進混音" : undefined}>
+  <div class="row routing-row" data-tooltip={track.kind === "fx" ? "側鏈：來源訊號只進插件 aux input，不進混音。" : undefined}>
     {#if sysOuts.length > 0}
       {#each sysOuts as sys (sys.trackId)}
         <label class="sys-dest">
           <input type="checkbox" checked={shownDests.includes(sys.trackId)}
             onchange={(e) => toggleDest(sys.trackId, e.currentTarget.checked)}
             aria-label="{track.name} 路由到{sysLabel(sys)}"
-            data-tooltip="直接切換此輸入軌是否送往{sysLabel(sys)}輸出；與「輸出到」同步套用。" />
+            data-tooltip="切換是否送往{sysLabel(sys)}輸出。" />
           <span class="sys-dot" style:background={matteColor(sys.color)} aria-hidden="true"></span>
           <span>{sys.systemRole === 'monitor' ? 'MON' : 'STR'}</span>
         </label>
@@ -1206,7 +1206,7 @@
           onchange={(e) =>
             void setLatencyPolicy(e.currentTarget.checked ? "lowLatency" : "fullPdc")}
           aria-label="輸出軌 {track.name} 低延遲"
-          data-tooltip="勾選 = Low Latency（不加入 Compensation Delay，不保證平行路徑同步）；取消勾選 = Full PDC（匯流分支 sample-exact 對齊）。"
+          data-tooltip="勾選＝Low Latency（不加補償延遲，路徑可能不同步）；取消＝Full PDC（sample-exact 對齊）。"
         />
         <span>低延遲</span>
       </label>
@@ -1274,19 +1274,19 @@
             plugMenu(e, s);
           }}
           data-tooltip={isPh(s) ? undefined : pluginCopyEnabled
-            ? "同軌拖曳調整順序；拖到其他音軌複製目前設定；右鍵可複製與貼上。"
-            : "拖曳調整 plugin chain 順序；按右鍵開啟操作選單。"}
+            ? "拖曳排序；跨軌拖曳複製；右鍵複製貼上。"
+            : "拖曳排序；右鍵開操作選單。"}
         >
           {#if isPh(s)}
             <!-- missing/broken/deferred:原鏈位保留,不參與 DSP;提供重試/重新定位/移除 -->
             <div class="plugtitle">
               <span class="phmark" data-tooltip={s.availability === "deferred"
-                ? "Bypass 中的插件還原時未載入（加快啟動）；按重試或解除 Bypass 時才會載入。"
+                ? "Bypass 插件還原時未載入（加快啟動）。"
                 : `Plugin 載入失敗：${s.loadError ?? "原因未提供"}`}>{s.availability === "deferred" ? "⏸" : "⚠"}</span>
               <span
                 class="plugname phname"
                 data-tooltip={s.availability === "deferred"
-                  ? `Plugin 檔案：\n${s.pluginPath}\n\nBypass 中故還原時未載入；按「載入」或解除 Bypass 時才會載入。`
+                  ? `Plugin 檔案：\n${s.pluginPath}\n\nBypass 中，還原時未載入。`
                   : `Plugin 檔案：\n${s.pluginPath}\n\n載入錯誤：${s.loadError ?? "原因未提供"}`}
               >
               <span class="phwhy">{phLabel(s)}</span>
@@ -1303,14 +1303,14 @@
                 class="mini"
                 onclick={() => retryPlugin(s)}
                 data-tooltip={s.availability === "deferred"
-                  ? "Bypass 中的插件還原時未載入；現在載入它（參數會照存檔恢復）。"
-                  : "使用原始檔案路徑重新載入此 plugin。"}
+                  ? "載入插件並恢復存檔參數。"
+                  : "以原始路徑重新載入。"}
                 >{s.availability === "deferred" ? "載入" : "重試"}</button
               >
               <button
                 class="mini"
                 onclick={() => relocatePlugin(s)}
-                data-tooltip="指定替代的 plugin 檔案，並嘗試恢復此插槽。"
+                data-tooltip="指定替代的 plugin 檔案。"
                 >定位</button
               >
             </div>
@@ -1324,7 +1324,7 @@
                 tabindex="0"
                 data-tooltip={s.displayName
                   ? `自訂名稱：${s.displayName}\n檔案：${s.pluginPath}`
-                  : `${s.name} — 單擊開啟 plugin 操作介面；按右鍵可開啟操作選單。`}
+                  : `${s.name} — 單擊開啟 plugin 介面；右鍵開操作選單。`}
                 onclick={() => openEditor(s)}
                 onkeydown={(e) => {
                   if (e.key === "Enter" || e.key === " ") {
@@ -1342,8 +1342,8 @@
                 aria-label={s.bypassed ? `${s.name} bypass 中(點此啟用)` : `${s.name} 啟用中(點此 bypass)`}
                 onclick={() => bypass(s)}
                 data-tooltip={s.bypassed
-                  ? "此 plugin 目前為 bypass；按下可恢復處理。"
-                  : "此 plugin 目前正在處理音訊；按下可切換為 bypass。"}
+                  ? "Bypass 中；點擊啟用。"
+                  : "處理中；點擊切為 bypass。"}
               >
                 <img class="picon" src={s.bypassed ? powerOff : powerOn} alt="" draggable="false" />
               </button>
@@ -1352,8 +1352,8 @@
           {#if latencyEnabled && shownMonitorBypass(s)}
             <span class="monitor-badge" role="img" aria-label="監聽略過（Monitor Bypass）已啟用"
               data-tooltip={isMonitorBypassPending(monitorBypassState, s.instanceId)
-                ? "監聽略過已啟用；正在同步變更，確認前保留目前狀態。"
-                : "監聽略過（Monitor Bypass）已啟用：低延遲輸出略過此插件；Full PDC 輸出仍正常處理。右鍵選單可取消。"}>MB</span>
+                ? "監聽略過：同步中。"
+                : "低延遲輸出略過此插件（Full PDC 照常處理）；右鍵取消。"}>MB</span>
           {/if}
         </div>
       {:else}
@@ -1367,7 +1367,7 @@
       <button
         class="mini add"
         onclick={() => { pluginPickerOpen = true; }}
-        data-tooltip="開啟共用的 VST plugin 清單；不會自動重新掃描。"
+        data-tooltip="開啟 VST 插件清單。"
         >+ 加入</button
       >
     </div>
@@ -1425,7 +1425,7 @@
           onpointermove={onFaderMove}
           onpointerup={onFaderUp}
           onpointercancel={onFaderUp}
-          data-tooltip="調整軌道音量；滾輪每格微調 2%；Ctrl + 按一下還原為 100%。目前為 {Math.round(shownGain * 100)}%。"
+          data-tooltip="音量 {Math.round(shownGain * 100)}%；滾輪微調，Ctrl+點擊還原 100%。"
         />
       </div>
     </div>
@@ -1434,7 +1434,7 @@
         <button type="button" class="meter-trigger" aria-disabled={!loudnessEnabled}
           aria-label={`開啟 ${track.name} 的響度分析`}
           aria-haspopup="dialog" aria-expanded={loudnessOpen} aria-controls={loudnessOpen ? "loudness-analysis" : undefined}
-          data-tooltip={loudnessEnabled ? "開啟響度分析；右鍵清除過載標記。" : "目前引擎不支援響度分析。"}
+          data-tooltip={loudnessEnabled ? "開啟響度分析；右鍵清除過載。" : "引擎不支援響度分析。"}
           onclick={(event) => { if (loudnessEnabled) onLoudnessOpen?.(track.trackId, event.currentTarget); }}>          
           <MeterCanvas strip={stripOfTrack(track.trackId, meterView)} />
         </button>
@@ -1442,14 +1442,14 @@
         <!-- P1-H:telemetry 預算外 = 錶不可用(非靜音);明確顯示狀態 -->
         <div
           class="nometer"
-          data-tooltip="已達即時電平錶顯示上限（64 軌）；音訊處理不受影響，但此軌不顯示電平。"
+          data-tooltip="電平錶上限 64 軌；音訊處理不受影響。"
           ><span>無<br />錶</span></div
         >
       {/if}
       <button type="button" class="meter-more" disabled={!loudnessEnabled}
         aria-label={`${track.name} 的響度分析`}
         aria-haspopup="dialog" aria-expanded={loudnessOpen} aria-controls={loudnessOpen ? "loudness-analysis" : undefined}
-        data-tooltip={loudnessEnabled ? "響度分析" : "目前引擎不支援響度分析。"}
+        data-tooltip={loudnessEnabled ? "響度分析" : "引擎不支援響度分析。"}
         onclick={(event) => onLoudnessOpen?.(track.trackId, event.currentTarget)}>
         <span aria-hidden="true"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" focusable="false">
           <rect x="3" y="9" width="2" height="4" rx="0.5" />
@@ -1468,7 +1468,7 @@
       type="color"
       class="barpick"
       value={cssColor(shownColor)}
-      data-tooltip="設定此軌道的識別色。"
+      data-tooltip="軌道識別色。"
       aria-label="軌道 {track.name} 的顏色"
       oninput={(e) => previewColor(e.currentTarget.value)}
       onchange={(e) => void commitColor(e.currentTarget.value)}
@@ -1492,7 +1492,7 @@
       <!-- P2-P:語意控制(非無語意 span);單擊/Enter 進入改名 -->
       <button
         class="name"
-        data-tooltip="{track.name} — 點此重新命名(不可空白)；點色塊其他處可換色。"
+        data-tooltip="{track.name} — 點擊改名（不可空白）。"
         aria-label="軌道名稱:{track.name}(點擊改名)"
         onclick={startEdit}
         >{track.name}</button
