@@ -9,4 +9,5 @@
 </script>
 
 <TrackStrip track={tracks[0]} {tracks} devices={[]} selectedDeviceKey=""
-  metered={false} onStartScan={() => Promise.resolve(true)} onCancelScan={() => {}} openMenu={() => {}} />
+  metered={false} onStartScan={() => Promise.resolve(true)} onCancelScan={() => {}} openMenu={() => {}}
+  vstOpen={true} onVstToggle={() => {}} />

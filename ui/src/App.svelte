@@ -52,7 +52,7 @@
     SilenceWatcher,
     type AlarmKey,
   } from "./lib/silence";
-  import { visibleRange, spacerWidths, dropPosFromX, dragShift, STRIP_PITCH } from "./lib/laneView";
+  import { visibleRange, spacerWidths, dropPosFromX, moveShifts, laneLayout, STRIP_W, type LaneLayout } from "./lib/laneView";
   import { reorderLane } from "./lib/laneOrder";
   import {
     initialScanJob,
@@ -596,6 +596,29 @@
     };
     window.addEventListener("keydown", onKeyDown);
     unsubs.push(() => window.removeEventListener("keydown", onKeyDown));
+
+    // Ctrl+V = 開/收所有「有 plugin」音軌的 VST sidecar;焦點在可編輯欄位時讓給貼上
+    const onVstHotkey = (e: KeyboardEvent) => {
+      if (
+        e.defaultPrevented ||
+        e.repeat ||
+        !e.ctrlKey ||
+        e.altKey ||
+        e.metaKey ||
+        e.shiftKey ||
+        e.key.toLowerCase() !== "v"
+      )
+        return;
+      const t = e.target as HTMLElement | null;
+      if (t?.isContentEditable || t?.closest?.("input, textarea, select")) return;
+      const ids = tracks.filter((tr) => tr.plugins.length > 0).map((tr) => tr.trackId);
+      if (ids.length === 0) return;
+      e.preventDefault();
+      const anyClosed = ids.some((id) => !vstOpenIds.has(id));
+      setVstOpen(anyClosed ? new Set(ids) : new Set());
+    };
+    window.addEventListener("keydown", onVstHotkey);
+    unsubs.push(() => window.removeEventListener("keydown", onVstHotkey));
 
     void (async () => {
 
@@ -1367,10 +1390,35 @@
   let laneWidth = $state({ input: 0, output: 0 });
   let inputLaneEl = $state<HTMLDivElement | null>(null);
   let outputLaneEl = $state<HTMLDivElement | null>(null);
-  const inputWin = $derived(visibleRange(laneScroll.input, laneWidth.input, inputTracks.length));
-  const outputWin = $derived(visibleRange(laneScroll.output, laneWidth.output, outputTracks.length));
-  const inputSp = $derived(spacerWidths(inputWin.start, inputWin.end, inputTracks.length));
-  const outputSp = $derived(spacerWidths(outputWin.start, outputWin.end, outputTracks.length));
+  const inputLayout = $derived(laneLayout(inputTracks.map((t) => vstOpenIds.has(t.trackId))));
+  const outputLayout = $derived(laneLayout(outputTracks.map((t) => vstOpenIds.has(t.trackId))));
+  const inputWin = $derived(visibleRange(laneScroll.input, laneWidth.input, inputLayout));
+  const outputWin = $derived(visibleRange(laneScroll.output, laneWidth.output, outputLayout));
+  const inputSp = $derived(spacerWidths(inputWin.start, inputWin.end, inputLayout));
+  const outputSp = $derived(spacerWidths(outputWin.start, outputWin.end, outputLayout));
+
+  // ---- VST sidecar:每軌獨立開闔(localStorage 記住);幾何隨開闔變動 ----
+  let vstOpenIds = $state<Set<number>>(loadVstOpen());
+  function loadVstOpen(): Set<number> {
+    try {
+      const ids: unknown = JSON.parse(localStorage.getItem("rmix.vstside") ?? "[]");
+      return new Set(Array.isArray(ids) ? ids.filter((v): v is number => typeof v === "number") : []);
+    } catch {
+      return new Set();
+    }
+  }
+  function setVstOpen(next: Set<number>): void {
+    vstOpenIds = next;
+    try {
+      localStorage.setItem("rmix.vstside", JSON.stringify([...next]));
+    } catch {} // 存不了就只在本次工作階段記住
+  }
+  function toggleVst(id: number): void {
+    const next = new Set(vstOpenIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setVstOpen(next);
+  }
 
   function bindLane(group: LaneGroup): HTMLDivElement | null {
     return group === "input" ? inputLaneEl : outputLaneEl;
@@ -1399,15 +1447,22 @@
     return () => observers.forEach((ro) => ro.disconnect());
   });
 
-  // 拖曳中每張 strip 的滑動預覽位移(px);dropAt 不在該帶時全 0
-  function stripShift(group: LaneGroup, i: number): number {
-    if (!drag || !dropAt || dropAt.group !== group) return 0;
-    const from = laneArr(group).findIndex((track) => track.trackId === drag!.id);
-    return dragShift(i, from, dropAt.pos, STRIP_PITCH);
-  }
-  function lanePos(lane: HTMLElement, x: number, count: number): number {
+  // 拖曳中各卡的滑動預覽位移(px);槽寬含 sidecar 跟著卡片走;非拖曳帶 = null
+  const inputShifts = $derived.by(() => {
+    if (!drag || dropAt?.group !== "input") return null;
+    const from = inputTracks.findIndex((t) => t.trackId === drag!.id);
+    return from >= 0 ? moveShifts(inputLayout, from, dropAt.pos) : null;
+  });
+  const outputShifts = $derived.by(() => {
+    if (!drag || dropAt?.group !== "output") return null;
+    const from = outputTracks.findIndex((t) => t.trackId === drag!.id);
+    return from >= 0 ? moveShifts(outputLayout, from, dropAt.pos) : null;
+  });
+  function lanePos(group: LaneGroup, x: number): number {
     // 虛擬化安全:幾何計算,不查 DOM
-    return dropPosFromX(x, lane.getBoundingClientRect().left, lane.scrollLeft, count);
+    const lane = bindLane(group);
+    if (!lane) return 0;
+    return dropPosFromX(x, lane.getBoundingClientRect().left, lane.scrollLeft, group === "input" ? inputLayout : outputLayout);
   }
   function laneArr(group: LaneGroup): Track[] {
     return group === "input" ? inputTracks : outputTracks;
@@ -1427,7 +1482,7 @@
       if (e.dataTransfer) {
         e.dataTransfer.effectAllowed = "move";
         const r = el.getBoundingClientRect();
-        mountDragGhost(e.dataTransfer, el, el.offsetWidth || 207, { x: e.clientX - r.left, y: e.clientY - r.top });
+        mountDragGhost(e.dataTransfer, el, el.offsetWidth || STRIP_W, { x: e.clientX - r.left, y: e.clientY - r.top });
       }
     };
   }
@@ -1441,7 +1496,7 @@
       }
       e.preventDefault();
       const arr = laneArr(group);
-      const pos = lanePos(e.currentTarget as HTMLElement, e.clientX, arr.length);
+      const pos = lanePos(group, e.clientX);
       const from = arr.findIndex((track) => track.trackId === drag!.id);
       const moves = from >= 0 && pos !== from && pos !== from + 1;
       dropAt = moves ? { group, pos } : null;
@@ -1459,7 +1514,7 @@
       const arr = laneArr(group);
       const dragIdx = arr.findIndex((t) => t.trackId === drag!.id);
       if (dragIdx >= 0) {
-        const pos = lanePos(e.currentTarget as HTMLElement, e.clientX, arr.length);
+        const pos = lanePos(group, e.clientX);
         const reordered = reorderLane(
           tracks.map((t) => t.trackId),
           arr.map((t) => t.trackId),
@@ -2088,9 +2143,11 @@
             {loudnessEnabled}
             loudnessOpen={loudnessTarget?.trackId === t.trackId}
             onLoudnessOpen={openLoudness}
-            dragShift={stripShift("input", i)}
+            dragShift={inputShifts?.[i] ?? 0}
             dragActive={drag?.group === "input"}
             dragging={drag?.id === t.trackId}
+            vstOpen={vstOpenIds.has(t.trackId)}
+            onVstToggle={() => toggleVst(t.trackId)}
           />
         {:else}
           <!-- P1-L:空輸入帶的起始區(中性入口:最近 session、裝置狀態、加入軌) -->
@@ -2170,9 +2227,11 @@
             {loudnessEnabled}
             loudnessOpen={loudnessTarget?.trackId === t.trackId}
             onLoudnessOpen={openLoudness}
-            dragShift={stripShift("output", i)}
+            dragShift={outputShifts?.[i] ?? 0}
             dragActive={drag?.group === "output"}
             dragging={drag?.id === t.trackId}
+            vstOpen={vstOpenIds.has(t.trackId)}
+            onVstToggle={() => toggleVst(t.trackId)}
           />
         {:else}
           <p class="dim hint">新增輸出軌(監聽 / 串流)</p>

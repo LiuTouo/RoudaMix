@@ -1,6 +1,6 @@
 /* Minimal console with approved A / separate Inputs and Outputs containers.
    Shared by the real App and the isolated DEV preview.
-   Keep the 207px strip / 16px lane pitch (STRIP_GAP): virtualization and drag hit-testing use it. */
+   Keep the 176px strip / 16px lane pitch (STRIP_GAP): virtualization and drag hit-testing use it. */
 :root {
   --flat-0: #0D0F10; --flat-1: #121416; --flat-2: #181B1E; --flat-3: #181B1E; --flat-4: #202428;
   --border: #292D31; --divider: #1E2225; --text: #E2E5E8; --text-dim: #9CA5AE;
@@ -35,10 +35,9 @@ body { background: var(--flat-0); }
   & .colhead .mini { font-size: 11px; padding: 3px 6px; }
   /* Keep the lane origin at the first strip: lanePos and spacerWidths assume no horizontal padding. */
   & .lanes { min-width: 0; overflow: auto; background: transparent; }
-  & .strip { position: relative; padding: 4px 10px 0; gap: 4px; border: 1px solid var(--border); border-radius: 8px; background: var(--flat-4); }
+  & .strip { position: relative; padding: 4px 10px 0; gap: 4px; border: 1px solid var(--border); background: var(--flat-4); }
   & .head { position: static; width: auto; height: 32px; min-height: 32px; border: 0; background: transparent; padding: 0; }
   & .sysbadge { background: none; border: 0; padding: 0; color: var(--text-dim); font: 10px var(--mono); }
-  & .head .del { width: 28px; height: 26px; color: var(--text-dim); }
   & .row { gap: 6px; }
   & .row.source-row { display: flex; flex-wrap: nowrap; align-content: center; gap: 4px; min-height: 28px; flex-basis: 28px; }
   & .source-row > .lbl, & .destination-row:not(.routing-row) > .lbl { flex: 0 0 26px; }
@@ -50,6 +49,7 @@ body { background: var(--flat-0); }
   & .lbl { color: var(--text-dim); font: 11px var(--font-ui); letter-spacing: 0; }
   & .destination-row:not(.routing-row) { min-height: 28px; flex-basis: 28px; }
   & .routing-row { min-height: 28px; flex-basis: 28px; }
+  & .switches-row { min-height: 28px; flex-basis: 28px; }
   & :is(.row select, .destination-trigger, :is(dialog:not(.ctxdlg), .latency-drawer) select) { border: 0; border-bottom: 1px solid transparent; background: transparent; color: var(--text); min-height: 24px; padding: 3px 4px; font: 12px var(--font-ui); }
   /* 對話框/抽屜內的欄位走同一套下劃線語彙(DESIGN Selects/Fields)；文字輸入框 rest 態以 1px var(--border) 底線示意可輸入 */
   & :is(dialog:not(.ctxdlg), .latency-drawer) input:not([type="checkbox"], [type="range"], [type="radio"]) { border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; color: var(--text); }
@@ -69,8 +69,8 @@ body { background: var(--flat-0); }
   & .sys-dest:has(input:focus-visible) { outline: 1px solid var(--accent); outline-offset: -1px; }
   & .latency-toggle { font: 11px var(--font-ui); color: var(--text-dim); }
   & .latency-toggle input { width: 12px; height: 12px; accent-color: var(--ok); }
-  /* M/B 與第三列(routing row)同排流排版靠右；不做絶對定位，下拉列永不覆蓋。 */
-  & .console-switches { margin-left: auto; display: flex; align-items: center; gap: 6px; flex: none; width: 62px; height: 28px; padding: 0; border: 0; }
+  /* M/B/VST 獨立一列(routing row 下方)流排版；不做絶對定位，下拉列永不覆蓋。 */
+  & .console-switches { display: flex; align-items: center; gap: 6px; flex: none; height: 28px; padding: 0; border: 0; }
   & button { border: 0; border-radius: 3px; background: transparent; color: var(--text); }
   /* Danger rest 態如常(DESIGN：enabled:hover 才染紅)；壓過 flat-theme 同名 ID 規則的紅框 */
   & button.danger:not(.plugicon) { border: 0; background: transparent; color: var(--text); }
@@ -80,10 +80,10 @@ body { background: var(--flat-0); }
   & .console-switches .mute.on { background: var(--hot-bg); color: var(--hot-ink); border-color: var(--err); }
   & .console-switches .rack-b.on { background: var(--rack-bg); color: var(--warn); border-color: var(--warn); }
   & button:disabled { opacity: .4; }
-  & .lower { display: flex; flex-direction: row; gap: 8px; min-height: 327px; }
-  & .vstcol { order: 2; flex: 1; min-height: 0; gap: 0; }
-  & .vsthead { height: 18px; padding: 2px 0; background: transparent; border: 0; color: var(--text-dim); font: 11px var(--mono); letter-spacing: .04em; }
-  & .vst { height: auto; min-height: 72px; max-height: 100%; flex: 0 1 auto; border: 0; background: transparent; }
+  & .lower { display: flex; flex-direction: row; justify-content: center; gap: 8px; min-height: 327px; }
+  & .vstside-in { border-left: 1px solid var(--divider); }
+  & .vstside .vsthead { height: 18px; padding: 2px 0; background: transparent; border: 0; color: var(--text-dim); font: 11px var(--mono); letter-spacing: .04em; }
+  & .vst { height: auto; min-height: 72px; flex: 1 1 auto; border: 0; background: transparent; }
   & .vstlist { padding: 0; gap: 0; background: transparent; }
   & .plug { display: grid; grid-template-columns: 24px minmax(0, 1fr); align-items: center; gap: 2px; min-height: 28px; flex: none; padding: 1px 0; border: 0; background: transparent; }
   & .plug:not(.placeholder):has(.monitor-badge) { grid-template-columns: 24px minmax(0, 1fr) auto; }
@@ -110,10 +110,7 @@ body { background: var(--flat-0); }
   & .vstfoot { border: 0; border-top: 1px solid var(--divider); background: transparent; padding: 2px 0; }
   & .vstfoot .add { min-height: 24px; width: 100%; text-align: left; padding: 2px 0; font: 12px var(--mono); color: var(--text-dim); letter-spacing: .05em; }
   & .empty-slot { justify-content: flex-start; min-height: 28px; padding: 4px 0; border: 0; font-size: 11px; color: var(--text-dim); }
-  & .vstgrip { height: 6px; background: transparent; border: 0; }
-  & .vstgrip::after { height: 1px; width: 24px; background: var(--text-dim); opacity: .4; }
-  & .vstgrip:hover::after { background: var(--accent); opacity: 1; }
-  & .fader { order: 1; flex: 0 0 auto; min-height: 327px; justify-content: center; gap: 6px; padding: 4px 0 2px; border-top: 1px solid var(--divider); }
+  & .fader { flex: 0 0 auto; min-height: 327px; justify-content: center; gap: 6px; padding: 4px 0 2px; border-top: 1px solid var(--divider); }
   & .fctl { gap: 0; width: 13px; }
   & .slotwrap { width: 13px; }
   & .slotwrap input[type="range"] { width: 13px; min-width: 13px; min-height: 320px; }

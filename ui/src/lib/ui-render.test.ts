@@ -162,11 +162,10 @@ test("音軌標頭依角色與來源顯示圖示，名稱色條只出現一次�
     assert.match(body.slice(rail, source), /console-gain[^>]*>100%/);
     assert.match(body.slice(rail, source), /aria-label="軌道 Stream 的顏色"/);
     assert.match(body.slice(rail, source), /aria-label="軌道名稱:Stream\(點擊改名\)"/);
+    // 移除音軌一律走右鍵選單(紅字「移除音軌」);軌條上不再有刪除鈕
+    assert.doesNotMatch(body, /aria-label="刪除軌道/);
     if (patch.systemRole) {
-      assert.doesNotMatch(body, /aria-label="刪除軌道/);
       assert.match(body.slice(rail, source), patch.systemRole === "monitor" ? />MON<\/span>/ : />STR<\/span>/);
-    } else {
-      assert.match(body.slice(rail, source), /aria-label="刪除軌道/);
     }
   }
 });

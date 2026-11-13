@@ -43,12 +43,6 @@
     border-color var(--motion-dur-1) var(--motion-ease-standard),
     color var(--motion-dur-1) var(--motion-ease-standard);
 }
-#app .vstgrip::after {
-  transition:
-    background-color var(--motion-dur-1) var(--motion-ease-standard),
-    opacity var(--motion-dur-1) var(--motion-ease-standard);
-}
-
 /* ---- 原生 <dialog>：淡入＋微上浮（用獨立 translate/scale 屬性，
    不干擾 scoped 的 translate(-50%, -50%) 置中 transform；Chromium
    會以 translate→rotate→scale→transform 順序合成）。

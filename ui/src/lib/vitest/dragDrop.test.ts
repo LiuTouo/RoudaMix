@@ -12,7 +12,7 @@ vi.mock("../protocol-commands.generated", async (importOriginal) => ({
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
 let component: ReturnType<typeof mount>;
 let transfer: { setData: ReturnType<typeof vi.fn>; setDragImage: ReturnType<typeof vi.fn>; effectAllowed: string; dropEffect: string };
-const rack = () => document.querySelector<HTMLElement>(".strip .vst")!;
+const rack = () => document.querySelector<HTMLElement>(".vstside .vst")!;
 const rows = () => [...rack().querySelectorAll<HTMLElement>(".vstlist > .plug")];
 
 function drag(element: HTMLElement, type: string, clientY = 0, relatedTarget: EventTarget | null = null) {
@@ -121,7 +121,7 @@ describe("VST 拖曳落點", () => {
     expect(drag(rack(), "dragover", 150).defaultPrevented).toBe(false);
     expect(rack().querySelector(".dropbefore, .dropafter")).toBeNull();
     const outer = vi.fn();
-    document.querySelector(".strip")!.addEventListener("dragover", outer);
+    document.querySelector(".track-slot")!.addEventListener("dragover", outer);
     drag(rows()[2], "dragstart");
     drag(rows()[0], "dragover", 103);
     expect(outer).not.toHaveBeenCalled();

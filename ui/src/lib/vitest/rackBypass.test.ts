@@ -93,10 +93,10 @@ describe("全軌 Bypass B 鈕", () => {
     await show(makeTrack([]));
     expect(bBtn().disabled).toBe(true);
   });
-  it("M/B 控制區與標題在機架盒子外且保留右鍵機架選單", async () => {
+  it("M/B 控制區留在軌條內、機架在右側 sidecar，兩者分離且保留右鍵機架選單", async () => {
     await show(makeTrack([{ instanceId: 1 }]));
-    const rack = document.querySelector<HTMLElement>(".strip .vst")!;
-    const head = document.querySelector<HTMLElement>(".strip .vsthead")!;
+    const rack = document.querySelector<HTMLElement>(".vstside .vst")!;
+    const head = document.querySelector<HTMLElement>(".vstside .vsthead")!;
     const switches = document.querySelector<HTMLElement>(".strip .console-switches")!;
     expect(switches.querySelector(".rack-b")).not.toBeNull();
     expect(switches.querySelector(".mute:not(.rack-b)")).not.toBeNull();

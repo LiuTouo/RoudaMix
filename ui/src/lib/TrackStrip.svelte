@@ -78,6 +78,9 @@
     dragging = false,
     /** 新增軌淡入時長(ms);0 = 不播。由 App 的 justAddedIds 閘門控制,虛擬化捲動重建不誤觸發 */
     introMs = 0,
+    /** VST sidecar 展開中(App 持有 per-track 狀態 + localStorage 記憶) */
+    vstOpen = false,
+    onVstToggle = undefined,
   }: {
     track: Track;
     tracks: Track[];
@@ -107,6 +110,8 @@
     dragActive?: boolean;
     dragging?: boolean;
     introMs?: number;
+    vstOpen?: boolean;
+    onVstToggle?: () => void;
   } = $props();
 
   let err = $state("");
@@ -838,70 +843,13 @@
     }
   }
 
-  // VST box 高度:預設自適應內容,拖曳固定;成功加入插件或雙擊把手還原自適應。
-  // 手動高度存 localStorage;CSS 限制可見高度,不因視窗暫時縮小而覆寫偏好。
+  // 機架 DOM 引用(sidecar 內);插件拖曳幾何量測用
   let vstBox = $state<HTMLDivElement | null>(null);
-  // trackId 在此元件生命週期不變(App 以 trackId 為 key each),取初始值即可
-  // svelte-ignore state_referenced_locally
-  const hKey = `rmix.vsth.${track.trackId}`;
-  const persistRackHeight = !(import.meta.env.DEV && import.meta.env.VITE_CONSOLE_PREVIEW);
-  function readH(): number | null {
-    if (!persistRackHeight) return null; // Only the isolated preview skips persistence.
-    try {
-      const v = Number(localStorage.getItem(hKey));
-      return Number.isFinite(v) && v >= 72 ? v : null;
-    } catch {
-      return null;
-    }
-  }
-  let boxH = $state<number | null>(readH());
-
-  // 機架盒可拉上限 = 欄高扣掉標題列/把手等其他子元素與 flex gap(實測,不寫死)。
-  // 舊版只扣 -12(把手+間隙)漏了移到盒外的 .vsthead,拖到最底會溢出被 colorbar 蓋住。
-  function maxBoxH(col: HTMLElement, box: HTMLElement): number {
-    let others = 0;
-    let n = 0;
-    for (const el of col.children) {
-      n++;
-      if (el !== box) others += (el as HTMLElement).offsetHeight;
-    }
-    const gap = parseFloat(getComputedStyle(col).rowGap) || 0;
-    return col.clientHeight - others - gap * (n - 1);
-  }
-
-  function onGripDown(e: PointerEvent) {
-    const box = vstBox;
-    const col = box?.parentElement;
-    if (!box || !col) return;
-    e.preventDefault();
-    const startY = e.clientY;
-    const startH = box.offsetHeight;
-    const max = maxBoxH(col, box); // 拖曳期間欄高由 flex 固定,pointerdown 時取一次即可
-    const move = (ev: PointerEvent) => {
-      boxH = Math.max(72, Math.min(startH + ev.clientY - startY, max));
-    };
-    const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-      try {
-        if (persistRackHeight && boxH !== null) localStorage.setItem(hKey, String(boxH));
-      } catch {} // 隱私模式等存不了就算了,下次自適應
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-  }
-  function onGripDbl() {
-    boxH = null;
-    try {
-      if (persistRackHeight) localStorage.removeItem(hKey);
-    } catch {}
-  }
 
   async function addPlugin(path: string, classId: string) {
     err = "";
     // 選擇器保留搜尋狀態並呈現錯誤，成功才關閉；registry 仍由 App 共用。
     await engineCommand("add_plugin", { trackId: track.trackId, path, classId });
-    onGripDbl();
   }
 
   // ---- P2-M:右鍵選單(移到最前/最後/上移/下移;拖曳之外的可發現路徑)----
@@ -942,8 +890,14 @@
     );
   }
   function trackMenu(e: MouseEvent) {
-    // 系統輸出軌(監聽/串流)每 session 恰各一,不可複製(engine 也擋)
+    // 系統輸出軌(監聽/串流)每 session 恰各一,不可複製/移除(engine 也擋)
     openMenu(e.clientX, e.clientY, `軌道「${track.name}」操作`, [
+      {
+        label: "移除音軌…",
+        destructive: true,
+        disabled: track.systemRole != null,
+        run: removeTrack,
+      },
       {
         label: "複製音軌",
         disabled: !trackDuplicateEnabled || track.systemRole != null,
@@ -1019,7 +973,7 @@
 />
 
 <div
-  class="strip"
+  class="track-slot"
   in:fade={{ duration: introMs }}
   class:out={isOutput}
   class:drag-active={dragActive}
@@ -1038,6 +992,7 @@
     trackMenu(e);
   }}
 >
+  <div class="strip">
   <div class="head">
     <span
     class="track-icon"
@@ -1049,19 +1004,11 @@
   ></span>
     {@render identityRail()}
     {#if track.systemRole}
-      <!-- 系統輸出:每 session 恰好一條 monitor/stream,不可刪(engine 也擋) -->
+      <!-- 系統輸出:每 session 恰各一,不可刪(engine 也擋);其餘軌一律由右鍵選單移除 -->
       <span
         class="sysbadge"
         data-tooltip="系統{track.systemRole === "monitor" ? "監聽" : "串流"}輸出軌；固定角色，無法刪除。"
         >{track.systemRole === 'monitor' ? 'MON' : 'STR'}</span
-      >
-    {:else}
-      <button
-        class="mini danger del"
-        onclick={removeTrack}
-        aria-label="刪除軌道 {track.name}(會先確認)"
-        data-tooltip="刪除此軌道；執行前會要求確認。"
-        >×</button
       >
     {/if}
   </div>
@@ -1177,6 +1124,22 @@
       onclick={bypassAll}
       data-tooltip={bypassLatched ? "全軌 bypass 中；點擊恢復原啟用插件。" : "全部插件切為 bypass（記憶啟用狀態）；再按恢復原啟用。"}>B</button>
   {/snippet}
+  {#snippet vstChip()}
+    <!-- VST sidecar 開關(收闔時唯一入口);面板本身在右側 .vstside -->
+    <button
+      class="mini vstchip"
+      class:on={vstOpen}
+      aria-expanded={vstOpen}
+      aria-label={vstOpen
+        ? `收闔 ${track.name} 的 VST 面板`
+        : `展開 ${track.name} 的 VST 面板(插件 ${track.plugins.length} 個)`}
+      onclick={() => onVstToggle?.()}
+      data-tooltip={vstOpen
+        ? "收闔 VST 面板。"
+        : "展開 VST 面板（右側音軌右移讓位）。"}
+      >VST {track.plugins.length}</button
+    >
+  {/snippet}
   <div class="row routing-row" data-tooltip={track.kind === "fx" ? "側鏈：來源訊號只進插件 aux input，不進混音。" : undefined}>
     {#if sysOuts.length > 0}
       {#each sysOuts as sys (sys.trackId)}
@@ -1211,185 +1174,13 @@
         <span>低延遲</span>
       </label>
     {/if}
-    <!-- M/B 排在第三列右側(流排版):來源/送至下拉列整行不再被覆蓋。 -->
-    <div class="console-switches">{@render muteSwitch()}{@render rackSwitch()}</div>
+  </div>
+  <!-- M/B/VST 獨立一列(MON/STR 勾選區下方),不再擠路由列(窄軌不重疊) -->
+  <div class="row switches-row">
+    <div class="console-switches">{@render muteSwitch()}{@render rackSwitch()}{@render vstChip()}</div>
   </div>
   <div class="lower">
-  <div class="vstcol">
-  <!-- 標題列在機架盒子外(正上方);右鍵仍可開機架選單(button 已在 rackMenu 內過濾)。 -->
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="vsthead" oncontextmenu={rackMenu}>
-    <span>VST ({track.plugins.length})</span>
-    {#if $pluginTransfer.busy || monitorBypassBusy}<span class="dim" role="status">處理中…</span>{/if}
-  </div>
-  {#snippet renameBox()}
-    <!-- 插件自訂名稱行內編輯(Enter 套用、Esc 取消;空白 = 恢復原名) -->
-    <input
-      class="plugrename"
-      bind:this={renameInput}
-      bind:value={renameDraft}
-      draggable="false"
-      aria-label="插件名稱(Enter 套用、Esc 取消;空白 = 恢復原名)"
-      onkeydown={(e) => {
-        if (e.key === "Enter") commitRename();
-        else if (e.key === "Escape") renamingId = null;
-      }}
-      onblur={commitRename}
-      onclick={(e) => e.stopPropagation()}
-      ondblclick={(e) => e.stopPropagation()}
-      onpointerdown={(e) => e.stopPropagation()}
-    />
-  {/snippet}
 
-  <!-- 機架是可聚焦的右鍵選單入口，保留 group 語意及內部控制項。 -->
-  <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
-  <div class="vst" bind:this={vstBox} style={boxH !== null ? `height:${boxH}px` : ""}
-    role="group" aria-label={`${track.name} 的 VST 機架`}
-    tabindex={pluginCopyEnabled ? 0 : undefined}
-    aria-busy={$pluginTransfer.busy || monitorBypassBusy}
-    class:emptydrop={plugDropAt === 0 && track.plugins.length === 0}
-    oncontextmenu={rackMenu} onkeydown={(e) => pluginMenuKey(e)}
-    ondragover={onPlugDragOver} ondragleave={onPlugDragLeave} ondrop={onPlugDrop}>
-    <div class="vstlist" role="list" aria-label={`${track.name} 的插件順序`}>
-      {#each track.plugins as s, i (s.instanceId)}
-        <!-- 可聚焦的插件選單入口，同時維持 listitem 語意。 -->
-        <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
-        <div
-          class="plug"
-          class:placeholder={isPh(s)}
-          draggable="true"
-          class:dragging={plugDrag === s.instanceId}
-          class:drag-active={plugDrag !== null}
-          style:transform={`translateY(${plugShift(i)}px)`}
-          role="listitem"
-          tabindex="0"
-          onkeydown={(e) => pluginMenuKey(e, s)}
-          aria-label="plugin {s.name}"
-          ondragstart={(e) => onPlugDragStart(e, s)}
-          ondragend={() => { if ($pluginTransfer.drag) onPlugDragEnd(); }}
-          oncontextmenu={(e) => {
-            if ((e.target as HTMLElement).closest("button")) return;
-            e.preventDefault();
-            e.stopPropagation();
-            plugMenu(e, s);
-          }}
-          data-tooltip={isPh(s) ? undefined : pluginCopyEnabled
-            ? "拖曳排序；跨軌拖曳複製；右鍵複製貼上。"
-            : "拖曳排序；右鍵開操作選單。"}
-        >
-          {#if isPh(s)}
-            <!-- missing/broken/deferred:原鏈位保留,不參與 DSP;提供重試/重新定位/移除 -->
-            <div class="plugtitle">
-              <span class="phmark" data-tooltip={s.availability === "deferred"
-                ? "Bypass 插件還原時未載入（加快啟動）。"
-                : `Plugin 載入失敗：${s.loadError ?? "原因未提供"}`}>{s.availability === "deferred" ? "⏸" : "⚠"}</span>
-              <span
-                class="plugname phname"
-                data-tooltip={s.availability === "deferred"
-                  ? `Plugin 檔案：\n${s.pluginPath}\n\nBypass 中，還原時未載入。`
-                  : `Plugin 檔案：\n${s.pluginPath}\n\n載入錯誤：${s.loadError ?? "原因未提供"}`}
-              >
-              <span class="phwhy">{phLabel(s)}</span>
-              {#if renamingId === s.instanceId}
-                {@render renameBox()}
-              {:else}
-                {s.name || basename(s.pluginPath)}
-              {/if}
-              {#if s.loadError}<span class="pherr">{s.loadError}</span>{/if}
-              </span>
-            </div>
-            <div class="plugactions placeholder-actions">
-              <button
-                class="mini"
-                onclick={() => retryPlugin(s)}
-                data-tooltip={s.availability === "deferred"
-                  ? "載入插件並恢復存檔參數。"
-                  : "以原始路徑重新載入。"}
-                >{s.availability === "deferred" ? "載入" : "重試"}</button
-              >
-              <button
-                class="mini"
-                onclick={() => relocatePlugin(s)}
-                data-tooltip="指定替代的 plugin 檔案。"
-                >定位</button
-              >
-            </div>
-          {:else}
-            {#if renamingId === s.instanceId}
-              {@render renameBox()}
-            {:else}
-              <span
-                class="plugname"
-                role="button"
-                tabindex="0"
-                data-tooltip={s.displayName
-                  ? `自訂名稱：${s.displayName}\n檔案：${s.pluginPath}`
-                  : `${s.name} — 單擊開啟 plugin 介面；右鍵開操作選單。`}
-                onclick={() => openEditor(s)}
-                onkeydown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    void openEditor(s);
-                  }
-                }}>{s.name}</span
-              >
-            {/if}
-            <div class="plugactions">
-              <button
-                class="mini plugicon power"
-                class:off={s.bypassed}
-                aria-pressed={!s.bypassed}
-                aria-label={s.bypassed ? `${s.name} bypass 中(點此啟用)` : `${s.name} 啟用中(點此 bypass)`}
-                onclick={() => bypass(s)}
-                data-tooltip={s.bypassed
-                  ? "Bypass 中；點擊啟用。"
-                  : "處理中；點擊切為 bypass。"}
-              >
-                <img class="picon" src={s.bypassed ? powerOff : powerOn} alt="" draggable="false" />
-              </button>
-            </div>
-          {/if}
-          {#if latencyEnabled && shownMonitorBypass(s)}
-            <span class="monitor-badge" role="img" aria-label="監聽略過（Monitor Bypass）已啟用"
-              data-tooltip={isMonitorBypassPending(monitorBypassState, s.instanceId)
-                ? "監聽略過：同步中。"
-                : "低延遲輸出略過此插件（Full PDC 照常處理）；右鍵取消。"}>MB</span>
-          {/if}
-        </div>
-      {:else}
-        <div class="empty-slot" class:drop-target={plugDropAt === 0}
-          role="listitem" aria-live="polite">
-          {plugDropAt === 0 ? "放開以複製插件" : "無插件"}
-        </div>
-      {/each}
-    </div>
-    <div class="vstfoot">
-      <button
-        class="mini add"
-        onclick={() => { pluginPickerOpen = true; }}
-        data-tooltip="開啟 VST 插件清單。"
-        >+ 加入</button
-      >
-    </div>
-  </div>
-  <!-- P2-P:resize grip = button(可聚焦、Enter = 還原高度;拖曳調整) -->
-  <button
-    type="button"
-    class="vstgrip"
-    aria-label="調整插件清單高度(拖曳固定;雙擊或 Enter 恢復自動)"
-    onpointerdown={(e) => {
-      // button 的 pointerdown 預設行為(焦點/後續 click)不影響拖曳
-      onGripDown(e);
-    }}
-    ondblclick={onGripDbl}
-    onkeydown={(e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onGripDbl(); }
-    }}
-    data-tooltip={boxH === null
-      ? "目前自動依插件內容調整高度；拖曳可固定高度。"
-      : "目前使用手動高度（會記住）；成功加入插件後恢復自動，也可雙擊或按 Enter 還原。"}
-  ></button>
-  </div>
 
   {#if pluginPickerOpen}
     <PluginPicker
@@ -1522,27 +1313,242 @@
       >{Math.round(tip.v * 100)}%</div
     >
   {/if}
+  </div>
+
+  <div class="vstside" class:open={vstOpen} inert={!vstOpen}>
+    <div class="vstside-in">
+  <!-- 標題列在機架盒子外(正上方);右鍵仍可開機架選單(button 已在 rackMenu 內過濾)。 -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="vsthead" oncontextmenu={rackMenu}>
+    <span>VST ({track.plugins.length})</span>
+    {#if $pluginTransfer.busy || monitorBypassBusy}<span class="dim" role="status">處理中…</span>{/if}
+    <button
+      class="mini vstclose"
+      onclick={() => onVstToggle?.()}
+      aria-label="收闔 {track.name} 的 VST 面板"
+      data-tooltip="收闔 VST 面板。"
+      >✕</button
+    >
+  </div>
+  {#snippet renameBox()}
+    <!-- 插件自訂名稱行內編輯(Enter 套用、Esc 取消;空白 = 恢復原名) -->
+    <input
+      class="plugrename"
+      bind:this={renameInput}
+      bind:value={renameDraft}
+      draggable="false"
+      aria-label="插件名稱(Enter 套用、Esc 取消;空白 = 恢復原名)"
+      onkeydown={(e) => {
+        if (e.key === "Enter") commitRename();
+        else if (e.key === "Escape") renamingId = null;
+      }}
+      onblur={commitRename}
+      onclick={(e) => e.stopPropagation()}
+      ondblclick={(e) => e.stopPropagation()}
+      onpointerdown={(e) => e.stopPropagation()}
+    />
+  {/snippet}
+
+  <!-- 機架是可聚焦的右鍵選單入口，保留 group 語意及內部控制項。 -->
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+  <div class="vst" bind:this={vstBox}
+    role="group" aria-label={`${track.name} 的 VST 機架`}
+    tabindex={pluginCopyEnabled ? 0 : undefined}
+    aria-busy={$pluginTransfer.busy || monitorBypassBusy}
+    class:emptydrop={plugDropAt === 0 && track.plugins.length === 0}
+    oncontextmenu={rackMenu} onkeydown={(e) => pluginMenuKey(e)}
+    ondragover={onPlugDragOver} ondragleave={onPlugDragLeave} ondrop={onPlugDrop}>
+    <div class="vstlist" role="list" aria-label={`${track.name} 的插件順序`}>
+      {#each track.plugins as s, i (s.instanceId)}
+        <!-- 可聚焦的插件選單入口，同時維持 listitem 語意。 -->
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+        <div
+          class="plug"
+          class:placeholder={isPh(s)}
+          draggable="true"
+          class:dragging={plugDrag === s.instanceId}
+          class:drag-active={plugDrag !== null}
+          style:transform={`translateY(${plugShift(i)}px)`}
+          role="listitem"
+          tabindex="0"
+          onkeydown={(e) => pluginMenuKey(e, s)}
+          aria-label="plugin {s.name}"
+          ondragstart={(e) => onPlugDragStart(e, s)}
+          ondragend={() => { if ($pluginTransfer.drag) onPlugDragEnd(); }}
+          oncontextmenu={(e) => {
+            if ((e.target as HTMLElement).closest("button")) return;
+            e.preventDefault();
+            e.stopPropagation();
+            plugMenu(e, s);
+          }}
+          data-tooltip={isPh(s) ? undefined : pluginCopyEnabled
+            ? "拖曳排序；跨軌拖曳複製；右鍵複製貼上。"
+            : "拖曳排序；右鍵開操作選單。"}
+        >
+          {#if isPh(s)}
+            <!-- missing/broken/deferred:原鏈位保留,不參與 DSP;提供重試/重新定位/移除 -->
+            <div class="plugtitle">
+              <span class="phmark" data-tooltip={s.availability === "deferred"
+                ? "Bypass 插件還原時未載入（加快啟動）。"
+                : `Plugin 載入失敗：${s.loadError ?? "原因未提供"}`}>{s.availability === "deferred" ? "⏸" : "⚠"}</span>
+              <span
+                class="plugname phname"
+                data-tooltip={s.availability === "deferred"
+                  ? `Plugin 檔案：\n${s.pluginPath}\n\nBypass 中，還原時未載入。`
+                  : `Plugin 檔案：\n${s.pluginPath}\n\n載入錯誤：${s.loadError ?? "原因未提供"}`}
+              >
+              <span class="phwhy">{phLabel(s)}</span>
+              {#if renamingId === s.instanceId}
+                {@render renameBox()}
+              {:else}
+                {s.name || basename(s.pluginPath)}
+              {/if}
+              {#if s.loadError}<span class="pherr">{s.loadError}</span>{/if}
+              </span>
+            </div>
+            <div class="plugactions placeholder-actions">
+              <button
+                class="mini"
+                onclick={() => retryPlugin(s)}
+                data-tooltip={s.availability === "deferred"
+                  ? "載入插件並恢復存檔參數。"
+                  : "以原始路徑重新載入。"}
+                >{s.availability === "deferred" ? "載入" : "重試"}</button
+              >
+              <button
+                class="mini"
+                onclick={() => relocatePlugin(s)}
+                data-tooltip="指定替代的 plugin 檔案。"
+                >定位</button
+              >
+            </div>
+          {:else}
+            {#if renamingId === s.instanceId}
+              {@render renameBox()}
+            {:else}
+              <span
+                class="plugname"
+                role="button"
+                tabindex="0"
+                data-tooltip={s.displayName
+                  ? `自訂名稱：${s.displayName}\n檔案：${s.pluginPath}`
+                  : `${s.name} — 單擊開啟 plugin 介面；右鍵開操作選單。`}
+                onclick={() => openEditor(s)}
+                onkeydown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    void openEditor(s);
+                  }
+                }}>{s.name}</span
+              >
+            {/if}
+            <div class="plugactions">
+              <button
+                class="mini plugicon power"
+                class:off={s.bypassed}
+                aria-pressed={!s.bypassed}
+                aria-label={s.bypassed ? `${s.name} bypass 中(點此啟用)` : `${s.name} 啟用中(點此 bypass)`}
+                onclick={() => bypass(s)}
+                data-tooltip={s.bypassed
+                  ? "Bypass 中；點擊啟用。"
+                  : "處理中；點擊切為 bypass。"}
+              >
+                <img class="picon" src={s.bypassed ? powerOff : powerOn} alt="" draggable="false" />
+              </button>
+            </div>
+          {/if}
+          {#if latencyEnabled && shownMonitorBypass(s)}
+            <span class="monitor-badge" role="img" aria-label="監聽略過（Monitor Bypass）已啟用"
+              data-tooltip={isMonitorBypassPending(monitorBypassState, s.instanceId)
+                ? "監聽略過：同步中。"
+                : "低延遲輸出略過此插件（Full PDC 照常處理）；右鍵取消。"}>MB</span>
+          {/if}
+        </div>
+      {:else}
+        <div class="empty-slot" class:drop-target={plugDropAt === 0}
+          role="listitem" aria-live="polite">
+          {plugDropAt === 0 ? "放開以複製插件" : "無插件"}
+        </div>
+      {/each}
+    </div>
+    <div class="vstfoot">
+      <button
+        class="mini add"
+        onclick={() => { pluginPickerOpen = true; }}
+        data-tooltip="開啟 VST 插件清單。"
+        >+ 加入</button
+      >
+    </div>
+  </div>
+    </div>
+  </div>
 </div>
 
 <style>
+  /* 槽 = 軌條 + (展開時)右側 VST sidecar;lane 幾何(laneView.ts)以此寬度構成 pitch */
+  .track-slot {
+    display: flex;
+    flex: 0 0 auto;
+    min-height: 0;
+    align-items: stretch;
+  }
+  .track-slot.unbound .strip {
+    opacity: 0.75;
+  }
+  /* VST sidecar:寬度含 8px 溝槽(SIDE_GAP),0↔SIDE_GAP+SIDE_W 過渡 →
+   * 收闔時槽寬恰 = STRIP_W(虛擬化幾何不失準),右側軌道隨每幀 reflow 平滑讓位。
+   * 收闔時 inert(不可聚焦/互動),visibility 延遲收尾避免內容先消失。 */
+  .vstside {
+    flex: 0 0 auto;
+    width: 0;
+    min-width: 0;
+    overflow: hidden;
+    visibility: hidden;
+    display: flex;
+    transition: width 0.18s ease, visibility 0s linear 0.18s;
+  }
+  .vstside.open {
+    width: 184px; /* = SIDE_GAP + SIDE_W(與軌條同寬 + 溝槽) */
+    visibility: visible;
+    transition: width 0.18s ease;
+  }
+  .vstside-in {
+    margin-left: 8px; /* = laneView.ts SIDE_GAP(溝槽) */
+    width: 176px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-height: 0;
+  }
+  .vstclose {
+    margin-left: auto;
+    flex: none;
+  }
+  .vstchip.on {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #14161a;
+    font-weight: 700;
+  }
   .strip {
     background: var(--bg-panel);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    /* 直角音軌（去圓角；console 主題亦同） */
     padding: 8px 10px 0;
     display: flex;
     flex-direction: column;
     gap: 8px;
-    flex: 0 0 207px;
-    width: 207px;
+    flex: 0 0 176px;
+    width: 176px;
     min-height: 0;
     overflow-y: auto;
+    overflow-x: hidden; /* 軌內不出現橫向捲軸(內容過寬即截斷,不重疊撑不出) */
     user-select: none; /* 拖曳區禁選(全域已開放選取;錯誤文字 .err 例外) */
   }
   .strip .err {
     user-select: text;
   }
-  .strip.dragging {
+  .track-slot.dragging .strip {
     opacity: 0.22; /* 內容已被拿起,原地只剩空槽 */
     border-style: dashed;
     border-color: var(--accent);
@@ -1550,8 +1556,8 @@
   /* 暫態落點:滑動預覽取代亮框染色 —— 拖曳中各卡以 transform 滑到放下後的排列。
    * transition 只在拖曳中(drag-active)開:放下時狀態與 transform 同一 flush 歸零,
    * 不套 transition、直接對齊最終排列(與預覽一致,零跳動)。
-   * 功能性回饋:一律播放,不連動 OS 動畫設定（ADR 0007）。 */
-  .strip.drag-active {
+   * 功能性回饋:一律播放,不連動 OS 動畫設定(ADR 0007)。 */
+  .track-slot.drag-active {
     transition: transform 0.16s ease;
   }
   .head {
@@ -1571,7 +1577,7 @@
     mask: var(--icon-src) center / contain no-repeat;
     filter: drop-shadow(0 0 2px var(--icon-glow, transparent)) drop-shadow(0 0 5px var(--icon-glow, transparent));
   }
-  .head > .del, .head > .sysbadge { flex: none; }
+  .head > .sysbadge { flex: none; }
   .console-gain { flex: none; margin-left: auto; position: relative; pointer-events: none; font-size: 11px; }
   /* 名稱色條填滿圖示與軌道操作之間的空間。 */
   .colorbar {
@@ -1654,6 +1660,10 @@
     flex-basis: 32px;
     min-height: 32px;
   }
+  .switches-row {
+    flex-basis: 32px;
+    min-height: 32px;
+  }
   .row select {
     flex: 1;
     min-width: 0;
@@ -1681,11 +1691,10 @@
     font-size: 12px; line-height: normal; cursor: pointer; user-select: none;
   }
   .latency-toggle input { flex: none; margin: 0; width: 14px; height: 14px; accent-color: var(--accent); }
-  /* VST 常駐 box:預設自適應內容(超出即內捲),拖底部把手可拉長 */
+  /* VST 常駐 box:sidecar 內滿高,內容超出即內捲 */
   .vst {
-    flex: 0 1 auto;
+    flex: 1 1 auto;
     min-height: 72px;
-    max-height: 100%;
     display: flex;
     flex-direction: column;
     font-size: 12px;
@@ -1695,15 +1704,6 @@
     overflow: hidden;
   }
   /* 標題列已移到盒子外:不再需要盒內頭部的底色/分隔線 */
-  .vsthead {
-    flex: none;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 0 1px 2px;
-    color: var(--text-dim);
-    user-select: none;
-  }
   .vstlist {
     flex: 1 1 auto;
     min-height: 0;
@@ -1719,34 +1719,14 @@
     padding: 4px 6px;
     border-top: 1px solid var(--border);
   }
-  /* 底部高度把手 */
-  .vstgrip {
+  .vsthead {
     flex: none;
-    position: relative;
-    height: 7px;
-    border-radius: 4px;
-    background: var(--bg-raised);
-    border: 1px solid var(--border);
-    cursor: ns-resize;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 1px 2px;
+    color: var(--text-dim);
     user-select: none;
-    touch-action: none;
-  }
-  .vstgrip::after {
-    content: "";
-    position: absolute;
-    left: 50%;
-    top: 50%;
-    width: 28px;
-    height: 2px;
-    transform: translate(-50%, -50%);
-    border-radius: 1px;
-    background: var(--border);
-  }
-  .vstgrip:hover {
-    border-color: var(--accent);
-  }
-  .vstgrip:hover::after {
-    background: var(--accent);
   }
   .plug {
     display: flex;
@@ -1885,9 +1865,6 @@
     cursor: pointer;
   }
   /* P1-C:needsRebind 黯淡提示(軌道保留、安全靜音) */
-  .strip.unbound {
-    opacity: 0.75;
-  }
   .unboundtxt {
     font-size: 12px;
     flex: 1;
@@ -1932,13 +1909,6 @@
     font-size: 11px;
     line-height: 1.4;
   }
-  /* P2-M:破壞性/常誤點操作的 hit target 擴大 */
-  .mini.del {
-    min-width: 24px;
-    min-height: 22px;
-    padding: 0 6px;
-    font-size: 13px;
-  }
   .mute {
     min-width: 30px;
     min-height: 26px;
@@ -1959,24 +1929,16 @@
   .danger:hover {
     color: var(--err);
   }
-  /* 下段 = fader(左)+ VST 欄(右);DOM 序 vst 在前,order 翻到右邊 */
+  /* 下段 = fader + 錶(VST 機架在右側 sidecar);置中 */
   .lower {
     flex: 1;
     min-height: 0;
     display: flex;
+    justify-content: center;
     gap: 8px;
-  }
-  .vstcol {
-    order: 2;
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
   }
   /* 垂直 fader(窄)+ 垂直錶;M / 推桿 / % 同一欄直排 */
   .fader {
-    order: 1;
     flex: 0 0 auto;
     min-height: 0;
     display: flex;

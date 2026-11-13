@@ -16,10 +16,10 @@ test("D uses neutral surfaces and separates toggled, dangerous and warning state
   assert.match(css, /\.plug\.placeholder \{ border-left-color: var\(--warn\); \}/);
 });
 
-test("console racks size to plugin content instead of filling the column", () => {
+test("console racks fill the full-height VST sidecar with internal scroll", () => {
   const consoleCss = readFileSync(new URL("../console.css", import.meta.url), "utf8");
   const rack = consoleCss.match(/& \.vst \{([^}]+)\}/)![1];
-  assert.match(rack, /flex: 0 1 auto;/);
+  assert.match(rack, /flex: 1 1 auto;/);
   assert.match(rack, /height: auto;/);
   assert.match(rack, /min-height: 72px;/);
 });

@@ -37,14 +37,15 @@ test('console container gutters stay outside scrollable lanes and preserve virtu
   assert.ok(strip.includes(`flex: 0 0 ${STRIP_W}px;`));
 });
 
-test('M/B switches flow-align on the routing row; dropdown rows are never overlaid', () => {
-  // 舊版 .console-switches 絶對定位 top:68px 壓在「送至」下拉列上；改為第三列流排版。
+test('M/B/VST switches sit on their own row below routing; dropdown rows are never overlaid', () => {
+  // 舊版 .console-switches 絶對定位 top:68px 壓在「送至」下拉列上；改為流排版。
+  // VST sidecar 上線後 M/B/VST chip 獨立一列(MON/STR 勾選列下方),不再擠路由列。
   const switches = css.match(/& \.console-switches \{([^}]+)\}/)![1];
-  assert.match(switches, /margin-left: auto/);
-  assert.doesNotMatch(switches, /position: absolute|top: \d+px|right: \d+px/);
+  assert.match(switches, /display: flex/);
+  assert.doesNotMatch(switches, /position: absolute|top: \d+px|right: \d+px|width: 62px/); // VST chip 需要寬度
   const routing = css.match(/& \.routing-row \{([^}]+)\}/)![1];
   assert.doesNotMatch(routing, /padding-right/);
-  const row = strip.match(/<div class="row routing-row"[\s\S]*?<div class="console-switches">[\s\S]*?<\/div>\r?\n  <\/div>/)![0];
+  const row = strip.match(/<div class="row routing-row"[\s\S]*?\r?\n  <div class="row switches-row">[\s\S]*?<div class="console-switches">/)![0];
   assert.ok(row.includes('<div class="console-switches">'));
   assert.doesNotMatch(strip, /class="row destination-row routing-row"/);
   assert.ok(strip.indexOf('<div class="row routing-row"') < strip.indexOf('<div class="lower">'));

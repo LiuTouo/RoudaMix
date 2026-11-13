@@ -11,7 +11,7 @@ vi.mock("../protocol-commands.generated", async (importOriginal) => ({
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
 let component: ReturnType<typeof mount>;
 const nameCalls = () => command.mock.calls.filter(([kind]) => kind === "set_plugin_name");
-const plug = () => document.querySelector<HTMLElement>(".strip .vstlist .plug")!;
+const plug = () => document.querySelector<HTMLElement>(".vstside .vstlist .plug")!;
 
 function makeTrack(plugins: Partial<Track["plugins"][number]>[]): Track {
   return { trackId: 1, name: "聲音", kind: "audio", source: null, output: null,
@@ -32,7 +32,7 @@ async function startRename() {
   plug().dispatchEvent(new KeyboardEvent("keydown", { key: "F2", bubbles: true }));
   await flushSync();
 }
-const renameInput = () => document.querySelector<HTMLInputElement>(".strip .plugrename")!;
+const renameInput = () => document.querySelector<HTMLInputElement>(".vstside .plugrename")!;
 
 beforeEach(() => command.mockReset().mockResolvedValue({ tracks: [] }));
 afterEach(async () => { await unmount(component); document.body.innerHTML = ""; });
@@ -100,7 +100,7 @@ describe("插件自訂名稱(右鍵選單/F2 → 行內編輯)", () => {
     expect(nameCalls()).toEqual([["set_plugin_name", { instanceId: 1, name: "自訂 ghost" }]]);
 
     await show(makeTrack([{ instanceId: 1, name: "自訂", displayName: "自訂" }]));
-    expect(document.querySelector<HTMLElement>(".strip .plugname")!.dataset.tooltip)
+    expect(document.querySelector<HTMLElement>(".vstside .plugname")!.dataset.tooltip)
       .toContain("自訂名稱：自訂");
   });
 });

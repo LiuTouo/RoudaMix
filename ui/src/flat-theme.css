@@ -48,10 +48,9 @@
 }
 #app :is(.plugtitle, .plugactions) { background: transparent; }
 #app .plug.placeholder { border-left-color: var(--warn); }
-#app :is(.vstgrip, .badge, .sysbadge) {
+#app :is(.badge, .sysbadge) {
   background: var(--section); border-color: var(--flat-edge);
 }
-#app .vstgrip::after { background: var(--text-dim); }
 #app button {
   background: var(--control); border-color: var(--flat-edge);
 }
@@ -129,5 +128,4 @@
 /* 保留插件樹目錄既有間距與次要文字層級。 */
 #app .plugin-picker ul { padding: 2px 6px 6px; gap: 2px; }
 #app :is(.badge, .sysbadge, .plugin-picker .tree-count) { color: var(--text-dim); }
-#app .vstgrip::after { opacity: .4; }
 #app input::placeholder { color: var(--text-dim); opacity: 1; }
