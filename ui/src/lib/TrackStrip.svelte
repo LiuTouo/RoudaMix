@@ -1989,6 +1989,8 @@
     align-items: center;
     gap: 6px;
     min-height: 0;
+    /* 讓推桿與錶同高：下方讓位給 meter-more(44px)的高度，拉桿底 = 音頻錶底 */
+    padding-bottom: 44px;
   }
   /* 推桿槽 + 刻度:硬體 channel strip 型。槽寬 = 12 = cap 寬,cap 恰好填滿溝槽不外伸 */
   .slotwrap {
@@ -2072,24 +2074,24 @@
     margin-left: -1px; /* 同原版對齊公式:抵銷 track border,與槽量齊 */
   }
   .meterwrap {
-    flex: 0 0 32px;
+    flex: 0 0 40px;
     min-height: 0;
     display: flex;
     flex-direction: column;
   }
   .meter-trigger {
-    display: block; flex: 1; min-height: 0; width: 32px;
+    display: block; flex: 1; min-height: 0; width: 40px;
     padding: 0; border: 0; border-radius: 0; background: transparent;
   }
   .meter-trigger[aria-disabled="true"] { cursor: default; }
   .meter-more {
-    flex: 0 0 44px; width: 32px; min-height: 44px; padding: 0;
+    flex: 0 0 44px; width: 40px; min-height: 44px; padding: 0;
     display: flex; align-items: center; justify-content: flex-start;
     border: 0; background: transparent;
   }
   .meter-more > span {
-    /* 排除 MeterCanvas 右側 18px 刻度，圖示對齊雙聲道電平條，點擊範圍不縮小。 */
-    width: calc(100% - 18px); height: 24px; display: grid; place-items: center;
+    /* 排除 MeterCanvas 右側 24px 刻度，圖示對齊雙聲道電平條，點擊範圍不縮小。 */
+    width: calc(100% - 24px); height: 24px; display: grid; place-items: center;
     color: var(--text-dim);
     transition: color var(--motion-dur-1) var(--motion-ease-standard), background-color var(--motion-dur-1) var(--motion-ease-standard);
   }

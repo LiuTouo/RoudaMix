@@ -3,13 +3,14 @@
 
   let {
     strip,
-    width = 32,
+    width = 40,
   }: { strip: MeterStrip | undefined; width?: number } = $props();
 
   let canvas: HTMLCanvasElement | undefined = $state();
 
-  // 右側 dB 刻度寬(8px 數字右貼齊)與 L/R bar 間距;static 層與動態層共用
-  const GUTTER = 18;
+  // 右側 dB 刻度寬(3px tick + 8px 數字)與 L/R bar 間距;static 層與動態層共用。
+  // 數字右貼齊後「-60」仍與 tick 保持間隙,負號不壓在刻度線上。
+  const GUTTER = 24;
   const GAP = 2;
 
   const FLOOR_DB = -60;
@@ -73,7 +74,7 @@
     return top + (1 - (dbv - FLOOR_DB) / -FLOOR_DB) * plotH;
   }
 
-  const TICKS = [0, -6, -12, -24, -36, -48, -60];
+  const TICKS = [0, -6, -12, -18, -24, -30, -36, -42, -48, -54, -60];
 
   // 靜態層(軌底、格線、dB 刻度+數字):只在尺寸變時重繪一次,每幀一次 drawImage
   // 貼回,消滅每幀 7 次 fillText;配合下方「未變幀跳過」,靜音/穩態 strip 停止重畫。
@@ -108,7 +109,8 @@
       const ty = Math.round(y(v, top, plotH));
       s.fillStyle = TICK_COLOR;
       s.fillRect(plotW, ty, 3, 1);
-      s.fillText(String(v), w - 1, ty);
+      // tick 佔 ty..ty+1,文字中心對 ty+0.5,數字與刻度線垂直對齊
+      s.fillText(String(v), w - 1, ty + 0.5);
     }
     staticLayer = c;
     staticKey = key;
@@ -176,7 +178,7 @@
     if (plotW < 4) return;
     const barW = Math.floor((plotW - GAP) / 2);
     const top = 5;
-    const plotH = h - 10; // 上下留白:0/-60 的 tick 與數字不裁切
+    const plotH = h - 10; // 條形上下各縮 5px,對應 canvas 往上下各溢出 5px:條形貼滿容器高,0/-60 數字畫在溢出區不裁切
 
     // 未變幀跳過:量化到 px 的可視幾何與上一幀相同 → 本幀零繪製。
     const key = frameKey(w, h, dpr, top, plotH);
@@ -213,7 +215,7 @@
 
 <canvas
   bind:this={canvas}
-  style="width:{width}px; height:100%; display:block"
+  style="width:{width}px; height:calc(100% + 10px); margin: -5px 0; display:block"
   oncontextmenu={clearClipHold}
   aria-label="立體聲音頻錶；綠色為正常、橘色接近峰值、紅線為已過載。右鍵清除過載狀態。"
   data-tooltip="音頻錶：綠色為正常、橘色接近峰值、紅線表示曾經過載；按右鍵可清除 peak 狀態。"
