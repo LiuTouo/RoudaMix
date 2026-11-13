@@ -228,6 +228,29 @@ button:disabled {
   opacity: 0.45;
 }
 
+/* ---- 父子階層(設定視窗):子列縮排 + 垂直導軌。顏色語意 ——
+   幾何(縮排+導軌)表階層、顏色表狀態:
+   灰軌 --divider-strong = 階層參考(父項未生效);
+   accent 軌 = 父項已生效、此列設定作用中;
+   父項關閉沿用 .disabled 整列 opacity,導軌一併轉暗,不另設色。 ---- */
+.setrow.sub {
+  position: relative;
+  margin-left: 12px;
+  padding-left: 14px;
+}
+.setrow.sub::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: -3px; /* 伸進列距一半,與父列視覺相接 */
+  bottom: 0;
+  width: 1px;
+  background: var(--divider-strong);
+}
+.setrow.sub.live::before {
+  background: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
 .mono {
   font-family: var(--mono);
 }

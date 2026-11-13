@@ -211,7 +211,9 @@
 <style>
   section { padding: 0; }
   section[hidden] { display: none; }
-  h2 { margin: 2px 0 0; font-size: 12px; color: var(--text-dim); }
+  h2 { margin: 2px 0 0; font-size: 12px; color: var(--text-dim); display: flex; align-items: center; gap: 8px; }
+  /* 同 settingsdlg h2：類別後接髮絲線（scoped 樣式無法跨元件,故重複） */
+  h2::after { content: ""; flex: 1; height: 1px; background: var(--border); }
   h2:not(:first-child) { margin-top: 16px; }
   .update-status { margin: 0; }
   .update-status p { margin: 0; font-size: 12px; color: var(--text-dim); }

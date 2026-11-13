@@ -2471,7 +2471,8 @@
       </div>
     </div>
     <div
-      class="setrow"
+      class="setrow sub"
+      class:live={autostartEnabled === true && !autostartBusy}
       class:disabled={!appSettings ||
         autostartEnabled !== true ||
         autostartBusy ||
@@ -2654,7 +2655,7 @@
       </div>
     </div>
     {#if appSettings?.startupMode === "last"}
-      <div class="setrow">
+      <div class="setrow sub live">
         <div class="setrow-info">
           <span class="setrow-name">上一次的 Session</span>
         </div>
@@ -2669,7 +2670,7 @@
       </div>
     {/if}
     {#if appSettings?.startupMode === "folder"}
-      <div class="setrow">
+      <div class="setrow sub live" class:disabled={!appSettings.sessionDir}>
         <div class="setrow-info">
           <label class="setrow-name" for="startupfile">Session 檔案</label>
         </div>
@@ -2956,6 +2957,17 @@
     font-size: 12px;
     color: var(--text-dim);
     margin: 2px 0 0;
+    /* 類別項目後接髮絲線延伸至右緣（分類標題 —————）：文字不換行段,
+     線吃滿剩餘寬度;顏色同對話框框線/tabs 底線 */
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .settingsdlg h2::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--border);
   }
   /* Section spacing:第一個 h2 貼齊頂端,後續 h2 與上一段保持距離 */
   .tabpane h2:not(:first-child) {
