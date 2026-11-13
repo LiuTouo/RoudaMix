@@ -23,12 +23,15 @@ constexpr ParamID kLatencyParam = 100;
 constexpr ParamID kCpuParam = 101;
 constexpr ParamID kFailParam = 102;
 constexpr ParamID kMessageProbeParam = 103;
+// 未註冊參數:僅作 editor kick 探針(controller getParamNormalized 回 attach 旗標)
+constexpr ParamID kKickProbeParam = 104;
 constexpr const char* kMessageRequest = "rmx.fixture.realtime.request";
 constexpr const char* kMessageReply = "rmx.fixture.realtime.reply";
 constexpr std::uint32_t kMaxLatency = 192000;
 const FUID kProcessorUid(0x52584C50, 0x44434658, 0x54555245, 0x30303031);
 const FUID kControllerUid(0x52584C43, 0x44434658, 0x54555245, 0x30303031);
 std::atomic<IComponentHandler*> g_component_handlers[16]{};
+std::atomic<bool> g_editor_attached{};  // 任一 fixture view attach 過(module 廣域)
 std::atomic<std::uint32_t> g_next_opaque_state{1};
 
 bool write_exact(IBStream* stream, const void* data, int32 bytes) {
@@ -205,6 +208,7 @@ public:
             WS_CHILD | WS_VISIBLE, 0, 0, mode_ == 3 ? 360 : 300, mode_ == 3 ? 220 : 180,
             static_cast<HWND>(parent), nullptr, wc.hInstance, this);
         if (child_ == nullptr) return kResultFalse;
+        g_editor_attached.store(true, std::memory_order_release);
         return CPluginView::attached(parent, type);
     }
     tresult PLUGIN_API removed() override {
@@ -280,6 +284,8 @@ public:
 
     ParamValue PLUGIN_API getParamNormalized(ParamID id) override {
         if (id == kMessageProbeParam) return message_received_.load() ? 1.0 : 0.0;
+        if (id == kKickProbeParam)
+            return g_editor_attached.load(std::memory_order_acquire) ? 1.0 : 0.0;
         return EditController::getParamNormalized(id);
     }
 
@@ -313,6 +319,9 @@ public:
     }
 
     tresult PLUGIN_API setComponentState(IBStream* state) override {
+        // 測試 hook:同步失敗時,host 仍須套用 controller chunk(回歸:不再 gate)
+        if (GetEnvironmentVariableW(L"ROUDAMIX_TEST_CTRL_SYNC_FAIL", nullptr, 0) != 0)
+            return kResultFalse;
         std::uint32_t latency = 0;
         double cpu = 0.0;
         std::uint8_t fail = 0;

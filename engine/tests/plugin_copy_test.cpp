@@ -9,6 +9,8 @@
 #include <fstream>
 #include <thread>
 
+#include <windows.h>
+
 #include "audio_engine.hpp"
 #include "command_contract.hpp"
 #include "router.hpp"
@@ -34,7 +36,11 @@ static void engine_copy(const std::string& module) {
     CHECK(snapshot.bypass && snapshot.monitor_bypass);
     CHECK(!snapshot.state.component.empty() && !snapshot.state.controller.empty());
     const auto saved_component = snapshot.state.component;
+    // 開 editor 模式讓 fixture createView 有 view:載入還原後 kick 應已觸發
+    // attach 旗標(param 104),證明內部狀態同步不依賴使用者開 editor。
+    SetEnvironmentVariableW(L"ROUDAMIX_TEST_EDITOR_MODE", L"1");
     CHECK(!engine.insert_plugin_snapshot(snapshot, target, 0, first));
+    SetEnvironmentVariableW(L"ROUDAMIX_TEST_EDITOR_MODE", nullptr);
     CHECK(first != original);
     const auto* a = engine.find_slot(original);
     const auto* b = engine.find_slot(first);
@@ -42,6 +48,7 @@ static void engine_copy(const std::string& module) {
     CHECK(a->monitor_ring != b->monitor_ring && a->latency_change_mailbox != b->latency_change_mailbox);
     CHECK(b->param_values == snapshot.params && b->bypass && b->monitor_bypass);
     CHECK(b->plugin->latency_samples() == 128);
+    CHECK(b->plugin->param_value(104) == 1.0);  // kick:insert 路徑已 attach 過
     rmx::PluginSnapshot copied;
     CHECK(!engine.capture_plugin(first, copied));
     std::uint32_t source_opaque{}, copied_opaque{};

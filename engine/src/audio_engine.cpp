@@ -579,6 +579,10 @@ std::optional<Failure> AudioEngine::start(const std::string& device_key,
                                "plugin '" + slot.name + "' init failed: " +
                                    slot.plugin->last_error());  // rollback guard 收 capture/render/plugin/device
             }
+            // start 重建後再 kick:前次 attach 時套上的内部狀態(Clear Eco)
+            // 可能被 terminate→initialize 洗掉;attach 後 250ms 自動 removed,
+            // latency 若變會走既有 restartComponent→mailbox→PDC 路徑
+            slot.plugin->kick_editor();
             refresh_latency(slot);
             if (slot.monitor_shadow) {
                 slot.monitor_shadow->terminate();
@@ -587,6 +591,7 @@ std::optional<Failure> AudioEngine::start(const std::string& device_key,
                                    "monitor shadow '" + slot.name + "' init failed: " +
                                        slot.monitor_shadow->last_error());
                 }
+                slot.monitor_shadow->kick_editor();
                 if (!pre_roll_shadow(*slot.monitor_shadow, slot.param_values, rate,
                                      block, err))
                     return failure(Err::kDeviceOpenFailed, std::move(err));
@@ -1206,6 +1211,8 @@ std::optional<Failure> AudioEngine::ensure_monitor_shadows() {
                 return failure(Err::kPluginStateFailed,
                                "monitor shadow init failed for '" + slot.name + "': " +
                                    shadow->last_error());
+            // shadow 不會被使用者開 editor:同樣 kick 一次套內部狀態(Eco 等)
+            shadow->kick_editor();
             for (const auto& [id, value] : slot.param_values) {
                 shadow->set_param_normalized(id, value);
             }
@@ -1958,6 +1965,10 @@ std::optional<Failure> AudioEngine::insert_plugin_snapshot(const PluginSnapshot&
     const auto block = live_block > 0 ? live_block : 512u;
     if (!slot.plugin->initialize(rate, block))
         return failure(Err::kPluginLoadFailed, slot.plugin->last_error());
+    // 相容 kick:Clear 這類 plugin 要 attach 後讓 idle 跑過才套內部狀態(Eco
+    // 模型);還原後 attach,250ms 自動 removed。失敗 best-effort,不擋載入
+    // (main thread 紀律同 attach_editor,insert 在 dispatch thread 執行)
+    slot.plugin->kick_editor();
     slot.param_values = snapshot.params;
     for (const auto& [id, value] : slot.param_values) slot.plugin->set_param_normalized(id, value);
     // 離線預跑亦把尚未經來源 RT 消化的宿主參數套入 DSP，避免預設值先發聲。

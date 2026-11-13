@@ -43,6 +43,9 @@ std::wstring to_wide(const std::string& s) {
     return w;
 }
 
+// 定義於 Impl 之後(隱藏 friend,見 Vst3Plugin);kick 視窗 WM_TIMER 收尾
+void kick_finish_by_hwnd(void* hwnd) noexcept;
+
 namespace {
 
 using namespace Steinberg;
@@ -90,6 +93,65 @@ private:
 };
 
 // IPlugFrame:搬到 editor_host.cpp(視窗由 EditorHost 持有)。
+
+// editor kick 用:最小 IPlugFrame(kick 視窗永不顯示,resize 一律答應)。
+// 部分 plugin(Supertone Clear 的 Eco 模型)只在 view attach 時把內部狀態
+// 套進 DSP;載入還原後 attach→removed 一次觸發同步。
+class KickPlugFrame final : public IPlugFrame {
+public:
+    tresult PLUGIN_API queryInterface(const TUID requested_iid, void** obj) override {
+        if (obj == nullptr) return kInvalidArgument;
+        if (FUnknownPrivate::iidEqual(requested_iid, FUnknown::iid) ||
+            FUnknownPrivate::iidEqual(requested_iid, IPlugFrame::iid)) {
+            *obj = static_cast<IPlugFrame*>(this);
+            addRef();
+            return kResultOk;
+        }
+        *obj = nullptr;
+        return kNoInterface;
+    }
+    uint32 PLUGIN_API addRef() override { return ++references_; }
+    uint32 PLUGIN_API release() override {
+        const auto remaining = --references_;
+        if (remaining == 0) delete this;
+        return remaining;
+    }
+    tresult PLUGIN_API resizeView(IPlugView*, ViewRect*) override { return kResultOk; }
+
+private:
+    std::atomic<uint32> references_{1};
+};
+
+// kick 用的隱藏視窗:每個 kick 一個(WS_POPUP 永不顯示),250ms 逾時後自動
+// removed —— attach 當下 plugin 未必完成內部同步(JUCE Timer/AsyncUpdater 要
+// 靠 host message loop 跑),必須回到 main loop 空轉一會兒再拆。
+constexpr UINT_PTR kKickTimerId = 1;
+constexpr UINT kKickLingerMs = 250;
+
+LRESULT CALLBACK kick_wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    if (msg == WM_TIMER && wp == kKickTimerId) {
+        kick_finish_by_hwnd(hwnd);
+        return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+// main thread 專屬;class 重複註冊冪等(忽略 already-exists)
+HWND create_kick_window(void* owner) noexcept {
+    static const bool registered = [] {
+        WNDCLASSW wc{};
+        wc.lpfnWndProc = &kick_wnd_proc;
+        wc.hInstance = GetModuleHandleW(nullptr);
+        wc.lpszClassName = L"RmxEditorKickWnd";
+        RegisterClassW(&wc);
+        return true;
+    }();
+    (void)registered;
+    HWND wnd = CreateWindowExW(0, L"RmxEditorKickWnd", nullptr, WS_POPUP, 0, 0, 0, 0,
+                               nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    if (wnd != nullptr) SetWindowLongPtrW(wnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(owner));
+    return wnd;
+}
 // ---- .vstpreset 容器(格式:VST3 Developer Portal「Preset Format」+ SDK
 // vstpresetfile.cpp)----
 // header 48B:'VST3' + int32 version(=1)+ char classID[32](32 hex ASCII,UID::toString
@@ -340,11 +402,15 @@ struct Vst3Plugin::Impl {
     // 視窗本體由 EditorHost 持有(editor_host.cpp),這裡只管 view。
     EditComponentHandler* edit_handler{};  // 生命週期歸 handler(IPtr)持有
     IPtr<IPlugView> view;
+    // 相容 kick 的暫存 view(與使用者 editor 的 view 互不影響)
+    IPtr<IPlugView> kick_view;
+    HWND kick_hwnd{};
     // attach 時 canResize() 的快取:false = 固定版面插件 —— host 對它餵 onSize
     // 只會把插件視窗/背景拉開(控制項留在原位),EditorHost 改鎖視窗貼合原生尺寸
     bool can_resize{};
 
     ~Impl() {
+        finish_kick();
         close_editor();
         terminate();
     }
@@ -355,6 +421,45 @@ struct Vst3Plugin::Impl {
             view->removed();
             view = nullptr;
         }
+    }
+
+    // best-effort 相容 kick:失敗只記 error 不擋載入(kick 是 shim,非硬需求)。
+    // main thread 專屬;attach 後回 main loop 讓 plugin idle 跑,逾時由
+    // kick_wnd_proc 的 WM_TIMER 呼 finish_kick 拆 view。view/kick_view 已在
+    // (使用者 editor 開著或前次 kick 未拆)= 已同步過,直接略過。
+    void kick_editor() noexcept {
+        if (!loaded || !controller || view || kick_view) return;
+        IPlugView* raw = controller->createView(ViewType::kEditor);
+        if (raw == nullptr) return;  // plugin 無 editor:無可觸發,非錯誤
+        IPtr<IPlugView> kv(raw);
+        static KickPlugFrame frame;  // 永不釋放;attach 期間 plugin 持其指標
+        const HWND parent = create_kick_window(this);
+        if (parent == nullptr) {
+            error = "editor kick window unavailable";
+            return;
+        }
+        (void)kv->setFrame(&frame);
+        if (kv->attached(parent, kPlatformTypeHWND) == kResultOk) {
+            kick_view = kv;
+            kick_hwnd = parent;
+            SetTimer(parent, kKickTimerId, kKickLingerMs, nullptr);
+        } else {
+            error = "editor kick attach rejected";
+            (void)kv->setFrame(nullptr);
+            DestroyWindow(parent);
+        }
+    }
+
+    // kick 收尾(WM_TIMER 逾時或析構):main thread 專屬,幂等
+    void finish_kick() noexcept {
+        if (!kick_view) return;
+        const HWND wnd = kick_hwnd;
+        kick_hwnd = nullptr;
+        if (wnd != nullptr) KillTimer(wnd, kKickTimerId);
+        kick_view->removed();
+        (void)kick_view->setFrame(nullptr);
+        kick_view = nullptr;
+        if (wnd != nullptr) DestroyWindow(wnd);
     }
 
     void load(const std::filesystem::path& path, const std::string& class_id) {
@@ -715,11 +820,10 @@ struct Vst3Plugin::Impl {
         if (controller) {
             MemoryStream component_again(const_cast<std::uint8_t*>(state.component.data()),
                                          static_cast<int32>(state.component.size()));
-            const bool controller_synced =
-                controller->setComponentState(&component_again) == kResultOk;
-            // 部分可正常處理的 plugin 不實作 controller state 同步；DSP
-            // component 已完整恢復，controller 由 host params 重放即可。
-            if (controller_synced && !state.controller.empty()) {
+            // setComponentState 成敗不 gate controller chunk:部分 plugin 同步
+            // 失敗仍可套自身 controller state;參數值由 host 權威表重放蓋板。
+            (void)controller->setComponentState(&component_again);
+            if (!state.controller.empty()) {
                 MemoryStream controller_stream(
                     const_cast<std::uint8_t*>(state.controller.data()),
                     static_cast<int32>(state.controller.size()));
@@ -841,18 +945,18 @@ struct Vst3Plugin::Impl {
             return false;
         }
         invalidate_slew();  // 參數被整批改寫:slew 快取的 from 值全部作廢
-        bool ctrl_synced = false;
         if (controller) {
             // setComponentState = controller 自 component state 重建參數視圖(VST3
             // 語意;檔案裡的 Cntc 是 controller 自己的佈景狀態,另一回事)。
-            // 同步失敗不整體失敗:component 已套用,但 controller 值不可信
+            // 同步與 Cntc 套用成敗都不 gate:component 已套用,參數值以 host
+            // 權威表(RmxP/重放)為準
             MemoryStream comp_again(data.data() + comp_off, static_cast<int32>(comp_size));
-            ctrl_synced = controller->setComponentState(&comp_again) == kResultOk;
-        }
-        if (ctrl_size != 0 && controller && ctrl_synced) {
-            // controller 自身狀態(Cntc)最後套,蓋編輯器佈局等,不影響參數值
-            MemoryStream ctrl_in(data.data() + ctrl_off, static_cast<int32>(ctrl_size));
-            controller->setState(&ctrl_in);
+            (void)controller->setComponentState(&comp_again);
+            if (ctrl_size != 0) {
+                // controller 自身狀態(Cntc)最後套,蓋編輯器佈局等,不影響參數值
+                MemoryStream ctrl_in(data.data() + ctrl_off, static_cast<int32>(ctrl_size));
+                (void)controller->setState(&ctrl_in);
+            }
         }
 
         // host 權威值:RmxP(save 時的 host 表)最準;淺實作 plugin 的 controller
@@ -968,6 +1072,12 @@ struct Vst3Plugin::Impl {
     }
 };
 
+void kick_finish_by_hwnd(void* hwnd_void) noexcept {
+    const HWND hwnd = static_cast<HWND>(hwnd_void);
+    if (auto* impl = reinterpret_cast<Vst3Plugin::Impl*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA)))
+        impl->finish_kick();
+}
+
 Vst3Plugin::Vst3Plugin(std::filesystem::path module_path, std::string class_id)
     : impl_(new Impl) {
     impl_->load(module_path, class_id);
@@ -1074,6 +1184,10 @@ bool Vst3Plugin::attach_editor(void* parent_hwnd, void* plug_frame, int& out_w, 
 
 void Vst3Plugin::close_editor() noexcept {
     if (impl_ != nullptr) impl_->close_editor();
+}
+
+void Vst3Plugin::kick_editor() noexcept {
+    if (impl_ != nullptr) impl_->kick_editor();
 }
 
 bool Vst3Plugin::editor_open() const noexcept {

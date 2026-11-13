@@ -130,10 +130,17 @@ public:
     // 視窗鎖定貼合原生尺寸(onSize 只會把插件背景拉開 = 死空間)
     bool editor_can_resize() const noexcept;
     void editor_resize_view(int w, int h) noexcept;  // host WM_SIZE → view->onSize
+    // 相容 kick:createView→attached(隱藏 parent)→removed 一次。部分 plugin
+    // (Supertone Clear 的 Eco 模型)只在 view attach 時把內部狀態套進 DSP;
+    // 載入還原後呼叫觸發同步。best-effort:無 editor 或失敗僅記 last_error。
+    // main thread 專屬(同 attach_editor)
+    void kick_editor() noexcept;
 
 private:
     struct Impl;
     Impl* impl_;
+    // vst3_host.cpp:kick 視窗 WM_TIMER 收尾用(需存取 private Impl)
+    friend void kick_finish_by_hwnd(void* hwnd) noexcept;
 };
 
 }  // namespace rmx

@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <windows.h>
 
 #include "vst3_host.hpp"
 
@@ -87,6 +88,47 @@ int main(int argc, char** argv) {
         CHECK(messaging.param_value(message_probe_id) == 1.0);
         messaging.set_param_normalized(message_probe_id, 1.0); // plug-in-owned worker
         CHECK(messaging.param_value(message_probe_id) == 1.0);
+    }
+
+    // editor kick:無 editor(createView null)時 no-op 且不記錯;有 view 時
+    // attach→removed 觸發,attach 旗標(param 104)變 1 —— 内部狀態同步
+    // 不需開 editor。
+    {
+        SetEnvironmentVariableW(L"ROUDAMIX_TEST_EDITOR_MODE", nullptr);
+        rmx::Vst3Plugin plain(module, classes[0].uid);
+        CHECK(plain.loaded());
+        CHECK(plain.initialize(48000.0, 64));
+        plain.kick_editor();
+        CHECK(plain.param_value(104) == 0.0);
+        CHECK(plain.last_error().empty());
+
+        SetEnvironmentVariableW(L"ROUDAMIX_TEST_EDITOR_MODE", L"1");
+        rmx::Vst3Plugin viewful(module, classes[0].uid);
+        CHECK(viewful.loaded());
+        CHECK(viewful.initialize(48000.0, 64));
+        viewful.kick_editor();
+        CHECK(viewful.param_value(104) == 1.0);
+        SetEnvironmentVariableW(L"ROUDAMIX_TEST_EDITOR_MODE", nullptr);
+    }
+
+    // restore:setComponentState 失敗時 controller chunk 仍須套用(不再 gate)
+    {
+        rmx::Vst3Plugin src(module, classes[0].uid);
+        CHECK(src.loaded());
+        CHECK(src.initialize(48000.0, 64));
+        src.set_param_normalized(cpu_id, 0.25);
+        rmx::Vst3RuntimeState saved;
+        CHECK(src.capture_runtime_state(saved, error));
+        CHECK(!saved.controller.empty());
+
+        SetEnvironmentVariableW(L"ROUDAMIX_TEST_CTRL_SYNC_FAIL", L"1");
+        rmx::Vst3Plugin dst(module, classes[0].uid);
+        CHECK(dst.loaded());
+        CHECK(dst.initialize(48000.0, 64));
+        CHECK(dst.restore_runtime_state(saved, error));
+        SetEnvironmentVariableW(L"ROUDAMIX_TEST_CTRL_SYNC_FAIL", nullptr);
+        // 舊路徑會跳過 controller chunk → 值停在預設 0
+        CHECK(std::abs(dst.param_value(cpu_id) - 0.25) < 1e-9);
     }
 
     std::printf("latency_fixture_test PASSED\n");
