@@ -8,7 +8,7 @@ export interface CapsuleNotice {
   raw?: string;
 }
 
-export type CapsuleAction = "dismiss" | "openSettings" | "collapse";
+export type CapsuleAction = "dismiss" | "openSettings" | "collapse" | "respawnRestore";
 
 /** 頂端膠囊描述子(純資料;動作由 App.svelte 分派) */
 export interface CapsuleItem {
@@ -34,11 +34,24 @@ export interface CapsuleInputs {
   audioStaleDetail: string;
   restoreError: string;
   missing: readonly MissingPlugin[];
+  /** 引擎換代(崩潰重生)救走的本代 session 檔;null = 無救援膠囊 */
+  respawnRestorePath: string | null;
 }
 
 /** 警示在前、通知在後(最新在下);同 App.svelte 既有閱讀順序。 */
 export function capsuleItems(input: CapsuleInputs): CapsuleItem[] {
   const items: CapsuleItem[] = [];
+  if (input.respawnRestorePath) {
+    const name = input.respawnRestorePath.split(/[\\/]/).pop() ?? input.respawnRestorePath;
+    items.push({
+      key: "respawnRestore",
+      kind: "error",
+      msg: `引擎已重啟，場景遺失 — 點此還原 Session「${name}」`,
+      tooltip: `引擎意外重啟，音軌全部遺失。\n點擊還原為最後使用的 Session：${input.respawnRestorePath}\n（還原的是最後一次存檔，未儲存的變更無法救回）`,
+      action: "respawnRestore",
+      closable: true,
+    });
+  }
   if (input.audioStale && !input.audioStaleDismissed) {
     items.push({
       key: "audioStale",

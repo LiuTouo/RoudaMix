@@ -255,10 +255,16 @@
     if (c.action === "dismiss" && c.noticeId !== undefined) dismissNotice(c.noticeId);
     else if (c.action === "openSettings") settingsOpen = true;
     else if (c.action === "collapse") missing = [];
+    else if (c.action === "respawnRestore") {
+      const path = respawnSessionPath;
+      respawnSessionPath = null; // 一次性:點了就收,成敗由後續流程回報
+      if (path && currentSessionPath === null) void reopenLastSession(path);
+    }
   }
   function onCapsuleClose(c: CapsuleItem): void {
     if (c.key === "audioStale") audioStaleDismissed = true;
     else if (c.key === "restoreError") restoreError = "";
+    else if (c.key === "respawnRestore") respawnSessionPath = null;
   }
   function observeLatencyRuntime(tracks: Track[]): void {
     revisionDirty = transitionRevisionDirty(revisionDirty, { type: "runtimeObserved" });
@@ -424,7 +430,9 @@
   }
   // ---- B:authoritative dirty(engine revision vs 上次存/載基準)----
   let revisionDirty = $state<RevisionDirtyState>(initialRevisionDirty());
-  let currentSessionPath: string | null = null; // 本次實際載入/儲存的檔案；不可用「最近 Session」替代
+  let currentSessionPath = $state<string | null>(null); // 本次實際載入/儲存的檔案；不可用「最近 Session」替代
+  let respawnSessionPath = $state<string | null>(null); // 引擎換代後確認場景遺失時升為還原膠囊(見 applyAuthoritativeStatus)
+  let pendingRespawnPath: string | null = null; // 換代瞬間救走的本代檔;非渲染用,等新代首個 status 判定
   const dirty = $derived(isRevisionDirty(revisionDirty));
   function confirmRevisionBaseline(value: unknown): void {
     if (typeof value !== "number") return;
@@ -477,6 +485,13 @@
     }
     observeLatencyRuntime(applied.effects.latencyTracks);
     if (applied.effects.refreshDevices) void refreshDevices();
+    // 換代救援:等新代第一個權威 status 落地才決定 —— 0 軌 = 場景真的丢了,升為
+    // 還原膠囊;有軌 = engine 活著(pipe 瞬斷),靜默丢棄,不出膠囊也不閃現
+    if (pendingRespawnPath !== null) {
+      const path = pendingRespawnPath;
+      pendingRespawnPath = null;
+      if ((payload.status.tracks?.length ?? 0) === 0) respawnSessionPath = path;
+    }
     if (applied.effects.ensureDefaults) void ensureDefaults();
   }
   // ---- A:load_session 的 missing diagnostics 摘要(頂欄)----
@@ -598,6 +613,7 @@
           selected = "";
           bufSize = null;
           restoreError = "";
+          pendingRespawnPath = currentSessionPath; // 崩潰救援:先救走本代實際在用的檔(null = 沒檔可救)
           currentSessionPath = null; // 新 engine 尚未成功恢復任何檔案，不得覆寫上一代 Session
           scanJob = transitionScanJob(scanJob, { type: "reset" }).state;
           resetInputAlarms(); // K:engine 換代,輸入警示全收
@@ -1468,9 +1484,10 @@
     }
   }
 
-  /** P1-L:起始區「最近 Session」入口 —— 直接載上次路徑(與 loadSession 同款 dirty 流程) */
-  async function reopenLastSession(): Promise<void> {
-    const p = appSettings?.lastSessionPath;
+  /** P1-L:起始區「最近 Session」入口 —— 直接載上次路徑(與 loadSession 同款 dirty 流程);
+   *  path = 引擎換代救援膠囊指定的崩潰世代檔案 */
+  async function reopenLastSession(path?: string): Promise<void> {
+    const p = path ?? appSettings?.lastSessionPath;
     if (!p) return;
     if (dirty) {
       const choice = await askDirty();
@@ -1842,6 +1859,13 @@
       audioStaleDetail: notice,
       restoreError,
       missing,
+      // 膠囊只在「輸入軌真的空 + 本代有救走的檔 + 尚未自行載/存新 session」時出現;
+      // ensure_system_outputs 自動補的系統輸出軌不算場景回來了
+      respawnRestorePath:
+        respawnSessionPath !== null && currentSessionPath === null && !restoreError &&
+        inputTracks.length === 0
+          ? respawnSessionPath
+          : null,
     }),
   );
   // ASIO / plugin latency 單位 = samples;統一走 lib/format.samplesToMs(2 位小數)
