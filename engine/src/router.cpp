@@ -797,10 +797,20 @@ Router::Outcome Router::handle_cancel_scan(const EmptyRequest&) {
     return success({{"jobId", job_id}, {"cancelling", cancelling}});
 }
 
+// C.7b:registry 記過「同 fingerprint 已在 engine 成功載入」的 class →
+// add/retry 不重跑 sandbox 試爆（省 spawn + 第二次 DLL 載入）。未記錄 = 照舊
+// fail-closed 驗；DLL 變更後 fingerprint 不符，自動回歸試爆。
+bool Router::module_preflight_cached(const std::string& module_path,
+                                     const std::string& class_id) {
+    std::lock_guard<std::mutex> lock(scan_mutex_);
+    return vst_registry::is_verified_path(vst_registry_, module_path, class_id);
+}
+
 Router::Outcome Router::handle_add_plugin(const AddPluginRequest& request) {
     std::string error;
-    if (session::preflight_plugin(engine_, request.path, request.class_id, error) !=
-        sandbox::PreflightFailure::kNone)
+    if (!module_preflight_cached(request.path, request.class_id) &&
+        session::preflight_plugin(engine_, request.path, request.class_id, error) !=
+            sandbox::PreflightFailure::kNone)
         return failure(Err::kPluginLoadFailed, std::move(error));
     std::uint32_t instance_id = 0;
     if (auto fail = engine_.add_plugin(request.track_id, request.path, request.class_id,
@@ -910,8 +920,9 @@ Router::Outcome Router::handle_retry_plugin(const RetryPluginRequest& request) {
         request.path ? *request.path : slot->module_path;
     const std::string class_id = slot->class_id;
     std::string error;
-    if (session::preflight_plugin(engine_, module_path, class_id, error) !=
-        sandbox::PreflightFailure::kNone)
+    if (!module_preflight_cached(module_path, class_id) &&
+        session::preflight_plugin(engine_, module_path, class_id, error) !=
+            sandbox::PreflightFailure::kNone)
         return failure(Err::kPluginLoadFailed, std::move(error));
     if (auto fail = engine_.load_placeholder(request.instance_id, module_path, class_id))
         return failure(std::move(*fail));

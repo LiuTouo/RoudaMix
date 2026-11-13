@@ -168,6 +168,9 @@ private:
     Outcome handle_retry_plugin(const RetryPluginRequest& request);
     // #13:retry 成功 = 使用者核准,以 path+fingerprint 記進 registry(restore 閘門放行)
     void approve_module(const std::string& module_path, const RackSlot* slot);
+    // C.7b:同 fingerprint 已驗證載入過 → 免 sandbox 試爆(engine 仍會載入並校驗)
+    bool module_preflight_cached(const std::string& module_path,
+                                 const std::string& class_id);
     Outcome handle_set_param(const SetParamRequest& request);
     Outcome handle_get_params(const InstanceRequest& request);
     Outcome handle_open_editor(const InstanceRequest& request);

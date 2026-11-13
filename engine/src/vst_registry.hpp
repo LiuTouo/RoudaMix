@@ -12,7 +12,7 @@
 namespace rmx::vst_registry {
 
 inline constexpr std::uint32_t kSchemaVersion = 1;
-inline constexpr std::uint32_t kScannerVersion = 2;
+inline constexpr std::uint32_t kScannerVersion = 3;
 inline constexpr wchar_t kCacheEnv[] = L"ROUDAMIX_VST_REGISTRY";
 
 struct Fingerprint {
@@ -27,8 +27,9 @@ struct Entry {
     Fingerprint fingerprint;
     nlohmann::json classes = nlohmann::json::array();
     std::string error;
-    // 已在 engine 成功載入過的 class uid（C.7b）：fingerprint 未變時 session
-    // restore 對這些 class 跳過 sandbox worker preflight（省二次 DLL 載入）。
+    // 已在 engine 成功載入過的 class uid（C.7b）：fingerprint 未變時，session
+    // restore 與 add/retry 對這些 class 跳過 sandbox worker preflight（省二次
+    // DLL 載入）。
     std::vector<std::string> verified;
 };
 
@@ -63,6 +64,11 @@ const Entry* find_unchanged(const Registry& registry,
 // fingerprint 未變且 class uid 已驗證載入過（C.7b preflight 跳過條件）。
 bool is_verified(const Registry& registry, const std::filesystem::path& path,
                  const Fingerprint& fingerprint, const std::string& class_uid);
+
+// 同上，但吃 registry/協定用的 UTF-8 路徑並自行重算 fingerprint。
+// add/retry/session restore 三條 preflight 路徑共用同一判定，避免各寫一份。
+bool is_verified_path(const Registry& registry, const std::string& module_path_utf8,
+                      const std::string& class_uid);
 
 // worker JSONL 與 cache 共用 entry shape；嚴格驗證後才接受。
 nlohmann::json entry_json(const Entry& entry);

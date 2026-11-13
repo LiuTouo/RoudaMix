@@ -73,14 +73,20 @@ int main() {
 
     const auto bundle = root / L"Bundle.vst3";
     fs::create_directories(bundle / L"Contents" / L"x86_64-win");
+    fs::create_directories(bundle / L"Contents" / L"Resources" / L"presets");
     const auto bundle_binary = bundle / L"Contents" / L"x86_64-win" / L"Bundle.vst3";
+    const auto bundle_info = bundle / L"Contents" / L"Resources" / L"moduleinfo.json";
     {
         std::ofstream out(bundle_binary, std::ios::binary);
         out << "bundle-v1";
     }
+    {
+        std::ofstream out(bundle_info, std::ios::binary);
+        out << "{}";
+    }
     rmx::vst_registry::Fingerprint bundle_fp;
-    check(rmx::vst_registry::fingerprint(bundle, bundle_fp, error) && bundle_fp.size == 9,
-          "directory VST3 bundle receives an aggregate fingerprint");
+    check(rmx::vst_registry::fingerprint(bundle, bundle_fp, error) && bundle_fp.size == 11,
+          "bundle fingerprint aggregates main DLL + moduleinfo only");
     {
         std::ofstream out(bundle_binary, std::ios::binary | std::ios::app);
         out << "2";
@@ -88,7 +94,26 @@ int main() {
     rmx::vst_registry::Fingerprint changed_bundle_fp;
     check(rmx::vst_registry::fingerprint(bundle, changed_bundle_fp, error) &&
               changed_bundle_fp.size != bundle_fp.size,
-          "bundle content change invalidates aggregate fingerprint");
+          "bundle main DLL change invalidates aggregate fingerprint");
+    // 暖掃加速的代價：bundle 裡 DLL/moduleinfo 以外的檔（presets/samples）不算進
+    // fingerprint。這是不影響 class 清單的取捨，不是漏判主二進位。
+    {
+        std::ofstream out(bundle / L"Contents" / L"Resources" / L"presets" / L"a.vstpreset",
+                          std::ios::binary);
+        out << "preset payload";
+    }
+    rmx::vst_registry::Fingerprint preset_only_fp;
+    check(rmx::vst_registry::fingerprint(bundle, preset_only_fp, error) &&
+              preset_only_fp.size == changed_bundle_fp.size,
+          "preset files do not participate in bundle fingerprint");
+    {
+        std::ofstream out(bundle_info, std::ios::binary | std::ios::app);
+        out << " ";
+    }
+    rmx::vst_registry::Fingerprint info_changed_fp;
+    check(rmx::vst_registry::fingerprint(bundle, info_changed_fp, error) &&
+              info_changed_fp.size != preset_only_fp.size,
+          "moduleinfo.json change invalidates aggregate fingerprint");
 
     const auto cache = root / L"vst-registry.json";
     check(rmx::vst_registry::save_atomic(cache, registry, error), "atomic save succeeds");
@@ -118,6 +143,29 @@ int main() {
           "changed fingerprint invalidates verified");
     check(!rmx::vst_registry::is_verified(verified_loaded, module, ve.fingerprint, ""),
           "empty class id never verified");
+    // 同判定給 add/retry 用（UTF-8 路徑版）：verified + fingerprint 未變才放行
+    check(rmx::vst_registry::is_verified_path(
+              verified_loaded, rmx::vst_registry::path_utf8(module),
+              "ABCDEF0123456789ABCDEF0123456789"),
+          "utf-8 path variant passes for verified class");
+    check(!rmx::vst_registry::is_verified_path(
+              verified_loaded, rmx::vst_registry::path_utf8(module), "NOPE"),
+          "utf-8 path variant rejects unverified class");
+    check(!rmx::vst_registry::is_verified_path(verified_loaded, "",
+                                               "ABCDEF0123456789ABCDEF0123456789"),
+          "empty path never verified");
+    {
+        std::ofstream out(module, std::ios::binary | std::ios::app);
+        out << "d";  // 模組內容變了 = fingerprint 不符 → 回歸試爆
+    }
+    check(!rmx::vst_registry::is_verified_path(
+              verified_loaded, rmx::vst_registry::path_utf8(module),
+              "ABCDEF0123456789ABCDEF0123456789"),
+          "utf-8 path variant re-checks fingerprint on disk");
+    {
+        std::ofstream out(module, std::ios::binary | std::ios::trunc);
+        out << "abc";
+    }
     loaded = verified_loaded;  // 後續測試沿用含 verified 的 registry
 
     rmx::vst_registry::Entry failed;

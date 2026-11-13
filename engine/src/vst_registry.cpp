@@ -21,6 +21,48 @@ std::filesystem::path absolute_normal(const std::filesystem::path& path) {
     return out.lexically_normal();
 }
 
+// VST3 標準 bundle 佈局：Contents/<arch>/<name>.vst3（主二進位）+ Contents/Resources/
+// moduleinfo.json。只有這兩個檔會改變可載入 class 清單，故不遞迴整包（presets/
+// samples 目錄可能上萬檔，是暖掃的主要成本）。回 false = 找不到標準佈局。
+// shortcut: 只認主 DLL 與 moduleinfo.json 的 size+mtime；就地覆寫又保住 mtime 的
+// 更新偵測不到，需刪 registry 重掃。
+bool bundle_files_fingerprint(const std::filesystem::path& bundle, std::uint64_t& total_size,
+                              std::filesystem::file_time_type& latest) {
+    std::error_code ec;
+    bool found = false;
+    const auto contents = bundle / L"Contents";
+    if (!std::filesystem::is_directory(contents, ec) || ec) return false;
+    for (std::filesystem::directory_iterator outer{
+             contents, std::filesystem::directory_options::skip_permission_denied, ec},
+         end;
+         !ec && outer != end; outer.increment(ec)) {
+        if (!outer->is_directory(ec) || ec) continue;
+        const bool resources =
+            _wcsicmp(outer->path().filename().c_str(), L"Resources") == 0;
+        for (std::filesystem::directory_iterator inner{
+                 outer->path(),
+                 std::filesystem::directory_options::skip_permission_denied, ec},
+             inner_end;
+             !ec && inner != inner_end; inner.increment(ec)) {
+            if (!inner->is_regular_file(ec) || ec) continue;
+            const auto& file = inner->path();
+            const bool main_binary = _wcsicmp(file.extension().c_str(), L".vst3") == 0;
+            const bool module_info =
+                resources && _wcsicmp(file.filename().c_str(), L"moduleinfo.json") == 0;
+            if (!main_binary && !module_info) continue;
+            const auto size = std::filesystem::file_size(file, ec);
+            if (ec) return false;
+            const auto modified = std::filesystem::last_write_time(file, ec);
+            if (ec) return false;
+            total_size += static_cast<std::uint64_t>(size);
+            if (modified > latest) latest = modified;
+            found = true;
+        }
+        if (ec) return false;
+    }
+    return !ec && found;
+}
+
 nlohmann::json registry_json(const Registry& registry) {
     auto roots = nlohmann::json::array();
     for (const auto& root : registry.roots) roots.push_back(path_utf8(root));
@@ -106,11 +148,15 @@ bool fingerprint(const std::filesystem::path& path, Fingerprint& out,
             error = "cannot read file size: " + path_utf8(path) + ": " + ec.message();
             return false;
         }
-    } else {
+    } else if (!bundle_files_fingerprint(path, total_size, latest)) {
+        // 非標準佈局（檔不在 Contents/<arch>/ 或 Resources/moduleinfo.json）:
+        // 退回整包遞迴，寧可慢也不可漏判。
         std::filesystem::recursive_directory_iterator it{
             path, std::filesystem::directory_options::skip_permission_denied, ec};
+        total_size = 0;
+        latest = std::filesystem::last_write_time(path, ec);
         if (ec) {
-            error = "cannot enumerate VST bundle: " + path_utf8(path) + ": " + ec.message();
+            error = "cannot read last-write time: " + path_utf8(path) + ": " + ec.message();
             return false;
         }
         for (decltype(it) end; it != end; it.increment(ec)) {
@@ -338,6 +384,16 @@ bool is_verified(const Registry& registry, const std::filesystem::path& path,
     return entry != nullptr &&
            std::find(entry->verified.begin(), entry->verified.end(), class_uid) !=
                entry->verified.end();
+}
+
+bool is_verified_path(const Registry& registry, const std::string& module_path_utf8,
+                      const std::string& class_uid) {
+    if (class_uid.empty()) return false;
+    const auto path = path_from_utf8(module_path_utf8);
+    if (path.empty()) return false;
+    Fingerprint fp;
+    std::string error;
+    return fingerprint(path, fp, error) && is_verified(registry, path, fp, class_uid);
 }
 
 nlohmann::json plugins_json(const Registry& registry) {
