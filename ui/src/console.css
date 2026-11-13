@@ -1,6 +1,6 @@
 /* Minimal console with approved A / separate Inputs and Outputs containers.
    Shared by the real App and the isolated DEV preview.
-   Keep the 230px strip / 16px lane pitch (STRIP_GAP): virtualization and drag hit-testing use it. */
+   Keep the 207px strip / 16px lane pitch (STRIP_GAP): virtualization and drag hit-testing use it. */
 :root {
   --flat-0: #0D0F10; --flat-1: #121416; --flat-2: #181B1E; --flat-3: #181B1E; --flat-4: #202428;
   --border: #292D31; --divider: #1E2225; --text: #E2E5E8; --text-dim: #9CA5AE;
@@ -113,16 +113,16 @@ body { background: var(--flat-0); }
   & .vstgrip::after { height: 1px; width: 24px; background: var(--text-dim); opacity: .4; }
   & .vstgrip:hover::after { background: var(--accent); opacity: 1; }
   & .fader { order: 1; flex: 0 0 auto; min-height: 327px; justify-content: center; gap: 6px; padding: 4px 0 2px; border-top: 1px solid var(--divider); }
-  & .fctl { gap: 0; width: 20px; }
-  & .slotwrap { width: 20px; }
-  & .slotwrap input[type="range"] { width: 20px; min-width: 20px; min-height: 320px; }
+  & .fctl { gap: 0; width: 13px; }
+  & .slotwrap { width: 13px; }
+  & .slotwrap input[type="range"] { width: 13px; min-width: 13px; min-height: 320px; }
   & .slotwrap input[type="range"]::-webkit-slider-runnable-track { width: 4px; border: 0; border-radius: 0; background: var(--flat-0); box-shadow: none; }
-  & .slotwrap input[type="range"]::-webkit-slider-thumb { width: 20px; height: 30px; margin-left: -8px; border: 1px solid #A9B1B8; border-radius: 3px; box-shadow: none; background: linear-gradient(180deg, #89929B 0 calc(50% - 1px), #252A2F calc(50% - 1px) calc(50% + 1px), #89929B calc(50% + 1px)); }
+  & .slotwrap input[type="range"]::-webkit-slider-thumb { width: 13px; height: 30px; margin-left: -4.5px; border: 1px solid #A9B1B8; border-radius: 3px; box-shadow: none; background: linear-gradient(180deg, #89929B 0 calc(50% - 1px), #252A2F calc(50% - 1px) calc(50% + 1px), #89929B calc(50% + 1px)); }
   & .slotwrap input[type="range"]:focus-visible::-webkit-slider-thumb { border-color: var(--accent); }
-  & .slotwrap::before { left: -7px; top: 15px; bottom: 15px; width: 7px; background: repeating-linear-gradient(180deg, #525B63 0 1px, transparent 1px calc(100% / 12)); }
+  & .slotwrap::before { left: -5px; top: 15px; bottom: 15px; width: 5px; background: repeating-linear-gradient(180deg, #525B63 0 1px, transparent 1px calc(100% / 12)); }
   /* 30px thumb, borderless rail: unity is 2/3 of the H−30px centre travel. */
-  & .slotwrap::after { background: var(--text-dim); left: -10px; bottom: calc(15px + (100% - 30px) * 2 / 3 - 1px); }
-  & .meterwrap { flex: 0 0 46px; background: transparent; border: 0; }
+  & .slotwrap::after { background: var(--text-dim); left: -7px; bottom: calc(15px + (100% - 30px) * 2 / 3 - 1px); }
+  & .meterwrap { flex: 0 0 32px; background: transparent; border: 0; }
   /* Keep TrackStrip's inline matteColor across the entire name rail, not a narrow mark. */
   & .colorbar { flex: 1; min-width: 0; justify-content: flex-start; height: 32px; margin: 0; padding: 0 6px; border: 0; box-shadow: none; }
   & .colorbar .name { padding: 4px 0; border: 0; background: transparent; text-align: left; color: var(--text); font-weight: 500; font-size: 12px; min-width: 0; max-width: 100%; }
@@ -134,7 +134,7 @@ body { background: var(--flat-0); }
   & button.primary { background: var(--accent); color: var(--flat-0); }
   & button.primary:enabled:hover { background: var(--text); }
   & :focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
-  & :is(dialog:not(.ctxdlg), .latency-drawer, .destination-popup, .ctx, .capsule, .gaintip) { --surface: var(--flat-2); --section: var(--flat-2); --control: var(--flat-2); --hover: var(--flat-4); background: var(--surface); border: 1px solid var(--border); border-radius: 3px; box-shadow: none; }
+  & :is(dialog:not(.ctxdlg), .latency-drawer, .destination-popup, .source-popup, .ctx, .capsule, .gaintip) { --surface: var(--flat-2); --section: var(--flat-2); --control: var(--flat-2); --hover: var(--flat-4); background: var(--surface); border: 1px solid var(--border); border-radius: 3px; box-shadow: none; }
   & :is(.dialog-head, .drawer-head, .tabs, .formrow, .update-status, .latency-output, .plugin-group summary) { background: transparent; border-color: var(--border); }
   & :is(.plugin-row, .app) { background: transparent; border: 0; border-bottom: 1px solid var(--divider); border-radius: 0; }
   & :is(.plugin-row, .app):enabled:hover { background: var(--flat-4); }

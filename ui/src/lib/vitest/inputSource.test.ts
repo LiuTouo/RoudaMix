@@ -22,36 +22,42 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-function show(devices: DeviceInfo[] = []) {
-  const track: Track = {
+/** 回來源選單錨點按鈕(popover 內容在 jsdom 一樣有 render,可直接斷言/點擊) */
+function show(devices: DeviceInfo[] = [], track?: Track) {
+  const t: Track = track ?? {
     trackId: 42, kind: "audio", name: "麥克風", color: 0, source: null,
     dests: [], output: null, gain: 1, mute: false, plugins: [],
   };
   mounted.push(mount(TrackStrip, { target: document.body, props: {
-    track, tracks: [track], devices, selectedDeviceKey: devices[0]?.deviceKey ?? "wasapi",
+    track: t, tracks: [t], devices, selectedDeviceKey: devices[0]?.deviceKey ?? "wasapi",
     metered: false, onCancelScan: vi.fn(), openMenu: vi.fn(),
   } }));
   flushSync();
-  return document.querySelector<HTMLSelectElement>("select")!;
+  return document.querySelector<HTMLButtonElement>(".source-trigger")!;
 }
 async function settle() { await tick(); await Promise.resolve(); flushSync(); }
-function selectSource(input: HTMLSelectElement, value: string) {
-  input.value = value;
-  input.dispatchEvent(new Event("change", { bubbles: true }));
+/** 點開選單(載入裝置清單)後回全部可選列的 data-value */
+async function openMenu(trigger: HTMLButtonElement) {
+  trigger.click();
+  await settle();
+  return [...document.querySelectorAll<HTMLButtonElement>(".source-popup .src-row")]
+    .map((row) => row.dataset.value ?? "");
+}
+function pick(value: string) {
+  const row = document.querySelector<HTMLButtonElement>(`.source-popup .src-row[data-value="${value}"]`)!;
+  row.click();
 }
 
-it("無 ASIO 時可聚焦載入 WASAPI 麥克風，並選擇預設或指定裝置", async () => {
-  const input = show();
-  // 使用真正的 focus()，避免手動派送事件繞過 disabled 而漏掉回歸。
-  input.focus();
-  expect(document.activeElement).toBe(input);
-  await settle();
+it("無 ASIO 時點開可載入 WASAPI 麥克風，並選擇預設或指定裝置", async () => {
+  const trigger = show();
+  const values = await openMenu(trigger);
   expect(command).toHaveBeenCalledExactlyOnceWith("list_capture_devices", {});
-  expect([...input.options].map((option) => option.value)).toEqual(["", "mic:default", "mic:usb-mic"]);
-  expect(input.textContent).toContain("USB 麥克風");
+  expect(values).toEqual(["", "mic:default", "mic:usb-mic"]);
+  expect(document.querySelector(".source-popup")!.textContent).toContain("USB 麥克風");
+  expect(document.querySelector(".source-popup")!.textContent).toContain("WASAPI");
 
   for (const deviceId of ["", "usb-mic"]) {
-    selectSource(input, `mic:${deviceId || "default"}`);
+    pick(`mic:${deviceId || "default"}`);
     await settle();
     expect(command).toHaveBeenLastCalledWith("track_set_source", {
       trackId: 42, source: { type: "wasapiIn", deviceId },
@@ -59,59 +65,50 @@ it("無 ASIO 時可聚焦載入 WASAPI 麥克風，並選擇預設或指定裝�
   }
 });
 
-it.each(["empty", "error"])("列舉結果為 %s 後仍可重新聚焦載入裝置", async (result) => {
+it.each(["empty", "error"])("列舉結果為 %s 後仍可重新點開載入裝置", async (result) => {
   if (result === "empty") command.mockResolvedValueOnce({ devices: [] });
   else command.mockRejectedValueOnce({ code: "internal", message: "capture enumeration failed" });
-  const input = show();
-  input.focus();
-  await settle();
+  const trigger = show();
+  await openMenu(trigger);
   expect(command).toHaveBeenCalledExactlyOnceWith("list_capture_devices", {});
-  expect(input.disabled).toBe(false);
-  expect(input.options).toHaveLength(1);
-  if (result === "error") expect(document.querySelector('[role="alert"]')?.textContent).toContain("capture enumeration failed");
+  if (result === "error") {
+    await settle();
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("capture enumeration failed");
+  }
 
-  input.blur();
-  input.focus();
-  await settle();
+  const values = await openMenu(trigger);
   expect(command).toHaveBeenCalledTimes(2);
   expect(command).toHaveBeenLastCalledWith("list_capture_devices", {});
-  expect([...input.options].map((option) => option.value)).toContain("mic:usb-mic");
+  expect(values).toContain("mic:usb-mic");
 });
 
-it("無 ASIO 驅動時 asioIn 來源顯示說明選項而非空白", () => {
-  const track: Track = {
+it("無 ASIO 驅動時 asioIn 來源顯示說明摘要而非空白", () => {
+  show([], {
     trackId: 42, kind: "audio", name: "ASIO", color: 0,
     source: { type: "asioIn", channel: 1, mono: true },
     dests: [], output: null, gain: 1, mute: false, plugins: [],
-  };
-  mounted.push(mount(TrackStrip, { target: document.body, props: {
-    track, tracks: [track], devices: [], selectedDeviceKey: "wasapi",
-    metered: false, onCancelScan: vi.fn(), openMenu: vi.fn(),
-  } }));
-  flushSync();
-  const input = document.querySelector<HTMLSelectElement>("select")!;
-  expect(input.value).toBe("m1");
-  const opt = [...input.options].find((option) => option.value === "m1");
-  expect(opt?.disabled).toBe(true);
-  expect(opt?.textContent).toContain("單聲");
-  expect(opt?.textContent).toContain("無 ASIO 驅動");
+  });
+  const trigger = document.querySelector<HTMLButtonElement>(".source-trigger")!;
+  expect(trigger.textContent).toContain("單聲");
+  expect(trigger.textContent).toContain("無 ASIO 驅動");
+  expect(document.querySelector(".noasio")?.textContent).toContain("來源保留但靜音");
 });
 
 it("ASIO 輸入保留立體聲與單聲道選項，並可同時載入 WASAPI 麥克風", async () => {
-  const input = show([{
+  const trigger = show([{
     deviceKey: "asio:test", name: "ASIO", maxIn: 2, maxOut: 2,
     sampleRates: [48000], currentSampleRate: 48000, minBufferSize: 128,
     maxBufferSize: 512, preferredBufferSize: 256, bufferSizes: [128, 256, 512],
     inputNames: ["Input L", "Input R"], outputNames: ["Output L", "Output R"],
   }]);
-  input.focus();
-  await settle();
-  expect([...input.options].map((option) => option.value)).toEqual(["", "0", "m0", "m1", "mic:default", "mic:usb-mic"]);
+  const values = await openMenu(trigger);
+  expect(values).toEqual(["", "0", "m0", "m1", "mic:default", "mic:usb-mic"]);
+  expect(document.querySelector(".source-popup")!.textContent).toContain("ASIO");
   for (const [value, source] of [
     ["0", { type: "asioIn", channel: 0 }],
     ["m1", { type: "asioIn", channel: 1, mono: true }],
   ] as const) {
-    selectSource(input, value);
+    pick(value);
     await settle();
     expect(command).toHaveBeenLastCalledWith("track_set_source", { trackId: 42, source });
   }

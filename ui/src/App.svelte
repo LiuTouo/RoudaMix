@@ -1423,7 +1423,7 @@
       if (e.dataTransfer) {
         e.dataTransfer.effectAllowed = "move";
         const r = el.getBoundingClientRect();
-        mountDragGhost(e.dataTransfer, el, el.offsetWidth || 230, { x: e.clientX - r.left, y: e.clientY - r.top });
+        mountDragGhost(e.dataTransfer, el, el.offsetWidth || 207, { x: e.clientX - r.left, y: e.clientY - r.top });
       }
     };
   }

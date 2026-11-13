@@ -3,10 +3,14 @@
 
   let {
     strip,
-    width = 46,
+    width = 32,
   }: { strip: MeterStrip | undefined; width?: number } = $props();
 
   let canvas: HTMLCanvasElement | undefined = $state();
+
+  // 右側 dB 刻度寬(8px 數字右貼齊)與 L/R bar 間距;static 層與動態層共用
+  const GUTTER = 18;
+  const GAP = 2;
 
   const FLOOR_DB = -60;
   const WARNING_DB = -6;
@@ -83,28 +87,28 @@
     c.height = Math.max(1, Math.round(h * dpr));
     const s = c.getContext("2d")!;
     s.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const gutter = 24; // 右側 dB 刻度
-    const plotW = w - gutter;
-    const barW = Math.floor((plotW - 3) / 2);
+    const plotW = w - GUTTER;
+    const barW = Math.floor((plotW - GAP) / 2);
     const top = 5;
     const plotH = h - 10;
 
     // 軌底 + 淡格線(與舊版逐像素同布局)
-    for (const b of [{ x: 0 }, { x: barW + 3 }]) {
+    for (const b of [{ x: 0 }, { x: barW + GAP }]) {
       s.fillStyle = "#181b1e";
       s.fillRect(b.x, top, barW, plotH);
     }
     s.fillStyle = "rgba(255, 255, 255, 0.06)";
     for (const v of TICKS) s.fillRect(0, Math.round(y(v, top, plotH)), plotW, 1);
 
-    // dB 刻度:短 tick + 數字
-    s.font = "9px monospace";
+    // dB 刻度:短 tick + 數字(窄版:8px 右貼齊,省下刻度寬)
+    s.font = "8px monospace";
     s.textBaseline = "middle";
+    s.textAlign = "right";
     for (const v of TICKS) {
       const ty = Math.round(y(v, top, plotH));
       s.fillStyle = TICK_COLOR;
-      s.fillRect(plotW, ty, 4, 1);
-      s.fillText(String(v), plotW + 6, ty);
+      s.fillRect(plotW, ty, 3, 1);
+      s.fillText(String(v), w - 1, ty);
     }
     staticLayer = c;
     staticKey = key;
@@ -168,11 +172,9 @@
       canvas!.width = bw;
       canvas!.height = bh;
     }
-    const gutter = 24; // 右側 dB 刻度
-    const plotW = w - gutter;
+    const plotW = w - GUTTER;
     if (plotW < 4) return;
-    const gap = 3;
-    const barW = Math.floor((plotW - gap) / 2);
+    const barW = Math.floor((plotW - GAP) / 2);
     const top = 5;
     const plotH = h - 10; // 上下留白:0/-60 的 tick 與數字不裁切
 
@@ -187,7 +189,7 @@
 
     const bars = [
       { x: 0, rms: disp.rmsL, peak: disp.peakL, clipped: clipHold.left },
-      { x: barW + gap, rms: disp.rmsR, peak: disp.peakR, clipped: clipHold.right },
+      { x: barW + GAP, rms: disp.rmsR, peak: disp.peakR, clipped: clipHold.right },
     ];
     for (const b of bars) {
       // RMS 主錶依區間著色。

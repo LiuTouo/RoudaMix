@@ -34,6 +34,7 @@
   import { errorText, friendlyError } from "./errors";
   import AppPicker from "./AppPicker.svelte";
   import PluginPicker from "./PluginPicker.svelte";
+  import SourcePicker from "./SourcePicker.svelte";
   import DestinationSelect from "./DestinationSelect.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import type {
@@ -132,6 +133,16 @@
     s.availability === "missing" ? "遺失" : s.availability === "deferred" ? "bypass 中·未載入" : "載入失敗";
 
   const dev = $derived(devices.find((d) => d.deviceKey === selectedDeviceKey) ?? null);
+  // 來源編碼同舊 select:"" 無 / "N" ASIO pair / "mN" 單聲 / "mic:<id|default>"
+  const sourceValue = $derived(
+    track.source?.type === "asioIn"
+      ? track.source.mono
+        ? `m${track.source.channel}`
+        : String(track.source.channel)
+      : track.source?.type === "wasapiIn"
+        ? `mic:${track.source.deviceId || "default"}`
+        : "",
+  );
   const isOutput = $derived(track.kind === "output");
   const identityIcon = $derived(track.systemRole ? trackIcons[track.systemRole]
     : track.kind !== "audio" ? trackIcons[track.kind]
@@ -1058,50 +1069,18 @@
   <div class="row source-row">
     {#if track.kind === "audio"}
       <span class="lbl">來源</span>
-      <select
-        value={track.source?.type === "asioIn"
-          ? track.source.mono
-            ? `m${track.source.channel}`
-            : String(track.source.channel)
-          : track.source?.type === "wasapiIn"
-            ? `mic:${track.source.deviceId || "default"}`
-            : ""}
-        onchange={(e) => setSource(e.currentTarget.value)}
-        onfocus={loadCaptureDevices}
-        aria-label="{track.name} 輸入來源"
-        data-tooltip="ASIO 輸入 pair 或系統麥克風(WASAPI capture);清單在點開時載入。"
-      >
-        <option value="">(無)</option>
-        {#if devices.length === 0 && track.source?.type === "asioIn"}
-          <!-- M6:純 WASAPI 機器載入 ASIO 來源 session:來源保留但靜音，
-               value 對齊現值才不會顯示空白 -->
-          <option
-            value={track.source.mono ? `m${track.source.channel}`
-              : String(track.source.channel)}
-            disabled
-          >
-            ASIO {(track.source.channel ?? 0) + 1}{track.source.mono
-              ? "（單聲）"
-              : `/${(track.source.channel ?? 0) + 2}`}（此機器無 ASIO 驅動）
-          </option>
-        {/if}
-        {#if dev}
-          {#each pairOptions(dev?.inputNames ?? [], "in") as o (o.value)}
-            <option value={String(o.value)}>{o.label}</option>
-          {/each}
-          {#each (dev?.inputNames ?? []) as nm, ch (ch)}
-            <option value="m{ch}">{ch + 1} {nm}(單聲)</option>
-          {/each}
-        {/if}
-        {#if captureDevices.length > 0}
-          <optgroup label="麥克風(WASAPI)">
-            <option value="mic:default">系統預設麥克風</option>
-            {#each captureDevices as d (d.id)}
-              <option value={`mic:${d.id}`}>{d.name}{d.default ? "(預設)" : ""}</option>
-            {/each}
-          </optgroup>
-        {/if}
-      </select>
+      <!-- 樹狀來源選單:父層 ASIO / WASAPI(chev hover 放大,同 VST 插件選擇器) -->
+      <SourcePicker
+        trackId={track.trackId}
+        trackName={track.name}
+        value={sourceValue}
+        inputNames={dev?.inputNames ?? []}
+        maxIn={dev?.maxIn ?? 0}
+        hasAsio={!!dev}
+        {captureDevices}
+        onOpen={loadCaptureDevices}
+        onPick={setSource}
+      />
     {:else if track.kind === "app"}
       <span class="lbl">來源</span>
       {#if needsRebind}
@@ -1181,6 +1160,7 @@
     <DestinationSelect trackId={track.trackId} trackName={track.name}
       options={destCandidates(tracks, track.trackId)} selected={shownDests}
       pending={destsLocal !== null} onToggle={toggleDest}
+      label="送至哪個音源"
       omitIds={sysOuts.map((t) => t.trackId)} />
   </div>
 
@@ -1553,8 +1533,8 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-    flex: 0 0 230px;
-    width: 230px;
+    flex: 0 0 207px;
+    width: 207px;
     min-height: 0;
     overflow-y: auto;
     user-select: none; /* 拖曳區禁選(全域已開放選取;錯誤文字 .err 例外) */
@@ -2010,12 +1990,12 @@
     gap: 6px;
     min-height: 0;
   }
-  /* 推桿槽 + 刻度:硬體 channel strip 型。槽寬 = 18 = cap 寬,cap 恰好填滿溝槽不外伸 */
+  /* 推桿槽 + 刻度:硬體 channel strip 型。槽寬 = 12 = cap 寬,cap 恰好填滿溝槽不外伸 */
   .slotwrap {
     position: relative;
     flex: 1;
     min-height: 0;
-    width: 18px;
+    width: 12px;
     display: flex;
   }
   .slotwrap::before {
@@ -2024,10 +2004,10 @@
        縮 1px 底邊讓第 12 格刻度不被裁掉) */
     content: "";
     position: absolute;
-    left: -6px;
+    left: -4px;
     top: 17.5px;
     bottom: 17.5px;
-    width: 5px;
+    width: 4px;
     background: repeating-linear-gradient(
       180deg,
       var(--border) 0 1px,
@@ -2039,9 +2019,9 @@
        center(f) = 18.5px + f·(H−36px),f = 值/1.5;1.0 → 2/3 處,−1px 置中 2px 記號 */
     content: "";
     position: absolute;
-    left: -9px;
+    left: -6px;
     bottom: calc(18.5px + (100% - 36px) * 2 / 3 - 1px);
-    width: 8px;
+    width: 6px;
     height: 2px;
     background: var(--accent);
     opacity: 0.75;
@@ -2051,8 +2031,8 @@
     appearance: none;
     writing-mode: vertical-lr;
     direction: rtl; /* min 下、max 上;WebView2(Chromium ≥123)原生支援 */
-    width: 18px;
-    min-width: 18px;
+    width: 12px;
+    min-width: 12px;
     flex: none; /* row 主軸 = 寬度;勿用 flex:1 撐寬,否則槽比 cap 寬 */
     /* 長度加倍(下限 160→320):空間不足時 strip 改內捲,滑鼠拉取行程保證加倍 */
     min-height: 320px;
@@ -2072,7 +2052,7 @@
   /* 硬體推桿 cap:金屬體 + 橫紋 + accent 中心線;與槽同寬置中,不外伸不偏移 */
   .slotwrap input[type="range"]::-webkit-slider-thumb {
     -webkit-appearance: none;
-    width: 18px;
+    width: 12px;
     height: 30px;
     border-radius: 3px;
     border: 1px solid #5b6470;
@@ -2092,24 +2072,24 @@
     margin-left: -1px; /* 同原版對齊公式:抵銷 track border,與槽量齊 */
   }
   .meterwrap {
-    flex: 0 0 46px;
+    flex: 0 0 32px;
     min-height: 0;
     display: flex;
     flex-direction: column;
   }
   .meter-trigger {
-    display: block; flex: 1; min-height: 0; width: 46px;
+    display: block; flex: 1; min-height: 0; width: 32px;
     padding: 0; border: 0; border-radius: 0; background: transparent;
   }
   .meter-trigger[aria-disabled="true"] { cursor: default; }
   .meter-more {
-    flex: 0 0 44px; width: 46px; min-height: 44px; padding: 0;
+    flex: 0 0 44px; width: 32px; min-height: 44px; padding: 0;
     display: flex; align-items: center; justify-content: flex-start;
     border: 0; background: transparent;
   }
   .meter-more > span {
-    /* 排除 MeterCanvas 右側 24px 刻度，圖示對齊雙聲道電平條，點擊範圍不縮小。 */
-    width: calc(100% - 24px); height: 24px; display: grid; place-items: center;
+    /* 排除 MeterCanvas 右側 18px 刻度，圖示對齊雙聲道電平條，點擊範圍不縮小。 */
+    width: calc(100% - 18px); height: 24px; display: grid; place-items: center;
     color: var(--text-dim);
     transition: color var(--motion-dur-1) var(--motion-ease-standard), background-color var(--motion-dur-1) var(--motion-ease-standard);
   }
