@@ -2308,144 +2308,199 @@
     >
   </div>
   <div class="tabs" role="tablist" tabindex="-1" aria-label="設定分類" onkeydown={onSettingsTabKeydown}>
-    <button id="settings-tab-audio" role="tab" aria-controls="settings-panel" aria-selected={tab === "audio"} tabindex={tab === "audio" ? 0 : -1} class:on={tab === "audio"} onclick={() => (tab = "audio")}>音訊</button>
-    <button id="settings-tab-general" role="tab" aria-controls="settings-panel" aria-selected={tab === "general"} tabindex={tab === "general" ? 0 : -1} class:on={tab === "general"} onclick={openGeneral}>通用</button>
-    <button id="settings-tab-scenes" role="tab" aria-controls="settings-panel" aria-selected={tab === "scenes"} tabindex={tab === "scenes" ? 0 : -1} class:on={tab === "scenes"} onclick={openScenes}>場景 / Session</button>
+    <button id="settings-tab-audio" role="tab" aria-controls="settings-panel" aria-selected={tab === "audio"} tabindex={tab === "audio" ? 0 : -1} class:on={tab === "audio"} onclick={() => (tab = "audio")}>音訊裝置</button>
+    <button id="settings-tab-general" role="tab" aria-controls="settings-panel" aria-selected={tab === "general"} tabindex={tab === "general" ? 0 : -1} class:on={tab === "general"} onclick={openGeneral}>一般</button>
+    <button id="settings-tab-scenes" role="tab" aria-controls="settings-panel" aria-selected={tab === "scenes"} tabindex={tab === "scenes" ? 0 : -1} class:on={tab === "scenes"} onclick={openScenes}>Session</button>
     <button id="settings-tab-hotkeys" role="tab" aria-controls="settings-panel" aria-selected={tab === "hotkeys"} tabindex={tab === "hotkeys" ? 0 : -1} class:on={tab === "hotkeys"} onclick={() => (tab = "hotkeys")}>快捷鍵</button>
-    <button id="settings-tab-about" role="tab" aria-controls="settings-panel" aria-selected={tab === "about"} tabindex={tab === "about" ? 0 : -1} class:on={tab === "about"} onclick={() => (tab = "about")}>關於 / 更新</button>
+    <button id="settings-tab-about" role="tab" aria-controls="settings-panel" aria-selected={tab === "about"} tabindex={tab === "about" ? 0 : -1} class:on={tab === "about"} onclick={() => (tab = "about")}>關於</button>
   </div>
   <div class="settings-content" id="settings-panel" role="tabpanel" aria-labelledby={`settings-tab-${tab}`} tabindex="0">
   {#if tab === "audio"}
     <div class="tabpane" in:fade={{ duration: 120 }}>
-    <div class="formrow">
-      <label class="formlabel" for="setdev">裝置</label>
-      <select
-        id="setdev"
-        bind:value={selected}
-        disabled={busy}
-        onchange={(e) => {
-          const value = e.currentTarget.value;
-          if (value === WASAPI_DEVICE_KEY) {
-            queueRestart(WASAPI_DEVICE_KEY); // 系統音訊:無 buffer 選項,直接切
-            return;
-          }
-          const d = devices.find((x) => x.deviceKey === value);
-          if (d) {
-            applyDeviceDefaults(d);
-            queueRestart(d.deviceKey); // 即時切換:stop → start 新裝置(失敗自動回滾)
-          }
-        }}
-      >
-        {#each devices as d (d.deviceKey)}
-          <option value={d.deviceKey}>{d.name} ({d.maxIn}in/{d.maxOut}out)</option>
+    <div class="setrow">
+      <div class="setrow-info">
+        <label class="setrow-name" for="setdev" data-tooltip="ASIO 裝置或系統音訊（WASAPI）。">音訊裝置</label>
+      </div>
+      <div class="setrow-ctrl">
+        <select
+          id="setdev"
+          bind:value={selected}
+          disabled={busy}
+          onchange={(e) => {
+            const value = e.currentTarget.value;
+            if (value === WASAPI_DEVICE_KEY) {
+              queueRestart(WASAPI_DEVICE_KEY); // 系統音訊:無 buffer 選項,直接切
+              return;
+            }
+            const d = devices.find((x) => x.deviceKey === value);
+            if (d) {
+              applyDeviceDefaults(d);
+              queueRestart(d.deviceKey); // 即時切換:stop → start 新裝置(失敗自動回滾)
+            }
+          }}
+        >
+          {#each devices as d (d.deviceKey)}
+            <option value={d.deviceKey}>{d.name} ({d.maxIn}in/{d.maxOut}out)</option>
+          {:else}
+            <option value="">(無 ASIO 裝置)</option>
+          {/each}
+          <option value={WASAPI_DEVICE_KEY}>系統音訊 (WASAPI)</option>
+        </select>
+        {#if busy}
+          <span class="dim">切換中…</span>
+        {/if}
+      </div>
+    </div>
+    <div class="setrow">
+      <div class="setrow-info">
+        <label
+          class="setrow-name"
+          for="setbuf"
+          data-tooltip="樣本緩衝區大小：越小延遲越低，但對穩定性要求越高；WASAPI 模式無此選項。">Buffer Size</label
+        >
+      </div>
+      <div class="setrow-ctrl">
+        <select
+          id="setbuf"
+          value={bufSize ?? ""}
+          disabled={!selDev || selDev.bufferSizes.length === 0 || busy}
+          onchange={(e) => {
+            bufSize = Number(e.currentTarget.value);
+            queueRestart();
+          }}
+        >
+          {#each selDev?.bufferSizes ?? [] as b (b)}
+            <option value={b}>{b}</option>
+          {/each}
+        </select>
+      </div>
+    </div>
+    <div class="setrow">
+      <div class="setrow-info">
+        <span
+          class="setrow-name"
+          data-tooltip="開啟驅動專屬面板調整取樣率等設定；關閉後自動重建音訊引擎。">ASIO 控制面板</span
+        >
+      </div>
+      <div class="setrow-ctrl">
+        <button
+          onclick={openDevicePanel}
+          disabled={!running || wasapiMaster}
+          data-tooltip={wasapiMaster
+            ? "WASAPI 模式無 ASIO 驅動面板。"
+            : "開啟 ASIO 驅動面板調整取樣率；關閉後自動重建音訊引擎。"}
+          >開啟面板</button
+        >
+      </div>
+    </div>
+    {#if panelOpen}
+      <p class="warn mono">驅動面板開啟中 — 聲音可能中斷，關閉面板後自動恢復</p>
+    {/if}
+    <div class="setrow">
+      <div class="setrow-info">
+        <span class="setrow-name">引擎狀態</span>
+      </div>
+      <div class="setrow-ctrl">
+        <span class="setrow-value" data-tooltip={running ? "音訊引擎執行中。" : "音訊引擎已停止。"}
+          ><span class="dot" class:ok={running}></span>
+          {running ? "執行中" : "已停止"}</span
+        >
+        {#if running}
+          <button class="danger" onclick={stop} disabled={busy}>Stop</button>
         {:else}
-          <option value="">(無 ASIO 裝置)</option>
-        {/each}
-        <option value={WASAPI_DEVICE_KEY}>系統音訊 (WASAPI)</option>
-      </select>
-      {#if busy}
-        <span class="dim">切換中…</span>
-      {/if}
-    </div>
-    <div class="formrow">
-      <label class="formlabel" for="setbuf">Buffer</label>
-      <select
-        id="setbuf"
-        value={bufSize ?? ""}
-        disabled={!selDev || selDev.bufferSizes.length === 0 || busy}
-        onchange={(e) => {
-          bufSize = Number(e.currentTarget.value);
-          queueRestart();
-        }}
-      >
-        {#each selDev?.bufferSizes ?? [] as b (b)}
-          <option value={b}>{b}</option>
-        {/each}
-      </select>
-    </div>
-    <div class="formrow">
-      <span class="formlabel">驅動面板</span>
-      <button
-        onclick={openDevicePanel}
-        disabled={!running || wasapiMaster}
-        data-tooltip={wasapiMaster
-          ? "WASAPI 模式無 ASIO 驅動面板。"
-          : "開啟 ASIO 驅動面板調整取樣率；關閉後自動重建音訊引擎。"}
-        >ASIO</button
-      >
-      {#if panelOpen}
-        <span class="warn mono"
-          >面板開啟中 — 聲音可能中斷,關閉面板後自動恢復</span
-        >
-      {/if}
-    </div>
-    <div class="formrow">
-      <span class="formlabel">引擎</span>
-      {#if running}
-        <button class="danger" onclick={stop} disabled={busy}>Stop</button>
-      {:else}
-        <button class="primary" onclick={() => start()} disabled={busy || !selected}
-          >Start</button
-        >
-      {/if}
-      <span style="flex:1"></span>
+          <button class="primary" onclick={() => start()} disabled={busy || !selected}
+            >Start</button
+          >
+        {/if}
+      </div>
     </div>
     {#if status?.error}
-      <p class="err mono indent">{status.error}</p>
+      <p class="err mono">{status.error}</p>
     {/if}
     {#if notice}
-      <p class="err mono indent">{notice}</p>
+      <p class="err mono">{notice}</p>
     {/if}
     </div>
   {:else if tab === "general"}
     <div class="tabpane" in:fade={{ duration: 120 }}>
     <h2>自動啟動</h2>
-    <div class="formrow checkrow" class:disabled={autostartBusy || autostartEnabled === null}>
-      <span class="formlabel">自動啟動</span>
-      <input
-        id="autostartenabled"
-        type="checkbox"
-        checked={autostartEnabled === true}
-        disabled={autostartBusy || autostartEnabled === null}
-        onchange={(e) => void updateAutostart(e.currentTarget.checked)}
-      />
-      <label
-        class="checklabel"
-        for="autostartenabled"
-        data-tooltip="Windows 登入後自動啟動 RoudaMix。"
-        >Windows 登入後自動啟動 RoudaMix</label
-      >
-      {#if autostartBusy}<span class="dim">讀取中…</span>{/if}
+    <div class="setrow" class:disabled={autostartBusy || autostartEnabled === null}>
+      <div class="setrow-info">
+        <label
+          class="setrow-name"
+          for="autostartenabled"
+          data-tooltip="Windows 登入後啟動 RoudaMix。">開機自動啟動</label
+        >
+      </div>
+      <div class="setrow-ctrl">
+        <input
+          id="autostartenabled"
+          type="checkbox"
+          checked={autostartEnabled === true}
+          disabled={autostartBusy || autostartEnabled === null}
+          onchange={(e) => void updateAutostart(e.currentTarget.checked)}
+        />
+        {#if autostartBusy}<span class="dim">讀取中…</span>{/if}
+      </div>
     </div>
     <div
-      class="formrow checkrow"
+      class="setrow"
       class:disabled={!appSettings ||
         autostartEnabled !== true ||
         autostartBusy ||
         startMinimizedBusy}
     >
-      <span class="formlabel"></span>
-      <input
-        id="startminimizedonautostart"
-        type="checkbox"
-        checked={appSettings?.startMinimizedOnAutostart ?? false}
-        disabled={!appSettings ||
-          autostartEnabled !== true ||
-          autostartBusy ||
-          startMinimizedBusy}
-        onchange={(e) => void updateStartMinimized(e.currentTarget.checked)}
-      />
-      <label
-        class="checklabel"
-        for="startminimizedonautostart"
-        data-tooltip="僅影響自動啟動；手動開啟仍顯示視窗。"
-        >自動啟動時縮小到系統匣</label
-      >
+      <div class="setrow-info">
+        <label
+          class="setrow-name"
+          for="startminimizedonautostart"
+          data-tooltip="自動啟動時縮小到系統匣；僅影響開機自動啟動，手動開啟仍顯示主視窗。">啟動時最小化</label
+        >
+      </div>
+      <div class="setrow-ctrl">
+        <input
+          id="startminimizedonautostart"
+          type="checkbox"
+          checked={appSettings?.startMinimizedOnAutostart ?? false}
+          disabled={!appSettings ||
+            autostartEnabled !== true ||
+            autostartBusy ||
+            startMinimizedBusy}
+          onchange={(e) => void updateStartMinimized(e.currentTarget.checked)}
+        />
+      </div>
     </div>
-    <h2>視窗</h2>
-    <div class="formrow">
-      <label class="formlabel" for="uiscale">介面縮放</label>
-      <div class="scale-controls">
+    <h2>視窗與介面</h2>
+    <div class="setrow">
+      <div class="setrow-info">
+        <label class="setrow-name" for="closebehavior">關閉主視窗時</label>
+      </div>
+      <div class="setrow-ctrl">
+        <select
+          id="closebehavior"
+          value={appSettings?.closeBehavior ?? ""}
+          disabled={!appSettings}
+          onchange={(e) => {
+            if (!appSettings) return;
+            appSettings.closeBehavior = e.currentTarget.value as CloseBehavior;
+            persistSettings();
+          }}
+        >
+          <option value="" disabled>首次關閉時詢問</option>
+          <option value="tray">縮小到系統匣</option>
+          <option value="exit">結束程式</option>
+        </select>
+      </div>
+    </div>
+    <div class="setrow">
+      <div class="setrow-info">
+        <label
+          class="setrow-name"
+          for="uiscale"
+          data-tooltip="75%–150%，等比例縮放介面與 VST 工具列，不改變插件內容；方向鍵每次 5%。">介面縮放</label
+        >
+      </div>
+      <div class="setrow-ctrl scale-controls">
         <input
           id="uiscale"
           type="range"
@@ -2455,7 +2510,6 @@
           value={uiScale}
           disabled={!appSettings}
           aria-valuetext={`${uiScale}%`}
-          aria-describedby="uiscale-hint"
           data-tooltip="等比例縮放介面與 VST 工具列；方向鍵每次 5%。"
           oninput={(e) => void updateUiScale(e.currentTarget.valueAsNumber)}
           onchange={(e) => void updateUiScale(e.currentTarget.valueAsNumber, true)}
@@ -2468,238 +2522,272 @@
         >
       </div>
     </div>
-    <p id="uiscale-hint" class="dim indent">75%–150%，縮放 RoudaMix 介面與 VST 視窗工具列，不改變插件內容大小。</p>
-    {#if uiScaleError || editorScaleError}<p class="err indent" role="alert">{uiScaleError || editorScaleError}</p>{/if}
-    <div class="formrow">
-      <label class="formlabel" for="uifont">介面字型</label>
-      {#key fontChoices}
-        <select
-          id="uifont"
-          value={appSettings?.uiFontFamily ?? ""}
-          disabled={!appSettings}
-          aria-describedby="uifont-hint"
-          data-tooltip="主介面字型；清單來自本機，即時生效。"
-          onchange={(e) => updateUiFont(e.currentTarget.value)}
+    {#if uiScaleError || editorScaleError}<p class="err" role="alert">{uiScaleError || editorScaleError}</p>{/if}
+    <div class="setrow">
+      <div class="setrow-info">
+        <label
+          class="setrow-name"
+          for="uifont"
+          data-tooltip="本機已安裝字型，即時套用於主介面文字；VST 插件視窗不受影響。">介面字型</label
         >
-          <option value="">預設（IBM Plex Sans TC）</option>
-          {#if appSettings?.uiFontFamily && !(fontChoices ?? []).includes(appSettings.uiFontFamily)}
-            <option value={appSettings.uiFontFamily}>{appSettings.uiFontFamily}</option>
-          {/if}
-          {#each fontChoices ?? [] as name (name)}
-            <option value={name}>{name}</option>
-          {/each}
+      </div>
+      <div class="setrow-ctrl">
+        {#key fontChoices}
+          <select
+            id="uifont"
+            value={appSettings?.uiFontFamily ?? ""}
+            disabled={!appSettings}
+          onchange={(e) => updateUiFont(e.currentTarget.value)}
+          >
+            <option value="">預設（IBM Plex Sans TC）</option>
+            {#if appSettings?.uiFontFamily && !(fontChoices ?? []).includes(appSettings.uiFontFamily)}
+              <option value={appSettings.uiFontFamily}>{appSettings.uiFontFamily}</option>
+            {/if}
+            {#each fontChoices ?? [] as name (name)}
+              <option value={name}>{name}</option>
+            {/each}
+          </select>
+        {/key}
+      </div>
+    </div>
+    <h2>通知與警示</h2>
+    <div class="setrow">
+      <div class="setrow-info">
+        <label
+          class="setrow-name"
+          for="noticedismiss"
+          data-tooltip="通知與警示膠囊在此時間後自動消失；設為「按一下才消失」時，點擊通知本體仍能立即關閉。例外：Session 還原膠囊為一次性動作入口，不自動消失。">通知顯示時間</label
+        >
+      </div>
+      <div class="setrow-ctrl">
+        <select
+          id="noticedismiss"
+          value={appSettings?.noticeAutoDismissSeconds ?? 5}
+          disabled={!appSettings}
+          onchange={(e) => {
+            if (!appSettings) return;
+            appSettings.noticeAutoDismissSeconds = Number(e.currentTarget.value);
+            persistSettings();
+          }}
+        >
+          <option value={3}>3 秒</option>
+          <option value={5}>5 秒（預設）</option>
+          <option value={10}>10 秒</option>
+          <option value={30}>30 秒</option>
+          <option value={60}>60 秒</option>
+          <option value={0}>按一下才消失</option>
         </select>
-      {/key}
+      </div>
     </div>
-    <p id="uifont-hint" class="dim indent">套用於主介面文字（VST 插件視窗不受影響）；清單來自本機已安裝字型。</p>
-    <div class="formrow">
-      <label class="formlabel" for="closebehavior">關閉視窗時</label>
-      <select
-        id="closebehavior"
-        value={appSettings?.closeBehavior ?? ""}
-        disabled={!appSettings}
-        onchange={(e) => {
-          if (!appSettings) return;
-          appSettings.closeBehavior = e.currentTarget.value as CloseBehavior;
-          persistSettings();
-        }}
-      >
-        <option value="" disabled>首次關閉時詢問</option>
-        <option value="tray">縮小到系統匣</option>
-        <option value="exit">關閉程式</option>
-      </select>
-    </div>
-    <div class="formrow">
-      <label class="formlabel" for="noticedismiss">通知顯示時間</label>
-      <select
-        id="noticedismiss"
-        value={appSettings?.noticeAutoDismissSeconds ?? 5}
-        disabled={!appSettings}
-        aria-describedby="noticedismiss-hint"
-        data-tooltip="通知自動消失秒數；0 = 點擊才消失。"
-        onchange={(e) => {
-          if (!appSettings) return;
-          appSettings.noticeAutoDismissSeconds = Number(e.currentTarget.value);
-          persistSettings();
-        }}
-      >
-        <option value={3}>3 秒</option>
-        <option value={5}>5 秒（預設）</option>
-        <option value={10}>10 秒</option>
-        <option value={30}>30 秒</option>
-        <option value={60}>60 秒</option>
-        <option value={0}>按一下才消失</option>
-      </select>
-    </div>
-    <p id="noticedismiss-hint" class="dim indent">所有頂層通知與警示膠囊（含 plugin 載入失敗摘要）在此時間後自動消失；設為 0 則改為點擊才消失。不論哪種設定，點擊通知本體都能立即關閉。例外：引擎重啟後的 Session 還原膠囊為一次性動作入口，不自動消失。</p>
-    <h2>警示</h2>
-    <div class="formrow checkrow" class:disabled={!appSettings}>
-      <span class="formlabel">輸入靜音警示</span>
-      <input
-        id="inputsilencealert"
-        type="checkbox"
-        checked={appSettings?.inputSilenceAlert !== false}
-        disabled={!appSettings}
-        onchange={(e) => {
-          if (!appSettings) return;
-          appSettings.inputSilenceAlert = e.currentTarget.checked;
-          persistSettings();
-        }}
-      />
-      <label
-        class="checklabel"
-        for="inputsilencealert"
-        data-tooltip="輸入 30 秒無訊號時警示；降噪／閘門型麥克風（如 NVIDIA Broadcast）沒說話時送出靜音會誤判，請關閉。"
-        >麥克風沒聲音時警示</label
-      >
+    <div class="setrow" class:disabled={!appSettings}>
+      <div class="setrow-info">
+        <label
+          class="setrow-name"
+          for="inputsilencealert"
+          data-tooltip="麥克風 30 秒無訊號時警示；降噪／閘門型麥克風（如 NVIDIA Broadcast）沒說話時送出靜音會誤判，請關閉。">輸入靜音警示</label
+        >
+      </div>
+      <div class="setrow-ctrl">
+        <input
+          id="inputsilencealert"
+          type="checkbox"
+          checked={appSettings?.inputSilenceAlert !== false}
+          disabled={!appSettings}
+          onchange={(e) => {
+            if (!appSettings) return;
+            appSettings.inputSilenceAlert = e.currentTarget.checked;
+            persistSettings();
+          }}
+        />
+      </div>
     </div>
     </div>
   {:else if tab === "scenes"}
     <div class="tabpane" in:fade={{ duration: 120 }}>
-    <h2>啟動</h2>
-    <div class="formrow">
-      <label class="formlabel" for="startupmode">啟動時</label>
-      <select
-        id="startupmode"
-        value={appSettings?.startupMode ?? "blank"}
-        disabled={!appSettings}
-        onchange={(e) => {
-          if (!appSettings) return;
-          appSettings.startupMode = e.currentTarget.value as AppSettings["startupMode"];
-          persistSettings();
-        }}
-      >
-        <option value="blank">建立空白 session</option>
-        <option value="last">恢復上一次 session</option>
-        <option value="folder">開啟指定資料夾內的 session 檔案</option>
-      </select>
-    </div>
-    <div class="formrow">
-      <label class="formlabel" for="sessiondir">Session 資料夾</label>
-      <span
-        class="dim mono dirpath"
-        data-tooltip={`Session 預設儲存位置：\n${appSettings?.sessionDir ?? "未設定"}`}
-      >
-        {appSettings?.sessionDir ?? "(未設定)"}
-      </span>
-      <button onclick={pickSessionDir}>選擇…</button>
-    </div>
-    {#if restoreError}
-      <p class="err mono indent">啟動恢復失敗:{restoreError}</p>
-    {/if}
-    {#if appSettings?.startupMode === "last"}
-      <div class="formrow">
-        <span class="formlabel"></span>
-        <span
-          class="dim mono dirpath"
-          data-tooltip={`啟動時開啟：\n${appSettings.lastSessionPath ?? "尚未儲存過 Session"}`}
-        >
-          上一次:{appSettings.lastSessionPath ?? "(尚未存過 session)"}
-        </span>
+    <h2>啟動行為</h2>
+    <div class="setrow">
+      <div class="setrow-info">
+        <label class="setrow-name" for="startupmode">啟動時載入</label>
       </div>
-    {/if}
-    {#if appSettings?.startupMode === "folder"}
-      <div class="formrow">
-        <label class="formlabel" for="startupfile">Session 檔案</label>
+      <div class="setrow-ctrl">
         <select
-          id="startupfile"
-          value={appSettings.startupFile ?? ""}
-          disabled={!appSettings.sessionDir}
+          id="startupmode"
+          value={appSettings?.startupMode ?? "blank"}
+          disabled={!appSettings}
           onchange={(e) => {
-            appSettings!.startupFile = e.currentTarget.value || null;
+            if (!appSettings) return;
+            appSettings.startupMode = e.currentTarget.value as AppSettings["startupMode"];
             persistSettings();
           }}
         >
-          <option value="">建立空白 session</option>
-          {#each folderFiles as f (f)}
-            <option value={f}>{f}</option>
-          {:else}
-            {#if appSettings.sessionDir}
-              <option value="">(資料夾內無 session 檔)</option>
-            {/if}
-          {/each}
+          <option value="blank">空白 Session</option>
+          <option value="last">上一次的 Session</option>
+          <option value="folder">指定資料夾內的 Session</option>
         </select>
       </div>
-    {/if}
-    <h2>Session</h2>
-    <div class="formrow checkrow" class:disabled={!appSettings}>
-      <span class="formlabel">還原速度</span>
-      <input
-        id="deferbypassedplugins"
-        type="checkbox"
-        checked={appSettings?.deferBypassedPlugins === true}
-        disabled={!appSettings}
-        onchange={(e) => {
-          if (!appSettings) return;
-          appSettings.deferBypassedPlugins = e.currentTarget.checked;
-          persistSettings();
-        }}
-      />
-      <label
-        class="checklabel"
-        for="deferbypassedplugins"
-        data-tooltip="還原 Session 時，Bypass 中的插件先不載入（加快啟動）；解除 Bypass 時才載入。"
-        >Bypass 中的插件先不載入（加快啟動）</label
-      >
     </div>
-    <div class="formrow">
-      <span class="formlabel">Session</span>
-      <button onclick={saveSession}>儲存 Session</button>
-      <button onclick={loadSession}>載入 Session</button>
+    {#if appSettings?.startupMode === "last"}
+      <div class="setrow">
+        <div class="setrow-info">
+          <span class="setrow-name">上一次的 Session</span>
+        </div>
+        <div class="setrow-ctrl">
+          <span
+            class="dirpath mono dim"
+            data-tooltip={`啟動時開啟：\n${appSettings.lastSessionPath ?? "尚未儲存過 Session"}`}
+          >
+            {appSettings.lastSessionPath ?? "尚未儲存過 Session"}
+          </span>
+        </div>
+      </div>
+    {/if}
+    {#if appSettings?.startupMode === "folder"}
+      <div class="setrow">
+        <div class="setrow-info">
+          <label class="setrow-name" for="startupfile">Session 檔案</label>
+        </div>
+        <div class="setrow-ctrl">
+          <select
+            id="startupfile"
+            value={appSettings.startupFile ?? ""}
+            disabled={!appSettings.sessionDir}
+            onchange={(e) => {
+              appSettings!.startupFile = e.currentTarget.value || null;
+              persistSettings();
+            }}
+          >
+            <option value="">建立空白 Session</option>
+            {#each folderFiles as f (f)}
+              <option value={f}>{f}</option>
+            {:else}
+              {#if appSettings.sessionDir}
+                <option value="">(資料夾內無 Session 檔)</option>
+              {/if}
+            {/each}
+          </select>
+        </div>
+      </div>
+    {/if}
+    {#if restoreError}
+      <p class="err mono" role="alert">啟動恢復失敗：{restoreError}</p>
+    {/if}
+    <h2>儲存位置</h2>
+    <div class="setrow">
+      <div class="setrow-info">
+        <span
+          class="setrow-name"
+          data-tooltip="新 Session 的預設儲存位置。">Session 資料夾</span
+        >
+      </div>
+      <div class="setrow-ctrl">
+        <span
+          class="dirpath mono"
+          data-tooltip={appSettings?.sessionDir ?? "未設定"}
+        >
+          {appSettings?.sessionDir ?? "未設定"}
+        </span>
+        <button onclick={pickSessionDir}>瀏覽…</button>
+      </div>
+    </div>
+    <h2>載入與儲存</h2>
+    <div class="setrow" class:disabled={!appSettings}>
+      <div class="setrow-info">
+        <label
+          class="setrow-name"
+          for="deferbypassedplugins"
+          data-tooltip="還原 Session 時先略過 Bypass 中的插件，加快還原速度；解除 Bypass 或重試時才真的載入（重插件初始可達數秒～數十秒）。">延遲載入 Bypass 插件</label
+        >
+      </div>
+      <div class="setrow-ctrl">
+        <input
+          id="deferbypassedplugins"
+          type="checkbox"
+          checked={appSettings?.deferBypassedPlugins === true}
+          disabled={!appSettings}
+          onchange={(e) => {
+            if (!appSettings) return;
+            appSettings.deferBypassedPlugins = e.currentTarget.checked;
+            persistSettings();
+          }}
+        />
+      </div>
+    </div>
+    <div class="setrow">
+      <div class="setrow-info">
+        <span class="setrow-name">手動操作</span>
+      </div>
+      <div class="setrow-ctrl">
+        <button onclick={saveSession}>儲存 Session</button>
+        <button onclick={loadSession}>載入 Session</button>
+      </div>
     </div>
     </div>
   {:else if tab === "hotkeys"}
     <div class="tabpane" in:fade={{ duration: 120 }}>
-    <h2>快捷鍵</h2>
-    <div class="formrow">
-      <span class="formlabel">監聽靜音(全域)</span>
-      {#if capturingHotkey === "monitor"}
-        <button class="primary" onclick={() => (capturingHotkey = null)}>按下快捷鍵…(點此或 Esc 取消)</button>
-      {:else}
-        <button
-          onclick={() => { captureHint = null; capturingHotkey = "monitor"; }}
-          data-tooltip="點擊後按下組合鍵（需含 Ctrl/Alt/Win，或 F1–F24）；全域：背景時也能切換監聽靜音。"
-        >{appSettings?.monitorHotkey ?? "未設定"}</button>
-        {#if appSettings?.monitorHotkey}
+    <div class="setrow">
+      <div class="setrow-info">
+        <span
+          class="setrow-name"
+          data-tooltip="全域快捷鍵：RoudaMix 在背景時也能切換監聽靜音。">監聽靜音</span
+        >
+      </div>
+      <div class="setrow-ctrl">
+        {#if capturingHotkey === "monitor"}
+          <button class="primary" onclick={() => (capturingHotkey = null)}>按下快捷鍵…（點此或 Esc 取消）</button>
+        {:else}
           <button
-            onclick={() => void setMonitorHotkey(null)}
-            data-tooltip="解除快捷鍵綁定。"
-          >清除</button>
+            onclick={() => { captureHint = null; capturingHotkey = "monitor"; }}
+            data-tooltip="點擊後按下組合鍵（需含 Ctrl/Alt/Win，或 F1–F24）。"
+            >{appSettings?.monitorHotkey ?? "未設定"}</button
+          >
+          {#if appSettings?.monitorHotkey}
+            <button
+              onclick={() => void setMonitorHotkey(null)}
+              data-tooltip="解除快捷鍵綁定。"
+            >清除</button>
+          {/if}
         {/if}
-      {/if}
+      </div>
     </div>
-    <div class="formrow">
-      <span class="formlabel">展開／收合全部 VST 面板</span>
-      {#if capturingHotkey === "vst"}
-        <button class="primary" onclick={() => (capturingHotkey = null)}>按下快捷鍵…(點此或 Esc 取消)</button>
-      {:else}
-        <button
-          onclick={() => { captureHint = null; capturingHotkey = "vst"; }}
-          data-tooltip="點擊後按下組合鍵（需含 Ctrl/Alt/Win，或 F1–F24）；僅在 RoudaMix 視窗內生效，焦點在輸入欄位時讓給原生行為。預設 Ctrl+V。"
-        >{appSettings?.vstHotkey ?? "Ctrl+V（預設）"}</button>
-        {#if appSettings?.vstHotkey}
+    <div class="setrow">
+      <div class="setrow-info">
+        <span
+          class="setrow-name"
+          data-tooltip="僅在 RoudaMix 視窗內生效，預設 Ctrl+V；焦點在輸入欄位時讓給原生行為。">展開／收合 VST 面板</span
+        >
+      </div>
+      <div class="setrow-ctrl">
+        {#if capturingHotkey === "vst"}
+          <button class="primary" onclick={() => (capturingHotkey = null)}>按下快捷鍵…（點此或 Esc 取消）</button>
+        {:else}
           <button
-            onclick={() => void setVstHotkey(null)}
-            data-tooltip="重設回預設 Ctrl+V。"
-          >重設</button>
+            onclick={() => { captureHint = null; capturingHotkey = "vst"; }}
+            data-tooltip="點擊後按下組合鍵（需含 Ctrl/Alt/Win，或 F1–F24）；焦點在輸入欄位時讓給原生行為。"
+            >{appSettings?.vstHotkey ?? "Ctrl+V（預設）"}</button
+          >
+          {#if appSettings?.vstHotkey}
+            <button
+              onclick={() => void setVstHotkey(null)}
+              data-tooltip="重設回預設 Ctrl+V。"
+            >重設</button>
+          {/if}
         {/if}
-      {/if}
+      </div>
     </div>
     {#if capturingHotkey && captureHint}
-      <p class="dim indent">{captureHint}</p>
+      <p class="dim">{captureHint}</p>
     {/if}
     </div>
   {:else}
-    <div class="tabpane" in:fade={{ duration: 120 }}>
-    <p class="dim mono">Engine 版本:{conn.engineVersion || "未知(尚未連線)"}</p>
-    </div>
+    <div class="tabpane" in:fade={{ duration: 120 }}></div>
   {/if}
   <UpdatePanel
     visible={tab === "about"}
+    engineVersion={conn.engineVersion}
     autoCheck={appSettings ? (appSettings.checkUpdatesOnStartup ?? true) : undefined}
     onShow={() => { tab = "about"; settingsOpen = true; }}
     onPreference={updateCheckPreference}
-    onAvailable={(version) => addNotice("info", `有新版本 v${version} 可供下載，請至「設定 → 關於 / 更新」查看。`)}
+    onAvailable={(version) => addNotice("info", `有新版本 v${version} 可供下載，請至「設定 → 關於」查看。`)}
   />
   </div>
 </dialog>
@@ -2784,20 +2872,26 @@
     left: 50%;
     transform: translate(-50%, -50%);
     margin: 0;
-    /* P1-K:窄視窗不裁掉關閉/確認 —— 內容上限 85vh、垂直捲動 */
+    /* P1-K:窄視窗不裁掉關閉/確認 —— 內容上限 85vh;捲動交由 .settings-content */
     max-height: 85vh;
-    overflow-y: auto;
+    overflow: hidden;
   }
   .settingsdlg::backdrop {
     background: rgb(0 0 0 / 0.5);
   }
-  /* 分頁內容容器:承接 settingsdlg 的 flex gap(原本 formrow 是直接子層);
-   * in:fade 120ms 只進不出的分頁切換過場(motion 政策見 motion.css 頂部註解) */
-  .settings-content,
+  /* 分頁內容容器:頁籤列固定、內容獨立垂直捲動(不產生雙重捲軸);
+   * in:fade 120ms 只進不出的分頁切換過場(motion 政策見 motion.css 頂部註解)。
+   * min-height:短分頁(快捷鍵/關於)不至於讓視窗劇烈縮高 */
+  .settings-content {
+    flex: 1 1 auto;
+    min-height: 240px;
+    overflow-y: auto;
+    padding-right: 2px; /* 捲軸內縮,避免內容貼框 */
+  }
   .tabpane {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 8px;
   }
   /* B:未儲存變更詢問(置中 modal,同 settingsdlg 手法) */
   .dirtydlg {
@@ -2834,7 +2928,11 @@
   .settingsdlg h2 {
     font-size: 12px;
     color: var(--text-dim);
-    margin: 4px 0 2px;
+    margin: 2px 0 0;
+  }
+  /* Section spacing:第一個 h2 貼齊頂端,後續 h2 與上一段保持距離 */
+  .tabpane h2:not(:first-child) {
+    margin-top: 16px;
   }
   .settingsdlg p {
     margin: 2px 0;
@@ -2860,17 +2958,6 @@
     background: none; /* 蓋掉全域 button.on 的橘底 */
     color: var(--text);
     border-bottom-color: var(--accent);
-  }
-  .formrow {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-  .formlabel {
-    width: 112px;
-    flex-shrink: 0;
-    color: var(--text-dim);
-    font-size: 12px;
   }
   .scale-controls {
     display: flex;
@@ -2907,25 +2994,6 @@
   }
   .scale-controls button {
     flex-shrink: 0;
-  }
-  /* 說明/錯誤文字對齊控制項欄(112px 標籤 + 10px gap) */
-  .indent {
-    margin-left: 122px;
-  }
-  .checkrow {
-    min-height: 26px;
-  }
-  .checkrow input[type="checkbox"] {
-    width: 16px;
-    height: 16px;
-    margin: 0;
-    accent-color: var(--accent);
-  }
-  .checklabel {
-    font-size: 12px;
-  }
-  .checkrow.disabled .checklabel {
-    opacity: 0.45;
   }
   .dirpath {
     flex: 1;

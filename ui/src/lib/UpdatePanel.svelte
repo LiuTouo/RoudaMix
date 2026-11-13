@@ -6,9 +6,11 @@
   import { check as checkPluginUpdate, type Update } from "@tauri-apps/plugin-updater";
   import { checkRelease, type ReleaseUpdate } from "./updates";
 
-  let { visible, autoCheck, onShow, onPreference, onAvailable }: {
+  let { visible, autoCheck, engineVersion = "", onShow, onPreference, onAvailable }: {
     visible: boolean;
     autoCheck: boolean | undefined;
+    /** 引擎連線版本；空字串 = 尚未連線 */
+    engineVersion?: string;
     onShow: () => void;
     onPreference: (enabled: boolean) => Promise<boolean>;
     onAvailable: (version: string) => void;
@@ -151,45 +153,67 @@
 </script>
 
 <section hidden={!visible} aria-label="關於與更新">
-  <h2>RoudaMix</h2>
-  <p class="version">版本 {version ? `v${version}` : "讀取中…"}</p>
+  <h2>版本</h2>
+  <div class="setrow">
+    <div class="setrow-info"><span class="setrow-name">應用程式</span></div>
+    <div class="setrow-ctrl"><span class="setrow-value">{version ? `v${version}` : "讀取中…"}</span></div>
+  </div>
+  <div class="setrow">
+    <div class="setrow-info"><span class="setrow-name">Audio Engine</span></div>
+    <div class="setrow-ctrl">
+      <span class="setrow-value">{engineVersion || "未連線"}</span>
+    </div>
+  </div>
+  <h2>更新</h2>
+  <div class="setrow">
+    <div class="setrow-info">
+      <span
+        class="setrow-name"
+        data-tooltip={portable
+          ? "便攜版：開啟瀏覽器下載最新版 zip。"
+          : "安裝版：下載後自動安裝並重新啟動。"}>更新狀態</span
+      >
+    </div>
+    <div class="setrow-ctrl">
+      <button disabled={checking} onclick={() => check()}>{checking ? "檢查中…" : "檢查更新"}</button>
+      {#if update?.available && !portable}
+        <button class="primary" disabled={installPhase !== "idle"} onclick={installUpdate}>
+          {installPhase === "checking" ? "確認中…"
+            : installPhase === "downloading" ? `下載中 ${downloadProgress}`
+            : installPhase === "installing" ? "安裝中，即將重新啟動…"
+            : installPhase === "error" ? "重試更新"
+            : "立即更新"}
+        </button>
+      {:else if update?.available}
+        <button class="primary" disabled={opening} onclick={openDownload}>{opening ? "開啟中…" : "前往下載新版"}</button>
+      {/if}
+    </div>
+  </div>
   <div class="update-status" aria-live="polite" aria-busy={checking}>
     <p>{message}</p>
     {#if error}<p class="error" role="alert">{error}</p>{/if}
   </div>
-  <div class="actions">
-    <button disabled={checking} onclick={() => check()}>{checking ? "檢查中…" : "檢查更新"}</button>
-    {#if update?.available && !portable}
-      <button class="primary" disabled={installPhase !== "idle"} onclick={installUpdate}>
-        {installPhase === "checking" ? "確認中…"
-          : installPhase === "downloading" ? `下載中 ${downloadProgress}`
-          : installPhase === "installing" ? "安裝中，即將重新啟動…"
-          : installPhase === "error" ? "重試更新"
-          : "立即更新"}
-      </button>
-    {:else if update?.available}
-      <button class="primary" disabled={opening} onclick={openDownload}>{opening ? "開啟中…" : "前往下載新版"}</button>
-    {/if}
+  <div class="setrow" class:disabled={saving || autoCheck === undefined}>
+    <div class="setrow-info">
+      <label
+        class="setrow-name"
+        for="autocheck"
+        data-tooltip="啟動時於背景檢查新版本。">自動檢查更新</label
+      >
+    </div>
+    <div class="setrow-ctrl">
+      <input id="autocheck" type="checkbox" checked={autoCheck ?? false} disabled={saving || autoCheck === undefined}
+        onchange={changePreference} />
+    </div>
   </div>
-  <label class="preference">
-    <input type="checkbox" checked={autoCheck ?? false} disabled={saving || autoCheck === undefined}
-      onchange={changePreference} />
-    啟動時自動檢查更新
-  </label>
-  <p class="hint">
-    {#if portable}便攜版不支援程式內更新，開瀏覽器下載最新 zip。{:else}下載後自動安裝並重新啟動。{/if}
-  </p>
 </section>
 
 <style>
-  section { padding: 4px 0; }
+  section { padding: 0; }
   section[hidden] { display: none; }
-  h2 { margin: 0 0 6px; font-size: 20px; }
-  .version { color: var(--text-dim); font-family: var(--mono); }
-  .update-status { margin: 16px 0; padding: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--flat-radius); }
-  .update-status p { margin: 0; }
-  .update-status .error { margin-top: 8px; color: var(--err); overflow-wrap: anywhere; }
-  .actions { display: flex; gap: 8px; flex-wrap: wrap; }
-  .preference { display: flex; align-items: center; gap: 8px; margin-top: 20px; min-height: 32px; }
-  .hint { color: var(--text-dim); font-size: 12px; margin: 4px 0; }
+  h2 { margin: 2px 0 0; font-size: 12px; color: var(--text-dim); }
+  h2:not(:first-child) { margin-top: 16px; }
+  .update-status { margin: 0; }
+  .update-status p { margin: 0; font-size: 12px; color: var(--text-dim); }
+  .update-status .error { margin-top: 2px; color: var(--err); overflow-wrap: anywhere; }
 </style>

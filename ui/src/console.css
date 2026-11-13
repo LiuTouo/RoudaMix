@@ -157,7 +157,7 @@ body { background: var(--flat-0); }
   & button.primary:enabled:hover { background: var(--text); }
   & :focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
   & :is(dialog:not(.ctxdlg), .latency-drawer, .destination-popup, .source-popup, .ctx, .capsule, .gaintip) { --surface: var(--flat-2); --section: var(--flat-2); --control: var(--flat-2); --hover: var(--flat-4); background: var(--surface); border: 1px solid var(--border); border-radius: 3px; box-shadow: none; }
-  & :is(.dialog-head, .drawer-head, .tabs, .formrow, .update-status, .latency-output, .plugin-group summary) { background: transparent; border-color: var(--border); }
+  & :is(.dialog-head, .drawer-head, .tabs, .latency-output, .plugin-group summary) { background: transparent; border-color: var(--border); }
   & :is(.plugin-row, .app) { background: transparent; border: 0; border-bottom: 1px solid var(--divider); border-radius: 0; }
   & :is(.plugin-row, .app):enabled:hover { background: var(--flat-4); }
   & .tabs button { border: 0; border-bottom: 1px solid transparent; background: transparent; border-radius: 0; }

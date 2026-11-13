@@ -182,7 +182,7 @@ it.each(["remove", "disconnect", "load"])("cleans up on %s", async (action) => {
   if (action === "remove") emitStatus({ tracks: status.tracks.slice(1) });
   else if (action === "disconnect") listeners.get("connection")!({ payload: { connected: false, epoch: 1, engineVersion: "test" } });
   else {
-    [...document.querySelectorAll("button")].find((button) => button.textContent?.trim() === "場景 / Session")!.click();
+    [...document.querySelectorAll("button")].find((button) => button.textContent?.trim() === "Session")!.click();
     await settle();
     [...document.querySelectorAll("button")].find((button) => button.textContent?.trim() === "載入 Session")!.click();
   }

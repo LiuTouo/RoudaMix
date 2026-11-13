@@ -105,7 +105,7 @@
 #app :is(.tabs, .latency-row) { border-color: var(--border); }
 #app .tabs button { background: transparent; border-color: transparent; }
 #app .tabs button.on { background: var(--control); color: var(--active); border-bottom-color: var(--active); }
-#app :is(.formrow, .update-status, .latency-output, .latency-table, .plugin-group summary) {
+#app :is(.latency-output, .latency-table, .plugin-group summary) {
   background: var(--section); border-color: var(--flat-edge);
 }
 #app :is(.plugin-row, .app) {

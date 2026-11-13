@@ -178,6 +178,56 @@ button:disabled {
   color: var(--text);
 }
 
+/* ---- 設定視窗共用 Settings Row:左側名稱+簡短說明、右側值或控制項。
+   App.svelte 設定對話框與 UpdatePanel 共用;控制項間的視覺差異
+   (Switch/Dropdown/Button/唯讀狀態)由各頁籤語意決定,此層只統一幾何。 ---- */
+.setrow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 30px;
+  padding: 3px 0;
+}
+.setrow-info {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.setrow-name {
+  display: block;
+  font-size: 13px;
+  line-height: 1.35;
+}
+.setrow-ctrl {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: 0 0 auto;
+  max-width: 68%;
+  min-width: 0;
+}
+.setrow-ctrl > * {
+  flex: 0 0 auto;
+}
+.setrow input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+/* 唯讀值(版本、路徑、狀態) —— 與可操作控制項明確區分 */
+.setrow-value {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.setrow.disabled {
+  opacity: 0.45;
+}
+
 .mono {
   font-family: var(--mono);
 }

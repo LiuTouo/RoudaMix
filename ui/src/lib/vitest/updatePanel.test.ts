@@ -37,7 +37,7 @@ function show(autoCheck: boolean, onPreference = vi.fn().mockResolvedValue(true)
 it("啟動檢查一次並提示新版，下載使用受限的後端命令", async () => {
   const props = show(true, undefined, true);  // 便攜:維持瀏覽器下載路徑
   await settle();
-  expect(document.body.textContent).toContain("版本 v0.1.1");
+  expect(document.body.textContent).toContain("v0.1.1");
   expect(mocks.check).toHaveBeenCalledTimes(1);
   expect(props.onAvailable).toHaveBeenCalledWith("0.1.2");
   button("前往下載").click();

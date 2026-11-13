@@ -73,7 +73,7 @@ it.each([false, true])("ASIO 清單空白，running=%s 載入 WASAPI Session 會
   component = mount(App, { target: document.body }); await settle();
   listeners.get("engine-event")!({ payload: { kind: "status", payload: { ...status, running } } });
   await settle(); command.mockClear();
-  button("場景 / Session").click(); await settle();
+  button("Session").click(); await settle();
   button("載入 Session").click(); await settle();
   expect(command.mock.calls.filter(([name]) => name === "start" || name === "stop").map(([name]) => name))
     .toEqual(running ? ["stop", "start"] : ["start"]);
@@ -97,7 +97,7 @@ it("主裝置失效會顯示通知，手動 Start 使用 WASAPI 格式並可再�
 it("Session 載入失敗不啟動或停止目前串流", async () => {
   component = mount(App, { target: document.body }); await settle(); command.mockClear();
   command.mockRejectedValueOnce({ code: "session_io", message: "invalid session" });
-  button("場景 / Session").click(); await settle();
+  button("Session").click(); await settle();
   button("載入 Session").click(); await settle();
   expect(command).toHaveBeenCalledExactlyOnceWith("load_session", { path: "test.rmsession", deferBypassed: false });
   expect(document.querySelector('.capsules [role="alert"]')?.textContent).toContain("Session 載入失敗");
@@ -109,7 +109,7 @@ it("設定分頁支援方向鍵、首尾跳轉與單一 Tab 入口，面板標�
   const dialog = document.querySelector<HTMLDialogElement>(".settingsdlg")!;
   expect(dialog.open).toBe(true);
   expect(document.getElementById(dialog.getAttribute("aria-labelledby")!)?.textContent).toBe("設定");
-  button("音訊").focus();
+  button("音訊裝置").focus();
   for (const [key, id] of [["ArrowRight", "general"], ["ArrowRight", "scenes"], ["End", "about"],
     ["ArrowRight", "audio"], ["ArrowLeft", "about"], ["Home", "audio"]]) {
     document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
@@ -122,7 +122,7 @@ it("設定分頁支援方向鍵、首尾跳轉與單一 Tab 入口，面板標�
     expect(document.querySelector('[role="tabpanel"]')?.getAttribute("aria-labelledby")).toBe(selected.id);
     expect(selected.getAttribute("aria-controls")).toBe("settings-panel");
   }
-  button("場景 / Session").click(); await settle();
+  button("Session").click(); await settle();
   expect(button("儲存 Session").closest('[role="tabpanel"]')).not.toBeNull();
 });
 
@@ -135,10 +135,10 @@ it.each([false, true])("空工作區正確說明 WASAPI 與引擎狀態 running=
   expect(card.textContent).toContain(running ? "引擎執行中" : "引擎未啟動");
   expect(card.textContent).toContain("輸出軌尚未建立");
   expect(card.textContent).not.toMatch(/無 ASIO 裝置|已就緒/);
-  button("場景 / Session").click(); await settle();
+  button("Session").click(); await settle();
   button("設定音訊…").click(); await settle();
   expect(document.querySelector<HTMLDialogElement>(".settingsdlg")!.open).toBe(true);
-  expect(button("音訊").getAttribute("aria-selected")).toBe("true");
+  expect(button("音訊裝置").getAttribute("aria-selected")).toBe("true");
 });
 
 it("已建立系統輸出仍提示確認裝置與接收端電平", async () => {

@@ -90,7 +90,7 @@ async function openGeneral() {
   await settle();
   document.querySelector<HTMLButtonElement>('[aria-label="設定"]')!.click();
   await settle();
-  button("通用").click();
+  button("一般").click();
   await settle();
   return document.querySelector<HTMLInputElement>("#uiscale")!;
 }
