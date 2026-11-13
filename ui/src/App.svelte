@@ -1918,6 +1918,49 @@
   </div>
 {/if}
 <header class="bar">
+  {#if dirty}
+    <span class="dim" data-tooltip="目前 Session 有尚未儲存的變更。">● 未儲存</span>
+  {/if}
+  <span style="flex:1"></span>
+  {#if running}
+    <!-- P1-J:callback 負載 %(RT TSC 量測;持續 >100% = 過載警示走通知中心) -->
+    <span
+      class="mono"
+      class:warn={overloadOn}
+      data-tooltip="音訊 callback 的即時運算負載；持續達 100% 以上表示處理逾時，可能產生 xrun 或爆音。"
+      >LOAD {Math.round((meters?.callbackLoad ?? 0) * 100)}%</span
+    >
+      <span class="console-telemetry mono">
+        <span>{(status!.sampleRate / 1000).toFixed(1)} kHz</span>
+        <span><span class="dim">BUF</span> {status!.bufferSize}</span>
+        <span><span class="dim">IN</span> {samplesToMs(status!.inputLatency, status!.sampleRate)} ms</span>
+        <span><span class="dim">OUT</span> {samplesToMs(status!.outputLatency, status!.sampleRate)} ms</span>
+        <span class:warn={status!.xruns > 0}><span class="dim">XRUN</span> {status!.xruns}</span>
+      </span>
+  {:else if selDev?.currentSampleRate}
+    <span
+      class="dim mono"
+      data-tooltip="目前由音訊驅動程式提供的取樣率與緩衝大小；取樣率請於硬體控制面板調整。"
+      >{selDev.currentSampleRate} Hz · buf {bufSize ?? selDev.preferredBufferSize}</span
+    >
+  {/if}
+  {#if latencyEnabled}
+    <button
+      class="settings mono"
+      onclick={() => (latencyDrawerOpen = !latencyDrawerOpen)}
+      aria-expanded={latencyDrawerOpen}
+      aria-label="開啟 Plugin 延遲與 Process Load 明細"
+      data-tooltip="Monitor／Stream 的最大有效 Plugin Path Latency；點擊開啟逐 instance 與 PDC 明細。"
+      >PDC M {samplesToMs(status?.pluginDelay?.monitorSamples ?? null, status?.sampleRate ?? 0)} / S {samplesToMs(status?.pluginDelay?.streamSamples ?? null, status?.sampleRate ?? 0)} ms</button
+    >
+  {/if}
+  {#if status?.pluginFails}
+    <span
+      class="warn mono"
+      data-tooltip="即時音訊執行緒中的 plugin 處理失敗累計；失敗時該 plugin 會維持 bypass，避免中斷音訊。"
+      >plugin fail {status.pluginFails}</span
+    >
+  {/if}
   <!-- P1-L:連線細分狀態(spawning/connected/spawn_failed/version mismatch…)+ retry -->
   <span class="dot" class:ok={cv.tone === "ok"} class:err={cv.tone === "err"} data-tooltip={connTip}></span>
   <span data-tooltip={connTip}>{cv.label}</span>
@@ -1957,50 +2000,6 @@
       />
     </svg>
   </button>
-  {#if dirty}
-    <span class="dim" data-tooltip="目前 Session 有尚未儲存的變更。">● 未儲存</span>
-  {/if}
-  <span style="flex:1"></span>
-  {#if running}
-    <span class="dot ok"></span>
-    <!-- P1-J:callback 負載 %(RT TSC 量測;持續 >100% = 過載警示走通知中心) -->
-    <span
-      class="mono"
-      class:warn={overloadOn}
-      data-tooltip="音訊 callback 的即時運算負載；持續達 100% 以上表示處理逾時，可能產生 xrun 或爆音。"
-      >LOAD {Math.round((meters?.callbackLoad ?? 0) * 100)}%</span
-    >
-      <span class="console-telemetry mono">
-        <span>{(status!.sampleRate / 1000).toFixed(1)} kHz</span>
-        <span><span class="dim">BUF</span> {status!.bufferSize}</span>
-        <span><span class="dim">IN</span> {samplesToMs(status!.inputLatency, status!.sampleRate)} ms</span>
-        <span><span class="dim">OUT</span> {samplesToMs(status!.outputLatency, status!.sampleRate)} ms</span>
-        <span class:warn={status!.xruns > 0}><span class="dim">XRUN</span> {status!.xruns}</span>
-      </span>
-  {:else if selDev?.currentSampleRate}
-    <span
-      class="dim mono"
-      data-tooltip="目前由音訊驅動程式提供的取樣率與緩衝大小；取樣率請於硬體控制面板調整。"
-      >{selDev.currentSampleRate} Hz · buf {bufSize ?? selDev.preferredBufferSize}</span
-    >
-  {/if}
-  {#if latencyEnabled}
-    <button
-      class="settings mono"
-      onclick={() => (latencyDrawerOpen = !latencyDrawerOpen)}
-      aria-expanded={latencyDrawerOpen}
-      aria-label="開啟 Plugin 延遲與 Process Load 明細"
-      data-tooltip="Monitor／Stream 的最大有效 Plugin Path Latency；點擊開啟逐 instance 與 PDC 明細。"
-      >PDC M {samplesToMs(status?.pluginDelay?.monitorSamples ?? null, status?.sampleRate ?? 0)} / S {samplesToMs(status?.pluginDelay?.streamSamples ?? null, status?.sampleRate ?? 0)} ms</button
-    >
-  {/if}
-  {#if status?.pluginFails}
-    <span
-      class="warn mono"
-      data-tooltip="即時音訊執行緒中的 plugin 處理失敗累計；失敗時該 plugin 會維持 bypass，避免中斷音訊。"
-      >plugin fail {status.pluginFails}</span
-    >
-  {/if}
 </header>
 
 <!-- P1-O→膠囊:iPhone 式頂端滑入通知;警示在前、通知在後,點擊本體執行動作 -->
