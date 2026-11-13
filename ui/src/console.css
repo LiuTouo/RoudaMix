@@ -15,6 +15,12 @@
   --well: #090B0D; --well-edge: #080A0C;
   /* 暖色切換對(DESIGN：mute 亮紅、rack bypass 琥珀)：底/字成對使用 */
   --hot-bg: #382022; --hot-ink: #F0ABAB; --rack-bg: #332A1B;
+  /* Fader 語意 tokens（Visual Polish）：推桿帽/刻度的硬編碼色收斂；
+     thumb 對比刻意加亮一階，在近黑溝槽上維持可讀邊緣 */
+  --fader-tick: #525B63;
+  --fader-thumb-edge: #B9C2CB;
+  --fader-thumb-face: #98A2AC;
+  --fader-thumb-waist: #29303A;
   color-scheme: dark;
 }
 body { background: var(--flat-0); }
@@ -33,7 +39,7 @@ body { background: var(--flat-0); }
   & main { padding: 16px; gap: 0; }
   & .board { display: grid; grid-template-columns: minmax(256px, 2fr) minmax(256px, 1fr); gap: 20px; padding: 0 0 4px; background: transparent; }
   & .group { min-width: 0; gap: 0; padding: 0 12px 12px; border: 1px solid var(--well-edge); border-radius: 12px; background: var(--well); box-shadow: inset 0 3px 9px #000A, 0 1px 0 #FFFFFF0D; }
-  & .colhead { min-height: 48px; flex: none; flex-wrap: wrap; padding: 10px 4px; gap: 6px 8px; background: transparent; border: 0; }
+  & .colhead { min-height: 48px; flex: none; flex-wrap: wrap; padding: 8px 4px 6px; gap: 6px 8px; background: transparent; border: 0; }
   & .group-title { display: flex; align-items: center; gap: 8px; margin-right: auto; }
   & .group-title h2 { margin: 0; font-size: 14px; font-weight: 600; letter-spacing: .3px; }
   & .track-count { color: var(--text-dim); font: 10px var(--mono); border: 1px solid var(--border); padding: 1px 5px; }
@@ -89,9 +95,14 @@ body { background: var(--flat-0); }
   /* Sidecar = Secondary Processing Surface：比軌條暗一階，同一張卡的一部分；
      左框 = 與軌條之間的 1px Divider（-1px 疊合，單一分隔線） */
   & .vstside-in { background: var(--processing-surface); border-left-color: var(--divider-strong); }
-  & .vstside .vsthead { flex: none; height: 32px; padding: 0 4px 0 8px; background: transparent; border: 0; border-bottom: 1px solid var(--divider-strong); color: var(--text-dim); font: 11px var(--font-ui); letter-spacing: .04em; }
+  & .vstside .vsthead { flex: none; height: 32px; padding: 0 5px 0 8px; background: transparent; border: 0; border-bottom: 1px solid var(--divider-strong); color: var(--text-dim); font: 11px var(--font-ui); letter-spacing: .04em; }
   & .vstside .vsttitle { color: var(--text); font-weight: 600; letter-spacing: .06em; }
-  & .vstside .vstcount { font-size: 11px; }
+  /* Count = 細框小讀值膠囊：與 Header 文字同一基線，不搶戲 */
+  & .vstside .vstcount { font-size: 11px; color: var(--text-dim); border: 1px solid var(--border); border-radius: 3px; padding: 0 4px; line-height: 15px; font-variant-numeric: tabular-nums; }
+  /* Add / Collapse 圖示鈕：靜音工具列語彙，hover 才浮出 */
+  & .vstside .vsticonbtn { border-radius: 3px; }
+  & .vstside .vsticonbtn:hover { background: var(--flat-4); border-color: transparent; color: var(--text); }
+  & .vstside .vsticonbtn:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
   & .vst { height: auto; min-height: 72px; flex: 1 1 auto; border: 0; background: transparent; }
   & .vstlist { padding: 0; gap: 0; background: transparent; }
   & .plug { display: grid; grid-template-columns: 24px minmax(0, 1fr); align-items: center; gap: 2px; min-height: 32px; flex: none; padding: 0 6px; border: 0; background: transparent; }
@@ -120,15 +131,17 @@ body { background: var(--flat-0); }
   & .empty-slot { justify-content: flex-start; min-height: 32px; padding: 4px 6px; border: 0; font-size: 11px; color: var(--text-dim); }
   & .processing-row { background: var(--flat-2); border: 1px solid var(--divider); }
   & .processing-row:hover { background: var(--flat-4); }
+  /* 展開態：與收合態的背景差異（淺一階 + 強分隔框），維持同高度 */
+  & .processing-row.open { background: var(--flat-4); border-color: var(--divider-strong); }
   & .processing-row .proc-label { font-family: var(--mono); font-weight: 400; letter-spacing: .06em; }
   & .fader { flex: 0 0 auto; min-height: 327px; justify-content: center; gap: 6px; padding: 4px 0 2px; border-top: 1px solid var(--divider); }
   & .fctl { gap: 0; width: 13px; }
   & .slotwrap { width: 13px; }
   & .slotwrap input[type="range"] { width: 13px; min-width: 13px; min-height: 320px; }
   & .slotwrap input[type="range"]::-webkit-slider-runnable-track { width: 4px; border: 0; border-radius: 0; background: var(--flat-0); box-shadow: none; }
-  & .slotwrap input[type="range"]::-webkit-slider-thumb { width: 13px; height: 30px; margin-left: -4.5px; border: 1px solid #A9B1B8; border-radius: 3px; box-shadow: none; background: linear-gradient(180deg, #89929B 0 calc(50% - 1px), #252A2F calc(50% - 1px) calc(50% + 1px), #89929B calc(50% + 1px)); }
+  & .slotwrap input[type="range"]::-webkit-slider-thumb { width: 13px; height: 30px; margin-left: -4.5px; border: 1px solid var(--fader-thumb-edge); border-radius: 3px; box-shadow: none; background: linear-gradient(180deg, var(--fader-thumb-face) 0 calc(50% - 1px), var(--fader-thumb-waist) calc(50% - 1px) calc(50% + 1px), var(--fader-thumb-face) calc(50% + 1px)); }
   & .slotwrap input[type="range"]:focus-visible::-webkit-slider-thumb { border-color: var(--accent); }
-  & .slotwrap::before { left: -5px; top: 15px; bottom: 15px; width: 5px; background: repeating-linear-gradient(180deg, #525B63 0 1px, transparent 1px calc(100% / 12)); }
+  & .slotwrap::before { left: -5px; top: 15px; bottom: 15px; width: 5px; background: repeating-linear-gradient(180deg, var(--fader-tick) 0 1px, transparent 1px calc(100% / 12)); }
   /* 30px thumb, borderless rail: unity is 2/3 of the H−30px centre travel. */
   & .slotwrap::after { background: var(--text-dim); left: -7px; bottom: calc(15px + (100% - 30px) * 2 / 3 - 1px); }
   & .meterwrap { flex: 0 0 40px; background: transparent; border: 0; }
@@ -137,7 +150,7 @@ body { background: var(--flat-0); }
   & .colorbar .name { padding: 4px 0; border: 0; background: transparent; text-align: left; color: var(--text); font-weight: 500; font-size: 12px; min-width: 0; max-width: 100%; }
   & .colorbar .name:hover { background: rgb(0 0 0 / 15%); color: var(--text); }
   & .colorbar:has(.barpick:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }
-  & .console-gain { margin-left: auto; font-size: 11px; color: var(--text-dim); pointer-events: none; position: relative; }
+  & .console-gain { margin-left: auto; font-size: 11px; color: var(--text-dim); pointer-events: none; position: relative; font-variant-numeric: tabular-nums; }
   & .nameedit { background: var(--flat-2); text-align: left; border: 0; border-bottom: 1px solid var(--accent); }
   & button.danger:enabled:hover { background: var(--hot-bg); color: var(--hot-ink); }
   & button.primary { background: var(--accent); color: var(--flat-0); }

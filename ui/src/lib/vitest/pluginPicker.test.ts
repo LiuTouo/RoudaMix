@@ -301,7 +301,8 @@ function showTrack(kind: Track["kind"] = "audio") {
   } });
   mounted.push(component);
   flushSync();
-  return button("+ 加入");
+  // Header Add = 圖示鈕（無文字），以 aria-label 定位
+  return document.querySelector<HTMLButtonElement>('[aria-label^="加入插件到"]')!;
 }
 
 it.each(["audio", "app", "fx", "output"] as const)("%s 軌道接線：新增成功關閉選擇器、返回焦點、重新開啟重設", async (kind) => {

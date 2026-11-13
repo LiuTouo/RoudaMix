@@ -2650,6 +2650,13 @@
     {#if capturingHotkey && captureHint}
       <p class="dim indent">{captureHint}</p>
     {/if}
+    <div class="formrow">
+      <span class="formlabel">展開／收合全部 VST 面板</span>
+      <span
+        class="mono"
+        data-tooltip="應用程式內固定快捷鍵（同頂欄「VST 展開全部」鈕）；焦點在輸入欄位時讓給貼上。範圍：僅有插件的音軌。"
+      >Ctrl+V（固定）</span>
+    </div>
     </div>
   {:else}
     <div class="tabpane" in:fade={{ duration: 120 }}>

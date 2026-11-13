@@ -1173,6 +1173,11 @@
       ? "收闔此軌的 VST 面板（右側音軌收回）。"
       : "向右展開此軌的 Processing Rack（與音軌同一張卡，右側音軌會右移讓位）。"}
   >
+    <span class="proc-icon" aria-hidden="true">
+      <svg viewBox="0 0 16 16" width="12" height="12" focusable="false">
+        <path d="M2.5 3.5h11v3.6h-11zM2.5 8.9h11v3.6h-11z" fill="none" stroke="currentColor" stroke-width="1.4" />
+      </svg>
+    </span>
     <span class="proc-label">VST</span>
     <span class="proc-count mono">{track.plugins.length}</span>
     <span class="proc-arrow" aria-hidden="true">▸</span>
@@ -1324,22 +1329,32 @@
   <div class="vsthead" oncontextmenu={rackMenu}>
     <span class="vst-accent" style:--track-accent={cssColor(shownColor)} aria-hidden="true"></span>
     <span class="vsttitle">VST CHAIN</span>
-    <span class="vstcount mono">{track.plugins.length}</span>
+    <span class="vstcount mono" aria-label="插件數量 {track.plugins.length}" data-tooltip="此軌插件數量 {track.plugins.length} 個。">{track.plugins.length}</span>
     {#if $pluginTransfer.busy || monitorBypassBusy}<span class="dim" role="status">處理中…</span>{/if}
-    <button
-      class="mini vstadd"
-      onclick={() => { pluginPickerOpen = true; }}
-      aria-label="加入插件到 {track.name}"
-      data-tooltip="開啟共用的 VST plugin 清單；不會自動重新掃描。"
-      >+ 加入</button
-    >
-    <button
-      class="mini vstclose"
-      onclick={() => onVstToggle?.()}
-      aria-label="收闔 {track.name} 的 VST 面板"
-      data-tooltip="收闔此 VST 面板（右側音軌收回）；音軌上的 VST 按鈕可再展開。"
-      >✕</button
-    >
+    <span class="vsthead-actions">
+      <button
+        type="button"
+        class="vsticonbtn vstadd"
+        onclick={() => { pluginPickerOpen = true; }}
+        aria-label="加入插件到 {track.name}"
+        data-tooltip="開啟共用的 VST plugin 清單；不會自動重新掃描。"
+      >
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
+          <path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none" />
+        </svg>
+      </button>
+      <button
+        type="button"
+        class="vsticonbtn vstclose"
+        onclick={() => onVstToggle?.()}
+        aria-label="收闔 {track.name} 的 VST 面板"
+        data-tooltip="收闔此 VST 面板（右側音軌收回）；音軌上的 VST 按鈕可再展開。"
+      >
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
+          <path d="M11.5 3l-5 5 5 5M6.5 3l-5 5 5 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+        </svg>
+      </button>
+    </span>
   </div>
   {#snippet renameBox()}
     <!-- 插件自訂名稱行內編輯(Enter 套用、Esc 取消;空白 = 恢復原名) -->
@@ -1548,11 +1563,42 @@
     color: var(--text-dim);
   }
   .vstadd {
-    margin-left: auto;
     flex: none;
   }
   .vstclose {
     flex: none;
+  }
+  /* 精簡工具列：右側 Add / Collapse 圖示鈕群（tooltip + hover + focus） */
+  .vsthead-actions {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex: none;
+  }
+  .vsticonbtn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    min-width: 22px;
+    min-height: 22px;
+    padding: 0;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    color: var(--text-dim);
+    line-height: 1;
+  }
+  .vsticonbtn:hover {
+    color: var(--text);
+    background: var(--bg-raised);
+    border-color: var(--border);
+  }
+  .vsticonbtn:focus-visible {
+    outline: 1px solid var(--accent);
+    outline-offset: -1px;
   }
   /* Processing Row:整列可點的展開/收合入口(Routing 下方、Mute/Bypass 上方) */
   .processing-row {
@@ -1575,6 +1621,15 @@
   .processing-row:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: -2px;
+  }
+  .proc-icon {
+    display: inline-flex;
+    align-items: center;
+    flex: none;
+    color: var(--text-dim);
+  }
+  .processing-row.open .proc-icon {
+    color: var(--accent);
   }
   .proc-label {
     font-size: 11px;
@@ -1648,7 +1703,7 @@
   }
   .head > .sysbadge { flex: none; }
   .console-gain { flex: none; margin-left: auto; position: relative; pointer-events: none; font-size: 11px; }
-  /* 名稱區 = 低飽和 Header Surface：軌道色只以 3px 細 Accent Bar + 圖示著色，
+  /* 名稱區 = 低飽和 Header Surface：軌道色只以淡色背景 + 圖示著色，
    * 不再以大片飽和色塊主導頂部（與 Meter/Clipping/Mute 狀態爭注意力）。 */
   .colorbar {
     position: relative;
@@ -1662,16 +1717,6 @@
     gap: 6px;
     background: color-mix(in srgb, var(--track-accent, #8a8f94) 12%, var(--channel-surface, var(--bg-panel)));
     justify-content: flex-start;
-  }
-  .colorbar::before {
-    content: "";
-    position: absolute;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    width: 3px;
-    border-radius: 3px 0 0 3px;
-    background: var(--track-accent, #8a8f94);
   }
   /* 透明滿版色票:點色塊任何位置(名稱以外)都開原生調色盤 */
   .barpick {

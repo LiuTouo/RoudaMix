@@ -87,7 +87,7 @@ test("VST 機架以可操作名稱呈現 GUI 入口，加入按鈕不承擔重�
   const body = render(TrackStrip, { props: stripProps(true) }).body;
 
   assert.match(body, /<span[^>]*role="button"[^>]*tabindex="0"[^>]*>Synth<\/span>/);
-  assert.match(body, /<button[^>]*>\+ 加入<\/button>/);
+  assert.match(body, /aria-label="加入插件到 Stream"/);
   assert.doesNotMatch(body, />GUI<\/button>/);
   assert.doesNotMatch(body, />重新掃描<\/button>/);
 });
@@ -104,7 +104,7 @@ test("the production App renders C with real labels, one name rail and all audio
   assert.equal([...consoleBody.matchAll(/>Stream<\/button>/g)].length, 1);
   assert.match(consoleBody, /class="vsttitle[^"]*"[^>]*>VST CHAIN</);
   assert.match(consoleBody, /class="vstcount[^"]*"[^>]*>1</);
-  assert.match(consoleBody, />\+ 加入</);
+  assert.match(consoleBody, /aria-label="加入插件到 Stream"/);
   assert.match(consoleBody, /console-gain[^>]*>100%/);
   assert.match(consoleBody, /data-console-kind="output"/);
   assert.doesNotMatch(consoleBody, /\stitle="/);

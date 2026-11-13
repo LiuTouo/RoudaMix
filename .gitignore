@@ -6,6 +6,7 @@
 /output/
 /src-tauri/WebView2Runtime/
 /.scratch/
+/ui/.scratch/
 /.gitnexus/
 __pycache__/
 

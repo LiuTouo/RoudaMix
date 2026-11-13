@@ -18,7 +18,7 @@
   const NORMAL_COLOR = "#40c985";
   const WARNING_COLOR = "#d9a441";
   const CLIP_COLOR = "#dd5a5a";
-  const TICK_COLOR = "#8a93a3";
+  const TICK_COLOR = "#9CA5AE";
 
   // prop → 非響應式槽(主 rAF effect 不依賴 strip,45Hz 更新不重啟 rAF 迴圈)
   let latest: MeterStrip | undefined;
