@@ -199,6 +199,29 @@ describe("插件選擇器", () => {
     expect(running.props.onStartScan).not.toHaveBeenCalled();
   });
 
+  it("掃描與加入期間置中顯示進度條", async () => {
+    const { component } = show({ scanRunning: true, scanProgress: { done: 3, total: 8 } });
+    const veil = document.querySelector(".busy-veil")!;
+    expect(veil.getAttribute("role")).toBe("status");
+    expect(veil.textContent).toContain("正在掃描 VST");
+    expect(veil.querySelector(".busy-fill")?.getAttribute("style")).toContain("width: 38%");
+    expect(veil.textContent).toContain("3/8");
+    component.update({ scanRunning: false, scanProgress: null });
+    flushSync();
+    expect(document.querySelector(".busy-veil")).toBeNull();
+    await unmount(mounted.pop()!);
+
+    let finish!: () => void;
+    show({ onPick: () => new Promise<void>((resolve) => { finish = resolve; }) });
+    rows()[0].click();
+    flushSync();
+    const adding = document.querySelector(".busy-veil")!;
+    expect(adding.textContent).toContain("正在加入插件");
+    expect(adding.querySelector(".busy-fill")?.classList.contains("indeterminate")).toBe(true);
+    finish();
+    await vi.waitFor(() => expect(document.querySelector(".busy-veil")).toBeNull());
+  });
+
   it("空清單與掃描中有不同提示，僅失敗項目也可查看隔離原因", () => {
     const { component } = show({ modules: [], failures: [{ path: "Broken.vst3", error: "bad module" }] });
     expect(document.body.textContent).toContain("尚無 VST 清單");

@@ -146,6 +146,30 @@
       </details>
     {/if}
   </div>
+  <!-- 置中進度條：掃描有進度時顯示比例，其餘顯示循環動畫；不擋瀏覽與取消 -->
+  {#if scanRunning || pending}
+    <div class="busy-veil" role="status">
+      {#if scanRunning}
+        <div class="busy-box">
+          <h3>正在掃描 VST…</h3>
+          {#if scanProgress && scanProgress.total > 0}
+            <div class="busy-track" aria-label="掃描進度 {scanProgress.done}/{scanProgress.total}">
+              <div class="busy-fill" style="width:{Math.round((scanProgress.done / scanProgress.total) * 100)}%"></div>
+            </div>
+            <p class="busy-count">{scanProgress.done}/{scanProgress.total}</p>
+          {:else}
+            <div class="busy-track"><div class="busy-fill indeterminate"></div></div>
+          {/if}
+        </div>
+      {/if}
+      {#if pending}
+        <div class="busy-box">
+          <h3>正在加入插件…</h3>
+          <div class="busy-track"><div class="busy-fill indeterminate"></div></div>
+        </div>
+      {/if}
+    </div>
+  {/if}
 </dialog>
 
 <style>
@@ -220,6 +244,36 @@
   }
   .sel :is(.tree-label, .tree-count) { color: inherit; opacity: 0.75; }
   .sel .tree-label { opacity: 1; }
+
+  /* ---- 置中進度條（掃描/加入中） ---- */
+  /* 對話框本身由 top layer 置中，fixed + 50% 即為視窗／對話框中央 */
+  .busy-veil {
+    position: fixed;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    pointer-events: none; /* 背景掃描仍可瀏覽清單、按取消 */
+  }
+  .busy-box {
+    min-width: 260px;
+    max-width: min(360px, 80vw);
+    padding: 14px 16px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--flat-2);
+    box-shadow: 0 18px 44px #000b;
+    text-align: center;
+  }
+  .busy-box h3 { margin: 0 0 10px; font-size: 14px; }
+  .busy-count { margin: 8px 0 0; color: var(--text-dim); font-size: 12px; text-align: right; }
+  .busy-track { height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
+  .busy-fill { height: 100%; background: var(--accent); transition: width 120ms linear; }
+  .busy-fill.indeterminate { width: 30%; animation: busy-slide 1.2s infinite linear; }
+  @keyframes busy-slide { from { transform: translateX(-110%); } to { transform: translateX(380%); } }
 
   .empty { padding: 28px 10px; text-align: center; color: var(--text-dim); }
   .error, .notice { margin: 0; flex-shrink: 0; max-height: 72px; overflow: auto; overflow-wrap: anywhere; font-size: 12px; }
