@@ -524,15 +524,19 @@
 
   const tracks = $derived<Track[]>(status?.tracks ?? []);
   const loudnessTrack = $derived(tracks.find((track) => track.trackId === loudnessTarget?.trackId));
-  // 獨立視窗的即時投影:view/track/running 任一變化就推給 loudness 視窗
+  // 獨立視窗的即時投影:view/track/running 任一變化就推給 loudness 視窗。
+  // 讀值必須在提前返回之前:effect 只登記「上次執行實際讀到」的訊號,
+  // 面板 ready 前就 return 會讓 loudnessView 永遠不進依賴集 → 量測數值不再更新。
   function pushLoudnessPanel() {
+    const view = loudnessView;
     const track = loudnessTrack;
+    const isRunning = running;
     if (!loudnessTarget || !track || !loudnessPanelReady) return;
     void emitTo("loudness", "loudness-panel:view", {
-      view: loudnessView,
+      view,
       trackName: track.name,
       trackKind: track.kind,
-      running,
+      running: isRunning,
     });
   }
   $effect(() => {

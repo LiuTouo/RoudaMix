@@ -262,6 +262,16 @@ it("shows live numbers, freezes when stopped, and honours the measurement point 
   expect(document.body.textContent).toContain("監聽");
 });
 
+it("pushes every polled measurement to the panel instead of freezing after ready", async () => {
+  await show(); more().click(); await settle(); panelReady(); await settle();
+  const before = viewPushes().length;
+  current = { ...current!, elapsedSeconds: 5, momentaryLufs: -12.3 };
+  vi.advanceTimersByTime(200); await settle();
+  vi.advanceTimersByTime(200); await settle();
+  expect(viewPushes().length).toBeGreaterThan(before);
+  expect(viewPushes().at(-1)![2]).toMatchObject({ view: { report: { elapsedSeconds: 5, momentaryLufs: -12.3 } } });
+});
+
 it("reset button reports back to the main window and is gated on running", async () => {
   mountPanel(); await settle();
   pushView({ view: { report: newReport(1) }, trackName: "麥克風", trackKind: "audio", running: false });
