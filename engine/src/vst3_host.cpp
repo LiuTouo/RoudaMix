@@ -312,8 +312,20 @@ bool read_and_validate_preset(const std::filesystem::path& file,
 
 }  // namespace
 
+// 損壞/非 DLL 的 module 在 LoadLibrary 觸發 Windows「映像錯誤」(0xc000012f)
+// 硬錯誤對話框,卡死 host 與 CI;載入期間壓制、離開還原(worker_main 同款旗標)。
+class ScopedQuietModuleLoad {
+public:
+    ScopedQuietModuleLoad()
+        : prev_(SetErrorMode(GetErrorMode() | SEM_FAILCRITICALERRORS)) {}
+    ~ScopedQuietModuleLoad() { SetErrorMode(prev_); }
+private:
+    UINT prev_;
+};
+
 std::vector<Vst3ClassInfo> scan_vst3_module(const std::filesystem::path& module_path,
                                             std::string& error) {
+    const ScopedQuietModuleLoad quiet;
     std::vector<Vst3ClassInfo> result;
     auto module = VST3::Hosting::Module::create(module_path.string(), error);
     if (!module) return result;
@@ -497,6 +509,7 @@ struct Vst3Plugin::Impl {
     }
 
     void load(const std::filesystem::path& path, const std::string& class_id) {
+        const ScopedQuietModuleLoad quiet;
         module = VST3::Hosting::Module::create(path.string(), error);
         if (!module) return;
         const auto factory = module->getFactory();
