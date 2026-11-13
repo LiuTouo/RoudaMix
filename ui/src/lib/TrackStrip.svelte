@@ -1124,22 +1124,6 @@
       onclick={bypassAll}
       data-tooltip={bypassLatched ? "全軌 bypass 中；點擊恢復原啟用插件。" : "全部插件切為 bypass（記憶啟用狀態）；再按恢復原啟用。"}>B</button>
   {/snippet}
-  {#snippet vstChip()}
-    <!-- VST sidecar 開關(收闔時唯一入口);面板本身在右側 .vstside -->
-    <button
-      class="mini vstchip"
-      class:on={vstOpen}
-      aria-expanded={vstOpen}
-      aria-label={vstOpen
-        ? `收闔 ${track.name} 的 VST 面板`
-        : `展開 ${track.name} 的 VST 面板(插件 ${track.plugins.length} 個)`}
-      onclick={() => onVstToggle?.()}
-      data-tooltip={vstOpen
-        ? "收闔 VST 面板。"
-        : "展開 VST 面板（右側音軌右移讓位）。"}
-      >VST {track.plugins.length}</button
-    >
-  {/snippet}
   <div class="row routing-row" data-tooltip={track.kind === "fx" ? "側鏈：來源訊號只進插件 aux input，不進混音。" : undefined}>
     {#if sysOuts.length > 0}
       {#each sysOuts as sys (sys.trackId)}
@@ -1175,9 +1159,27 @@
       </label>
     {/if}
   </div>
-  <!-- M/B/VST 獨立一列(MON/STR 勾選區下方),不再擠路由列(窄軌不重疊) -->
+  <!-- Processing Row:VST 展開/收合入口(整列可點;Routing 下方、Mute/Bypass 上方) -->
+  <button
+    type="button"
+    class="row processing-row"
+    class:open={vstOpen}
+    aria-expanded={vstOpen}
+    aria-label={vstOpen
+      ? `收闔 ${track.name} 的 VST 面板`
+      : `展開 ${track.name} 的 VST 面板(插件 ${track.plugins.length} 個)`}
+    onclick={() => onVstToggle?.()}
+    data-tooltip={vstOpen
+      ? "收闔此軌的 VST 面板（右側音軌收回）。"
+      : "向右展開此軌的 Processing Rack（與音軌同一張卡，右側音軌會右移讓位）。"}
+  >
+    <span class="proc-label">VST</span>
+    <span class="proc-count mono">{track.plugins.length}</span>
+    <span class="proc-arrow" aria-hidden="true">▸</span>
+  </button>
+  <!-- M/B 獨立一列(Processing Row 下方) -->
   <div class="row switches-row">
-    <div class="console-switches">{@render muteSwitch()}{@render rackSwitch()}{@render vstChip()}</div>
+    <div class="console-switches">{@render muteSwitch()}{@render rackSwitch()}</div>
   </div>
   <div class="lower">
 
@@ -1320,13 +1322,20 @@
   <!-- 標題列在機架盒子外(正上方);右鍵仍可開機架選單(button 已在 rackMenu 內過濾)。 -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="vsthead" oncontextmenu={rackMenu}>
-    <span>VST ({track.plugins.length})</span>
+    <span class="vsttitle">VST CHAIN ({track.plugins.length})</span>
     {#if $pluginTransfer.busy || monitorBypassBusy}<span class="dim" role="status">處理中…</span>{/if}
+    <button
+      class="mini vstadd"
+      onclick={() => { pluginPickerOpen = true; }}
+      aria-label="加入插件到 {track.name}"
+      data-tooltip="開啟共用的 VST plugin 清單；不會自動重新掃描。"
+      >+ 加入</button
+    >
     <button
       class="mini vstclose"
       onclick={() => onVstToggle?.()}
       aria-label="收闔 {track.name} 的 VST 面板"
-      data-tooltip="收闔 VST 面板。"
+      data-tooltip="收闔此 VST 面板（右側音軌收回）；音軌上的 VST 按鈕可再展開。"
       >✕</button
     >
   </div>
@@ -1471,14 +1480,6 @@
         </div>
       {/each}
     </div>
-    <div class="vstfoot">
-      <button
-        class="mini add"
-        onclick={() => { pluginPickerOpen = true; }}
-        data-tooltip="開啟 VST 插件清單。"
-        >+ 加入</button
-      >
-    </div>
   </div>
     </div>
   </div>
@@ -1508,27 +1509,81 @@
     transition: width 0.18s ease, visibility 0s linear 0.18s;
   }
   .vstside.open {
-    width: 184px; /* = SIDE_GAP + SIDE_W(與軌條同寬 + 溝槽) */
+    width: 176px; /* = SIDE_W(SIDE_GAP=0:與軌條緊貼整合成一張卡) */
     visibility: visible;
     transition: width 0.18s ease;
   }
+  /* Sidecar = 同一張卡的右半:-1px 疊合軌條右框(單一 1px 分隔線),頂底隨槽拉伸,
+   * 表面/邊框與 .strip 一致(整合 Channel Group,無獨立黑面板) */
   .vstside-in {
-    margin-left: 8px; /* = laneView.ts SIDE_GAP(溝槽) */
-    width: 176px;
+    margin-left: -1px; /* 疊合軌條右框:兩框合成一線 */
+    width: 177px; /* border-box:含 1px 分隔框,可視寬 = SIDE_W */
+    box-sizing: border-box;
+    border: 1px solid var(--border);
+    background: var(--bg-panel);
     display: flex;
     flex-direction: column;
     gap: 2px;
     min-height: 0;
   }
-  .vstclose {
+  .vsttitle {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+    white-space: nowrap;
+  }
+  .vstadd {
     margin-left: auto;
     flex: none;
   }
-  .vstchip.on {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: #14161a;
+  .vstclose {
+    flex: none;
+  }
+  /* Processing Row:整列可點的展開/收合入口(Routing 下方、Mute/Bypass 上方) */
+  .processing-row {
+    flex: 0 0 28px;
+    min-height: 28px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 8px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    font: inherit;
+    color: var(--text);
+    cursor: pointer;
+    user-select: none;
+  }
+  .processing-row:hover {
+    background: var(--bg-raised);
+  }
+  .processing-row:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+  .proc-label {
+    font-size: 11px;
     font-weight: 700;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+  }
+  .processing-row.open .proc-label {
+    color: var(--accent);
+  }
+  .proc-count {
+    font-size: 11px;
+    color: var(--text);
+  }
+  .proc-arrow {
+    margin-left: auto;
+    font-size: 10px;
+    color: var(--text-dim);
+    transition: transform 0.15s ease;
+  }
+  .processing-row.open .proc-arrow {
+    transform: rotate(90deg);
+    color: var(--accent);
   }
   .strip {
     background: var(--bg-panel);
@@ -1712,12 +1767,6 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
-  }
-  .vstfoot {
-    flex: none;
-    display: flex;
-    padding: 4px 6px;
-    border-top: 1px solid var(--border);
   }
   .vsthead {
     flex: none;
@@ -2061,9 +2110,6 @@
     color: var(--text); background: var(--bg-raised);
   }
   .meterwrap .nometer { flex: 1; }
-  .add {
-    align-self: flex-start;
-  }
   .dim {
     color: var(--text-dim);
     font-size: 11px;

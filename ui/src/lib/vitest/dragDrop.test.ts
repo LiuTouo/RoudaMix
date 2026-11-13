@@ -92,9 +92,9 @@ describe("VST 拖曳落點", () => {
   });
   it("機架尾端空白可放到鏈尾", () => {
     drag(rows()[0], "dragstart");
-    drag(rack().querySelector<HTMLElement>(".vstfoot")!, "dragover", 280);
+    drag(rack(), "dragover", 280);
     expect(rows()[2].style.transform).toBe("translateY(-50px)");
-    drag(rack().querySelector<HTMLElement>(".vstfoot")!, "drop", 280);
+    drag(rack(), "drop", 280);
     expect(command).toHaveBeenCalledWith("move_plugin", { instanceId: 1, newIndex: 2 });
   });
   it("離開機架歸零位移；移過子元件不清除；取消時收尾", () => {

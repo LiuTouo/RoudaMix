@@ -81,7 +81,7 @@ body { background: var(--flat-0); }
   & .console-switches .rack-b.on { background: var(--rack-bg); color: var(--warn); border-color: var(--warn); }
   & button:disabled { opacity: .4; }
   & .lower { display: flex; flex-direction: row; justify-content: center; gap: 8px; min-height: 327px; }
-  & .vstside-in { border-left: 1px solid var(--divider); }
+  & .vstside-in { background: var(--flat-4); }
   & .vstside .vsthead { height: 18px; padding: 2px 0; background: transparent; border: 0; color: var(--text-dim); font: 11px var(--mono); letter-spacing: .04em; }
   & .vst { height: auto; min-height: 72px; flex: 1 1 auto; border: 0; background: transparent; }
   & .vstlist { padding: 0; gap: 0; background: transparent; }
@@ -107,9 +107,10 @@ body { background: var(--flat-0); }
   & .plug.placeholder .plugtitle { grid-column: 1; }
   & .plug.placeholder .monitor-badge { grid-column: 2; align-self: start; }
   & .plug.placeholder .plugactions { grid-column: 1 / -1; height: auto; }
-  & .vstfoot { border: 0; border-top: 1px solid var(--divider); background: transparent; padding: 2px 0; }
-  & .vstfoot .add { min-height: 24px; width: 100%; text-align: left; padding: 2px 0; font: 12px var(--mono); color: var(--text-dim); letter-spacing: .05em; }
   & .empty-slot { justify-content: flex-start; min-height: 28px; padding: 4px 0; border: 0; font-size: 11px; color: var(--text-dim); }
+  & .processing-row { background: var(--flat-2); border: 1px solid var(--divider); }
+  & .processing-row:hover { background: var(--flat-4); }
+  & .processing-row .proc-label { font-family: var(--mono); font-weight: 400; letter-spacing: .06em; }
   & .fader { flex: 0 0 auto; min-height: 327px; justify-content: center; gap: 6px; padding: 4px 0 2px; border-top: 1px solid var(--divider); }
   & .fctl { gap: 0; width: 13px; }
   & .slotwrap { width: 13px; }
