@@ -53,7 +53,11 @@ fn ensure_main_window(app: &mut tauri::App) -> tauri::Result<()> {
         .min_inner_size(900.0, 600.0)
         .maximized(true)
         .visible(false)
-        .disable_drag_drop_handler()
+        // 發布版 app.windows 被 release.py 清空,主視窗由此 builder 建立(带 portable data
+    // directory);必須顯式補回無框設定,否則原生標題列與自繪視窗鈕並排成兩排關閉鈕。
+    .decorations(false)
+    .shadow(true)
+    .disable_drag_drop_handler()
         .data_directory(data_dir)
         .build()?;
     Ok(())
