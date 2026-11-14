@@ -1411,7 +1411,7 @@
     else next.add(id);
     setVstOpen(next);
   }
-  // VST 全域展開／收合入口（頂欄按鈕；範圍同 Ctrl+V：僅有 plugin 的音軌）
+  // VST 全域展開／收合入口（僅快捷鍵；範圍：僅有 plugin 的音軌）
   const vstExpandableIds = $derived(tracks.filter((t) => t.plugins.length > 0).map((t) => t.trackId));
   const anyVstClosed = $derived(vstExpandableIds.some((id) => !vstOpenIds.has(id)));
   function toggleAllVst(): void {
@@ -2053,15 +2053,6 @@
       class="dim mono"
       data-tooltip="取樣率與緩衝大小；取樣率於驅動面板調整。"
       >{selDev.currentSampleRate} Hz · buf {bufSize ?? selDev.preferredBufferSize}</span
-    >
-  {/if}
-  {#if vstExpandableIds.length > 0}
-    <button
-      class="settings"
-      onclick={toggleAllVst}
-      aria-pressed={!anyVstClosed}
-      data-tooltip="展開／收合全部音軌的 VST 面板（僅有插件的音軌；同設定 → 快捷鍵的「VST 面板」組合，預設 Ctrl+V）。"
-      >{anyVstClosed ? "VST 展開全部" : "VST 收合全部"}</button
     >
   {/if}
   {#if latencyEnabled}
