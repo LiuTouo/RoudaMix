@@ -385,6 +385,8 @@ struct EditorHost::Impl {
     bool topmost = true;
     // 使用者釘選(跨程式永遠置頂)：覆寫「只在 RoudaMix 裡置頂」的動態邏輯
     bool pinned = false;
+    // 測試模式:視窗建而不顯、不搶前景(見 hide_windows_for_tests)
+    bool hidden_for_tests = false;
     // 跟隨平移基準：上次看到的 UI 主視窗左上角。delta 累加 = 中間事件掉了也
     // 會收斂；使用者拖過的編輯器位置以「相對 UI 左上角 offset」形式完整保留。
     LONG ui_left = kNoUiPos, ui_top = kNoUiPos;
@@ -816,8 +818,10 @@ struct EditorHost::Impl {
         // 或插件日後自行 resize 都不重排,使用者拖曳的位置為準)。
         if (fresh) place_at_default();
         set_title(id);
-        ShowWindow(wnd, SW_SHOW);
-        foreground_window(wnd);
+        if (!hidden_for_tests) {
+            ShowWindow(wnd, SW_SHOW);
+            foreground_window(wnd);
+        }
         apply_topmost(true);  // 使用者剛在 UI 點開 = RoudaMix 是前景;hook 之後會接手
         render_tabs();
         sync_strip_height();
@@ -881,6 +885,10 @@ void EditorHost::set_ui_scale(int percent) noexcept {
     InvalidateRect(impl_->tabs, nullptr, FALSE);
 }
 
+void EditorHost::hide_windows_for_tests() noexcept {
+    impl_->hidden_for_tests = true;
+}
+
 void EditorHost::update_topmost(HWND fg) noexcept {
     impl_->apply_topmost(impl_->foreground_is_ours(fg));
 }
@@ -927,7 +935,8 @@ bool EditorHost::open(std::uint32_t instance_id, std::string& err) {
         return false;
     }
     if (impl_->wnd != nullptr && impl_->active_id == instance_id) {
-        foreground_window(impl_->wnd);  // 冪等:已顯示 = 帶回前景
+        if (!impl_->hidden_for_tests)
+            foreground_window(impl_->wnd);  // 冪等:已顯示 = 帶回前景
         return true;
     }
     return impl_->activate(instance_id, err);

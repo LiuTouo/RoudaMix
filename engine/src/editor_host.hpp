@@ -40,6 +40,9 @@ public:
     void set_command_target(HWND post_to) noexcept;  // EditorHostCmd 投遞目標
     // 僅縮放自繪 caption/tabs/控制項(75–150%)，保留插件 view 的原生尺寸。
     void set_ui_scale(int percent) noexcept;
+    // 測試專用:視窗照常建立與幾何驗證,但不顯示、不搶前景 —— ctest 跑批
+    // (離線發布腳本)時編輯器視窗不再閃現/搶使用者焦點。僅 editor_host_scale_test 使用。
+    void hide_windows_for_tests() noexcept;
     // 舊版曾掛 UI 主視窗當跨進程 owner —— 會接合兩 process 的 input queue,
     // 關彈出視窗時 close 手勢可能誤落主視窗。已改為獨立視窗(見 editor_host.cpp
     // 檔頭);此命令保留接受、HWND 只用於前景判定與預設位置,不當 owner。

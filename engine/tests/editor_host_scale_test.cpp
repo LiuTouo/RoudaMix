@@ -79,6 +79,7 @@ void check_editor(const std::string& module, int mode, int initial_percent, HWND
     ok("open_editor", {{"instanceId", plugin}});
     const HWND host = FindWindowW(L"RmxVST3Editor", nullptr);
     CHECK(host != nullptr);
+    CHECK(!IsWindowVisible(host));  // 測試模式:視窗建而不顯(建置跑批不閃現)
     const HWND tabs = FindWindowExW(host, nullptr, L"RmxEditorTabs", nullptr);
     const HWND client = FindWindowExW(host, nullptr, L"RmxEditorClient", nullptr);
     const HWND child = FindWindowExW(client, nullptr, L"RmxEditorScaleFixture", nullptr);
@@ -242,6 +243,7 @@ int main(int argc, char** argv) {
     const HWND target = CreateWindowExW(0, wc.lpszClassName, L"", 0, 0, 0, 0, 0,
                                         HWND_MESSAGE, nullptr, wc.hInstance, nullptr);
     CHECK(target);
+    rmx::EditorHost::instance().hide_windows_for_tests();
     for (int mode : {1, 2, 3})
         for (int percent : {75, 100, 150}) check_editor(std::filesystem::absolute(argv[1]).string(), mode, percent, target);
     DestroyWindow(target);
