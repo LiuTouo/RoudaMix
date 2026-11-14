@@ -29,16 +29,29 @@ body { background: var(--flat-0); }
   background: var(--flat-0); color: var(--text);
   font-family: var(--font-ui); font-size: 12px;
   & * { border-radius: 0; }
-  & .bar { min-height: 32px; padding: 4px 12px; gap: 12px; background: var(--flat-0); border-bottom: 1px solid var(--border); font-size: 11px; }
+  /* 以 logo icon 為對齊基準：整列 line-height 1（不同字級文字盒中心一致），min-height 36 → 所有元素中心同在 18px 線 */
+  & .bar { min-height: 36px; padding: 4px 8px 4px 12px; gap: 12px; background: var(--flat-0); font-size: 11px; line-height: 1; align-items: center; }
+  /* 品牌熱區(沉浸標題列)：dim 常駐、hover 亮起；整列 = 拖曳熱區(data-tauri-drag-region) */
+  & .bar .brand { display: inline-flex; align-items: center; gap: 8px; color: var(--text-dim); user-select: none; line-height: 1; }
+  & .bar .brand:hover { color: var(--text); }
+  & .bar .brand-mark { display: block; width: 16px; height: 16px; }
+  & .bar .brand-name { font-weight: 600; font-size: 12px; letter-spacing: .6px; }
   & .bar .mono { font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
   /* 狀態燈是圓點(顏色語意 ok/err/),不受方角幾何限制 */
   & .bar .dot { border-radius: 50%; }
   & .bar .gear { width: 26px; height: 26px; padding: 4px; }
-  & .console-telemetry { display: inline-flex; gap: 16px; }
+  /* 自繪視窗控制(decorations:false)：幽靈鈕，負邊際吃掉 bar padding 貼齊右上角 */
+  & .bar .winctl { display: flex; align-self: stretch; margin: -4px -8px -4px 0; }
+  & .bar .winbtn { display: grid; place-items: center; width: 44px; color: var(--text-dim); }
+  & .bar .winbtn svg { width: 10px; height: 10px; }
+  & .bar .winbtn.close:enabled:hover { background: #c42b1c; color: #fff; }
+  & .console-telemetry { display: inline-flex; align-items: center; gap: 16px; }
   & .console-telemetry .dim { font-size: inherit; }
-  & main { padding: 16px; gap: 0; }
+  /* 井再拉高 + 留白對稱：上緣 0 —— 工作列內容上下各 ~5px(bar padding)，井頂貼列底，與視窗頂到 logo 的留白一致 */
+  & main { padding: 0 16px 16px; gap: 0; }
   & .board { display: grid; grid-template-columns: minmax(256px, 2fr) minmax(256px, 1fr); gap: 20px; padding: 0 0 4px; background: transparent; }
-  & .group { min-width: 0; gap: 0; padding: 0 12px 12px; border: 1px solid var(--well-edge); border-radius: 12px; background: var(--well); box-shadow: inset 0 3px 9px #000A, 0 1px 0 #FFFFFF0D; }
+  /* 凹槽井直角化 + 邊線改全域髒絲線(--border):與整體方角 hairline 語彙一致;保留 inset 下陷感 */
+  & .group { min-width: 0; gap: 0; padding: 0 12px 12px; border: 1px solid var(--border); background: var(--well); box-shadow: inset 0 3px 9px #000A, 0 1px 0 #FFFFFF0D; }
   & .colhead { min-height: 48px; flex: none; flex-wrap: wrap; padding: 8px 4px 6px; gap: 6px 8px; background: transparent; border: 0; }
   & .group-title { display: flex; align-items: center; gap: 8px; margin-right: auto; }
   & .group-title h2 { margin: 0; font-size: 14px; font-weight: 600; letter-spacing: .3px; }

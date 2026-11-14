@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<title>RoudaMix 標題列設計方案</title>
+<style>
+  /* 本機 Plex 字型(相對於 ui/design/ → ../public/fonts/) */
+  @font-face {
+    font-family: "IBM Plex Sans TC";
+    src: url("../public/fonts/IBMPlexSansTC-Regular.ttf") format("truetype");
+    font-weight: 400; font-display: swap;
+  }
+  @font-face {
+    font-family: "IBM Plex Sans TC";
+    src: url("../public/fonts/IBMPlexSansTC-SemiBold.ttf") format("truetype");
+    font-weight: 500 600; font-display: swap;
+  }
+  @font-face {
+    font-family: "IBM Plex Sans TC";
+    src: url("../public/fonts/IBMPlexSansTC-Bold.ttf") format("truetype");
+    font-weight: 700; font-display: swap;
+  }
+  /* RoudaMix tokens(DESIGN.md) */
+  :root {
+    --flat-0: #0D0F10; --flat-1: #121416; --flat-2: #181B1E; --flat-4: #202428;
+    --border: #292D31; --divider: #1E2225;
+    --text: #E2E5E8; --text-dim: #9CA5AE;
+    --accent: #6EA8FE; --ok: #55C2A3; --warn: #D9A441; --err: #DD5A5A;
+    --channel-surface: #22272C; --processing-surface: #191D21; --divider-strong: #3B444D;
+    --well: #090B0D; --well-edge: #080A0C;
+    --font-ui: "IBM Plex Sans TC", "Segoe UI", system-ui, sans-serif;
+    --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #060708; color: var(--text);
+    font-family: var(--font-ui); font-size: 13px;
+    padding: 40px 48px 80px;
+    display: flex; flex-direction: column; gap: 56px; align-items: center;
+  }
+  .page-head { max-width: 1080px; }
+  .page-head h1 { font-size: 20px; font-weight: 600; letter-spacing: .3px; }
+  .page-head p { color: var(--text-dim); margin-top: 6px; font-size: 13px; line-height: 1.6; }
+  .page-head code { font: 11px var(--mono); color: var(--accent); }
+
+  section.option { width: 1080px; max-width: 100%; }
+  .option-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 14px; }
+  .option-head .tag {
+    font: 700 12px var(--font-ui); letter-spacing: 1px; color: var(--accent);
+    border: 1px solid #2A3550; padding: 2px 8px; border-radius: 3px;
+  }
+  .option-head h2 { font-size: 16px; font-weight: 600; }
+  .option-head .sub { color: var(--text-dim); font-size: 12px; }
+  .option-notes {
+    margin-top: 12px; padding: 10px 14px; border-left: 2px solid var(--divider-strong);
+    color: var(--text-dim); font-size: 12px; line-height: 1.7; background: #0B0D0E;
+  }
+  .option-notes b { color: var(--text); font-weight: 600; }
+
+  /* ===== 視窗外框:模擬桌面上的 app 視窗 ===== */
+  .win {
+    width: 100%; height: 560px; border-radius: 10px; overflow: hidden;
+    border: 1px solid #1F2428; box-shadow: 0 24px 70px #000c, 0 2px 8px #0008;
+    display: flex; flex-direction: column; background: var(--flat-0);
+  }
+
+  /* ===== 共用:視窗控制鈕(Windows 式) ===== */
+  .winctl { display: flex; align-items: stretch; }
+  .winctl button {
+    width: 46px; height: 100%; border: 0; background: transparent; color: var(--text-dim);
+    display: grid; place-items: center; cursor: default;
+  }
+  .winctl button svg { width: 10px; height: 10px; }
+  .winctl button:hover { background: var(--flat-4); color: var(--text); }
+  .winctl .close:hover { background: #C42B1C; color: #fff; }
+
+  /* ===== 共用:主畫面 board(四案同一份,只換 chrome) ===== */
+  .console-main { flex: 1; min-height: 0; padding: 16px; display: flex; flex-direction: column; gap: 0; }
+  .board { flex: 1; min-height: 0; display: grid; grid-template-columns: 2fr 1fr; gap: 20px; }
+  .group { border: 1px solid var(--well-edge); border-radius: 12px; background: var(--well);
+    box-shadow: inset 0 3px 9px #000A, 0 1px 0 #FFFFFF0D; padding: 0 12px 12px;
+    display: flex; flex-direction: column; min-height: 0; }
+  .colhead { min-height: 48px; display: flex; align-items: center; flex-wrap: wrap;
+    gap: 6px 8px; padding: 8px 4px 6px; }
+  .group-title { display: flex; align-items: center; gap: 8px; margin-right: auto; }
+  .group-title h3 { font-size: 14px; font-weight: 600; letter-spacing: .3px; }
+  .track-count { color: var(--text-dim); font: 10px var(--mono); border: 1px solid var(--border); padding: 1px 5px; }
+  .mini { font: 11px var(--font-ui); color: var(--text-dim); border: 1px solid var(--border);
+    background: transparent; border-radius: 3px; padding: 3px 8px; }
+  .mini:hover { color: var(--text); border-color: var(--divider-strong); }
+  .lanes { display: flex; gap: 16px; overflow: hidden; }
+  .strip { flex: 0 0 176px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--channel-surface); padding: 6px 10px 8px; display: flex; flex-direction: column; gap: 6px; }
+  .strip .name { font-size: 12px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
+  .strip .kind { font: 10px var(--mono); color: var(--text-dim); }
+  .strip .src { font: 11px var(--mono); color: var(--text-dim); border-bottom: 1px solid var(--divider);
+    padding: 3px 0; white-space: nowrap; overflow: hidden; }
+  .strip .src.hl { color: var(--text); border-bottom-color: transparent; }
+  .strip .fader { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+  .strip .fader .rail { flex: 1; height: 3px; background: var(--well); border-radius: 2px; position: relative; }
+  .strip .fader .rail::before { content: ""; position: absolute; left: 55%; top: -4px; width: 6px; height: 11px;
+    background: linear-gradient(#98A2AC, #6E7883); border: 1px solid #B9C2CB; border-radius: 2px; }
+  .strip .fader .db { font: 10px var(--mono); color: var(--text-dim); }
+  .strip .meter { display: flex; gap: 3px; height: 44px; align-items: flex-end; margin-top: 4px; }
+  .strip .meter i { width: 8px; border-radius: 1px;
+    background: linear-gradient(to top, var(--ok) 0 62%, var(--warn) 62% 84%, var(--err) 84%); }
+  .strip.fx .meter i { opacity: .25; }
+  .strip.out .src { color: var(--text-dim); }
+
+  /* ===== 共用:狀態/遙測元素 ===== */
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok);
+    box-shadow: 0 0 5px #55C2A399; display: inline-block; }
+  .telemetry { font: 11px var(--mono); font-variant-numeric: tabular-nums;
+    display: inline-flex; gap: 14px; color: var(--text); }
+  .telemetry .dim { color: var(--text-dim); }
+  .dirty { font-size: 11px; color: var(--warn); }
+
+  /* =========================================================
+     方案 A · 無縫頂欄
+     ========================================================= */
+  .a-titlebar {
+    height: 40px; flex: none; display: flex; align-items: center; gap: 12px;
+    padding: 0 0 0 14px; background: var(--flat-0);
+    border-bottom: 1px solid var(--border);
+  }
+  .a-titlebar .wordmark { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 12.5px; letter-spacing: .4px; }
+  .a-titlebar .wordmark .mark {
+    width: 16px; height: 16px; border-radius: 4px; flex: none;
+    background: conic-gradient(from 220deg, #6EA8FE, #55C2A3, #6EA8FE);
+    box-shadow: inset 0 0 0 1px #FFFFFF22;
+  }
+  .a-status { flex: 1; display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
+  .a-status .gear {
+    width: 26px; height: 26px; display: grid; place-items: center; border: 0;
+    background: transparent; color: var(--text-dim); border-radius: 3px;
+  }
+  .a-status .gear:hover { background: var(--flat-4); color: var(--text); }
+
+  /* =========================================================
+     方案 B · 側欄導軌
+     ========================================================= */
+  .b-body { flex: 1; min-height: 0; display: flex; }
+  .b-rail {
+    width: 56px; flex: none; background: var(--flat-0);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; align-items: center; padding: 0 0 10px;
+  }
+  .b-rail .logo {
+    width: 100%; height: 40px; display: grid; place-items: center;
+  }
+  .b-rail .logo .mark {
+    width: 18px; height: 18px; border-radius: 5px;
+    background: conic-gradient(from 220deg, #6EA8FE, #55C2A3, #6EA8FE);
+    box-shadow: inset 0 0 0 1px #FFFFFF22;
+  }
+  .b-rail nav { display: flex; flex-direction: column; gap: 2px; margin-top: 10px; width: 100%; padding: 0 8px; }
+  .b-rail nav button {
+    height: 34px; border: 0; background: transparent; border-radius: 6px;
+    color: var(--text-dim); display: grid; place-items: center;
+  }
+  .b-rail nav button svg { width: 16px; height: 16px; }
+  .b-rail nav button:hover { background: var(--flat-2); color: var(--text); }
+  .b-rail nav button.active { background: var(--flat-4); color: var(--text); box-shadow: inset 2px 0 0 var(--accent); }
+  .b-rail .spacer { flex: 1; }
+  .b-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .b-titlebar {
+    height: 40px; flex: none; display: flex; align-items: center; gap: 12px;
+    padding-left: 14px; background: var(--flat-0); border-bottom: 1px solid var(--border);
+  }
+  .b-titlebar .viewname { font-size: 12.5px; font-weight: 600; letter-spacing: .3px; }
+
+  /* =========================================================
+     方案 C · 分層工具列
+     ========================================================= */
+  .c-menubar {
+    height: 34px; flex: none; display: flex; align-items: stretch; gap: 2px;
+    background: var(--flat-1); border-bottom: 1px solid var(--border); padding-left: 10px;
+  }
+  .c-menubar .brand { display: flex; align-items: center; gap: 8px; margin-right: 10px;
+    font-weight: 600; font-size: 12px; letter-spacing: .4px; }
+  .c-menubar .brand .mark { width: 14px; height: 14px; border-radius: 4px;
+    background: conic-gradient(from 220deg, #6EA8FE, #55C2A3, #6EA8FE); }
+  .c-menubar .menu { border: 0; background: transparent; color: var(--text-dim);
+    font: 12px var(--font-ui); padding: 0 10px; border-radius: 0; }
+  .c-menubar .menu:hover { background: var(--flat-4); color: var(--text); }
+  .c-menubar .flex { flex: 1; }
+  .c-status {
+    height: 32px; flex: none; display: flex; align-items: center; gap: 12px; padding: 0 14px 0 14px;
+    background: var(--flat-0); border-bottom: 1px solid var(--divider); font-size: 11px;
+  }
+
+  /* =========================================================
+     方案 D · 沉浸內容
+     ========================================================= */
+  .d-stage { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .d-overlay {
+    position: absolute; top: 0; right: 0; height: 40px; z-index: 5;
+    display: flex; align-items: stretch;
+  }
+  .d-overlay .winctl button { width: 42px; }
+  .d-capsule {
+    position: absolute; top: 8px; left: 16px; z-index: 5;
+    display: inline-flex; align-items: center; gap: 10px;
+    background: #14161ACC; backdrop-filter: blur(8px);
+    border: 1px solid var(--border); border-radius: 999px;
+    padding: 4px 6px 4px 12px; font: 10.5px var(--mono); color: var(--text-dim);
+  }
+  .d-capsule .t { color: var(--text); }
+  .d-capsule .dirty { font-family: var(--font-ui); }
+  .d-strip-drag { height: 40px; flex: none; /* 拖曳熱區:透明,hover 提示 */ }
+</style>
+</head>
+<body>
+
+<div class="page-head">
+  <h1>標題列設計方案 · 現代 SaaS 桌面風格</h1>
+  <p>
+    四款皆以 <code>decorations:false</code> 移除原生標題列,改由介面自繪;拖曳區用
+    <code>data-tauri-drag-region</code>,視窗鈕走 <code>getCurrentWindow()</code> API。
+    主畫面(軌道、群組井、遙測)四款完全相同,只差在 chrome。
+  </p>
+</div>
+
+<!-- ================= 方案 A ================= -->
+<section class="option">
+  <div class="option-head">
+    <span class="tag">A</span>
+    <h2>無縫頂欄 Unified Bar</h2>
+    <span class="sub">— Linear / Arc 式;改動最小</span>
+  </div>
+  <div class="win">
+    <header class="a-titlebar" data-tauri-drag-region>
+      <span class="wordmark"><span class="mark"></span>RoudaMix</span>
+      <span class="dirty">● 未儲存</span>
+      <div class="a-status">
+        <span style="display:flex;align-items:center;gap:6px"><span class="dot"></span>已連線</span>
+        <span class="telemetry"><span>48.0 kHz</span><span><span class="dim">BUF</span> 128</span><span><span class="dim">XRUN</span> 0</span></span>
+        <button class="gear" aria-label="設定">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.6"><circle cx="12" cy="12" r="5"/><path d="M12 2.6v3.4M12 18v3.4M2.6 12h3.4M18 12h3.4M5.35 5.35l2.41 2.41M16.24 16.24l2.41 2.41M18.65 5.35l-2.41 2.41M7.76 16.24l-2.41 2.41"/></svg>
+        </button>
+        <div class="winctl">
+          <button aria-label="最小化"><svg viewBox="0 0 10 10"><path d="M0 5h10" stroke="currentColor"/></svg></button>
+          <button aria-label="最大化"><svg viewBox="0 0 10 10"><rect x=".5" y=".5" width="9" height="9" fill="none" stroke="currentColor"/></svg></button>
+          <button class="close" aria-label="關閉"><svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0L0 10" stroke="currentColor"/></svg></button>
+        </div>
+      </div>
+    </header>
+    <div class="console-main"><div class="board">
+      <!-- 主畫面 mock(與其他方案共用結構) -->
+      <div class="group">
+        <div class="colhead">
+          <div class="group-title"><h3>Inputs</h3><span class="track-count">3</span></div>
+          <button class="mini">＋ Audio</button><button class="mini">＋ App</button><button class="mini">＋ FX</button>
+        </div>
+        <div class="lanes">
+          <div class="strip"><div class="name">麥克風 <span class="kind">audio</span></div><div class="src hl">asio · Main Mic</div>
+            <div class="fader"><div class="rail"></div><span class="db">−3.2</span></div>
+            <div class="meter"><i style="height:38%"></i><i style="height:62%"></i></div></div>
+          <div class="strip"><div class="name">瀏覽器 <span class="kind">app</span></div><div class="src hl">wasapi · Chrome</div>
+            <div class="fader"><div class="rail"></div><span class="db">−8.0</span></div>
+            <div class="meter"><i style="height:20%"></i><i style="height:33%"></i></div></div>
+          <div class="strip fx"><div class="name">Reverb <span class="kind">fx</span></div><div class="src">—</div>
+            <div class="fader"><div class="rail"></div><span class="db">−∞</span></div>
+            <div class="meter"><i style="height:10%"></i><i style="height:14%"></i></div></div>
+        </div>
+      </div>
+      <div class="group">
+        <div class="colhead">
+          <div class="group-title"><h3>Outputs</h3><span class="track-count">1</span></div>
+        </div>
+        <div class="lanes">
+          <div class="strip out"><div class="name">系統輸出 <span class="kind">stream</span></div><div class="src">asio · HD Audio</div>
+            <div class="fader"><div class="rail"></div><span class="db">−4.5</span></div>
+            <div class="meter"><i style="height:44%"></i><i style="height:70%"></i></div></div>
+        </div>
+      </div>
+    </div></div>
+  </div>
+  <div class="option-notes">
+    <b>特徵:</b>頂欄即視窗列 —— 單一背景材質(--flat-0),唯一分隔線是底部 1px hairline;wordmark、狀態、遙測、視窗控制全部收進同一列。<br>
+    <b>優點:</b>與現有 .bar 結構最接近,改動最小、零空間損失,「網頁容器感」最低。<br>
+    <b>代價:</b>一列要塞的資訊較多,窄視窗時遙測可能需要收合。
+  </div>
+</section>
+
+<!-- ================= 方案 B ================= -->
+<section class="option">
+  <div class="option-head">
+    <span class="tag">B</span>
+    <h2>側欄導軌 Icon Rail</h2>
+    <span class="sub">— Slack / Notion 式;導航入駐 chrome</span>
+  </div>
+  <div class="win">
+    <div class="b-body">
+      <aside class="b-rail" data-tauri-drag-region>
+        <div class="logo"><span class="mark"></span></div>
+        <nav>
+          <button class="active" aria-label="軌道" data-tooltip="軌道">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="3" width="4" height="18" rx="1"/><rect x="10" y="3" width="4" height="18" rx="1"/><rect x="16" y="3" width="4" height="18" rx="1"/></svg>
+          </button>
+          <button aria-label="插件">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 3v4M15 3v4M7 7h10v6a5 5 0 0 1-10 0V7zM12 18v3"/></svg>
+          </button>
+          <button aria-label="延遲">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l2-6 4 12 2-6h6"/></svg>
+          </button>
+        </nav>
+        <div class="spacer"></div>
+        <nav>
+          <button aria-label="設定">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="12" cy="12" r="5"/><path d="M12 2.6v3.4M12 18v3.4M2.6 12h3.4M18 12h3.4M5.35 5.35l2.41 2.41M16.24 16.24l2.41 2.41M18.65 5.35l-2.41 2.41M7.76 16.24l-2.41 2.41"/></svg>
+          </button>
+        </nav>
+      </aside>
+      <div class="b-main">
+        <header class="b-titlebar" data-tauri-drag-region>
+          <span class="viewname">混音台</span>
+          <span class="dirty">● 未儲存</span>
+          <div class="a-status">
+            <span style="display:flex;align-items:center;gap:6px"><span class="dot"></span>已連線</span>
+            <span class="telemetry"><span>48.0 kHz</span><span><span class="dim">BUF</span> 128</span><span><span class="dim">XRUN</span> 0</span></span>
+            <div class="winctl">
+              <button aria-label="最小化"><svg viewBox="0 0 10 10"><path d="M0 5h10" stroke="currentColor"/></svg></button>
+              <button aria-label="最大化"><svg viewBox="0 0 10 10"><rect x=".5" y=".5" width="9" height="9" fill="none" stroke="currentColor"/></svg></button>
+              <button class="close" aria-label="關閉"><svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0L0 10" stroke="currentColor"/></svg></button>
+            </div>
+          </div>
+        </header>
+        <div class="console-main"><div class="board">
+          <div class="group">
+            <div class="colhead">
+              <div class="group-title"><h3>Inputs</h3><span class="track-count">3</span></div>
+              <button class="mini">＋ Audio</button><button class="mini">＋ App</button><button class="mini">＋ FX</button>
+            </div>
+            <div class="lanes">
+              <div class="strip"><div class="name">麥克風 <span class="kind">audio</span></div><div class="src hl">asio · Main Mic</div>
+                <div class="fader"><div class="rail"></div><span class="db">−3.2</span></div>
+                <div class="meter"><i style="height:38%"></i><i style="height:62%"></i></div></div>
+              <div class="strip"><div class="name">瀏覽器 <span class="kind">app</span></div><div class="src hl">wasapi · Chrome</div>
+                <div class="fader"><div class="rail"></div><span class="db">−8.0</span></div>
+                <div class="meter"><i style="height:20%"></i><i style="height:33%"></i></div></div>
+              <div class="strip fx"><div class="name">Reverb <span class="kind">fx</span></div><div class="src">—</div>
+                <div class="fader"><div class="rail"></div><span class="db">−∞</span></div>
+                <div class="meter"><i style="height:10%"></i><i style="height:14%"></i></div></div>
+            </div>
+          </div>
+          <div class="group">
+            <div class="colhead">
+              <div class="group-title"><h3>Outputs</h3><span class="track-count">1</span></div>
+            </div>
+            <div class="lanes">
+              <div class="strip out"><div class="name">系統輸出 <span class="kind">stream</span></div><div class="src">asio · HD Audio</div>
+                <div class="fader"><div class="rail"></div><span class="db">−4.5</span></div>
+                <div class="meter"><i style="height:44%"></i><i style="height:70%"></i></div></div>
+            </div>
+          </div>
+        </div></div>
+      </div>
+    </div>
+  </div>
+  <div class="option-notes">
+    <b>特徵:</b>56px 垂直圖示導軌(logo 置頂、導航、設定置底),右側頂欄只跨內容區;導軌與內容以 1px hairline 分隔,同材質無陰影。<br>
+    <b>優點:</b>最貼近「現代 SaaS 桌面」心智模型;未來擴充(插件總管、場景庫)有地方放;遙測不再與品牌搶同一列。<br>
+    <b>代價:</b>水平軌帶空間 −56px;純 console 情境下圖示數量偏少,導軌初期略空。
+  </div>
+</section>
+
+<!-- ================= 方案 C ================= -->
+<section class="option">
+  <div class="option-head">
+    <span class="tag">C</span>
+    <h2>分層工具列 Menu + Status</h2>
+    <span class="sub">— Figma / DAW 式;桌面程式感最強</span>
+  </div>
+  <div class="win">
+    <header class="c-menubar" data-tauri-drag-region>
+      <span class="brand"><span class="mark"></span>RoudaMix</span>
+      <button class="menu">檔案</button><button class="menu">場景</button><button class="menu">裝置</button><button class="menu">檢視</button><button class="menu">說明</button>
+      <span class="flex"></span>
+      <div class="winctl">
+        <button aria-label="最小化"><svg viewBox="0 0 10 10"><path d="M0 5h10" stroke="currentColor"/></svg></button>
+        <button aria-label="最大化"><svg viewBox="0 0 10 10"><rect x=".5" y=".5" width="9" height="9" fill="none" stroke="currentColor"/></svg></button>
+        <button class="close" aria-label="關閉"><svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0L0 10" stroke="currentColor"/></svg></button>
+      </div>
+    </header>
+    <div class="c-status">
+      <span class="dirty">● 未儲存</span>
+      <span style="flex:1"></span>
+      <span style="display:flex;align-items:center;gap:6px"><span class="dot"></span>已連線</span>
+      <span class="telemetry"><span>LOAD 8%</span><span>48.0 kHz</span><span><span class="dim">BUF</span> 128</span><span><span class="dim">IN</span> 2.7 ms</span><span><span class="dim">OUT</span> 5.3 ms</span><span><span class="dim">XRUN</span> 0</span></span>
+      <button class="mini">PDC M 1.2 / S 0.0 ms</button>
+    </div>
+    <div class="console-main"><div class="board">
+      <div class="group">
+        <div class="colhead">
+          <div class="group-title"><h3>Inputs</h3><span class="track-count">3</span></div>
+          <button class="mini">＋ Audio</button><button class="mini">＋ App</button><button class="mini">＋ FX</button>
+        </div>
+        <div class="lanes">
+          <div class="strip"><div class="name">麥克風 <span class="kind">audio</span></div><div class="src hl">asio · Main Mic</div>
+            <div class="fader"><div class="rail"></div><span class="db">−3.2</span></div>
+            <div class="meter"><i style="height:38%"></i><i style="height:62%"></i></div></div>
+          <div class="strip"><div class="name">瀏覽器 <span class="kind">app</span></div><div class="src hl">wasapi · Chrome</div>
+            <div class="fader"><div class="rail"></div><span class="db">−8.0</span></div>
+            <div class="meter"><i style="height:20%"></i><i style="height:33%"></i></div></div>
+          <div class="strip fx"><div class="name">Reverb <span class="kind">fx</span></div><div class="src">—</div>
+            <div class="fader"><div class="rail"></div><span class="db">−∞</span></div>
+            <div class="meter"><i style="height:10%"></i><i style="height:14%"></i></div></div>
+        </div>
+      </div>
+      <div class="group">
+        <div class="colhead">
+          <div class="group-title"><h3>Outputs</h3><span class="track-count">1</span></div>
+        </div>
+        <div class="lanes">
+          <div class="strip out"><div class="name">系統輸出 <span class="kind">stream</span></div><div class="src">asio · HD Audio</div>
+            <div class="fader"><div class="rail"></div><span class="db">−4.5</span></div>
+            <div class="meter"><i style="height:44%"></i><i style="height:70%"></i></div></div>
+        </div>
+      </div>
+    </div></div>
+  </div>
+  <div class="option-notes">
+    <b>特徵:</b>選單列(暗一階 --flat-1,「工具層」)+ 既有狀態列雙層結構;視窗控制嵌在選單列右端。分隔線兩條,層次由材質與 hairline 共同定義。<br>
+    <b>優點:</b>完整選單 = 桌面程式慣例,快速鍵可見、功能可探索;狀態列保留現有全部遙測。<br>
+    <b>代價:</b>垂直空間 +34px;「選單列」對年輕 SaaS 用戶略顯傳統。
+  </div>
+</section>
+
+<!-- ================= 方案 D ================= -->
+<section class="option">
+  <div class="option-head">
+    <span class="tag">D</span>
+    <h2>沉浸內容 Content-first</h2>
+    <span class="sub">— Spotify / 遊戲台式;最大工作區</span>
+  </div>
+  <div class="win">
+    <div class="d-stage">
+      <div class="d-strip-drag" data-tauri-drag-region></div>
+      <div class="d-capsule">
+        <span style="display:flex;align-items:center;gap:6px"><span class="dot"></span>已連線</span>
+        <span class="t">48.0 kHz</span><span><span class="dim">BUF</span> 128</span><span><span class="dim">XRUN</span> 0</span>
+        <span class="dirty">● 未儲存</span>
+      </div>
+      <div class="d-overlay">
+        <div class="winctl">
+          <button aria-label="最小化"><svg viewBox="0 0 10 10"><path d="M0 5h10" stroke="currentColor"/></svg></button>
+          <button aria-label="最大化"><svg viewBox="0 0 10 10"><rect x=".5" y=".5" width="9" height="9" fill="none" stroke="currentColor"/></svg></button>
+          <button class="close" aria-label="關閉"><svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0L0 10" stroke="currentColor"/></svg></button>
+        </div>
+      </div>
+      <div class="console-main"><div class="board">
+        <div class="group">
+          <div class="colhead">
+            <div class="group-title"><h3>Inputs</h3><span class="track-count">3</span></div>
+            <button class="mini">＋ Audio</button><button class="mini">＋ App</button><button class="mini">＋ FX</button>
+          </div>
+          <div class="lanes">
+            <div class="strip"><div class="name">麥克風 <span class="kind">audio</span></div><div class="src hl">asio · Main Mic</div>
+              <div class="fader"><div class="rail"></div><span class="db">−3.2</span></div>
+              <div class="meter"><i style="height:38%"></i><i style="height:62%"></i></div></div>
+            <div class="strip"><div class="name">瀏覽器 <span class="kind">app</span></div><div class="src hl">wasapi · Chrome</div>
+              <div class="fader"><div class="rail"></div><span class="db">−8.0</span></div>
+              <div class="meter"><i style="height:20%"></i><i style="height:33%"></i></div></div>
+            <div class="strip fx"><div class="name">Reverb <span class="kind">fx</span></div><div class="src">—</div>
+              <div class="fader"><div class="rail"></div><span class="db">−∞</span></div>
+              <div class="meter"><i style="height:10%"></i><i style="height:14%"></i></div></div>
+          </div>
+        </div>
+        <div class="group">
+          <div class="colhead">
+            <div class="group-title"><h3>Outputs</h3><span class="track-count">1</span></div>
+          </div>
+          <div class="lanes">
+            <div class="strip out"><div class="name">系統輸出 <span class="kind">stream</span></div><div class="src">asio · HD Audio</div>
+              <div class="fader"><div class="rail"></div><span class="db">−4.5</span></div>
+              <div class="meter"><i style="height:44%"></i><i style="height:70%"></i></div></div>
+          </div>
+        </div>
+      </div></div>
+    </div>
+  </div>
+  <div class="option-notes">
+    <b>特徵:</b>沒有可見標題列 —— 視窗控制是右上幽靈鈕(hover 才顯底色),遙測收成左上半透明膠囊(backdrop blur),拖曳 = 整個頂緣透明熱區。<br>
+    <b>優點:</b>內容面積最大、視覺最乾淨;與現有「膠囊通知」語彙天然一致。<br>
+    <b>代價:</b>品牌存在感最低;設定入口需要另尋位置(可收進膠囊列或現有 gear 保留在 board 內)。
+  </div>
+</section>
+
+</body>
+</html>

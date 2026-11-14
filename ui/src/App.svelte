@@ -2028,20 +2028,25 @@
     </div>
   </div>
 {/if}
-<header class="bar">
+<header class="bar" data-tauri-drag-region>
+  <!-- 品牌熱區(手法1):mark+wordmark 平時 dim、hover 亮起;整列 = 拖曳熱區 -->
+  <span class="brand" data-tauri-drag-region>
+    <img class="brand-mark" src="/favicon.png" alt="" width="16" height="16" draggable="false" /><span class="brand-name">RoudaMix</span>
+  </span>
   {#if dirty}
-    <span class="dim" data-tooltip="未儲存的變更">● 未儲存</span>
+    <span class="dim" data-tooltip="未儲存的變更" data-tauri-drag-region>● 未儲存</span>
   {/if}
-  <span style="flex:1"></span>
+  <span style="flex:1" data-tauri-drag-region></span>
   {#if running}
     <!-- P1-J:callback 負載 %(RT TSC 量測;持續 >100% = 過載警示走通知中心) -->
     <span
       class="mono"
       class:warn={overloadOn}
       data-tooltip="Callback 負載；持續 >100% 會爆音"
+      data-tauri-drag-region
       >LOAD {Math.round((meters?.callbackLoad ?? 0) * 100)}%</span
     >
-      <span class="console-telemetry mono">
+      <span class="console-telemetry mono" data-tauri-drag-region>
         <span>{(status!.sampleRate / 1000).toFixed(1)} kHz</span>
         <span><span class="dim">BUF</span> {status!.bufferSize}</span>
         <span><span class="dim">IN</span> {samplesToMs(status!.inputLatency, status!.sampleRate)} ms</span>
@@ -2052,6 +2057,7 @@
     <span
       class="dim mono"
       data-tooltip="取樣率／Buffer；取樣率於驅動面板調整"
+      data-tauri-drag-region
       >{selDev.currentSampleRate} Hz · buf {bufSize ?? selDev.preferredBufferSize}</span
     >
   {/if}
@@ -2069,12 +2075,13 @@
     <span
       class="warn mono"
       data-tooltip="Plugin 失敗累計；自動 bypass"
+      data-tauri-drag-region
       >plugin fail {status.pluginFails}</span
     >
   {/if}
   <!-- P1-L:連線細分狀態(spawning/connected/spawn_failed/version mismatch…)+ retry -->
   <span class="dot" class:ok={cv.tone === "ok"} class:err={cv.tone === "err"} data-tooltip={connTip}></span>
-  <span data-tooltip={connTip}>{cv.label}</span>
+  <span data-tooltip={connTip} data-tauri-drag-region>{cv.label}</span>
   {#if cv.phase === "spawn_failed" || cv.phase === "version_mismatch" || cv.phase === "disconnected"}
     <button class="settings" onclick={() => void respawnEngine()}>重試連線</button>
   {/if}
@@ -2111,6 +2118,30 @@
       />
     </svg>
   </button>
+  <!-- 自繪視窗控制(decorations:false):close 走 onCloseRequested 攔截流程 -->
+  <div class="winctl">
+    <button
+      class="winbtn"
+      aria-label="最小化視窗"
+      onclick={() => void getCurrentWindow().minimize().catch(() => {})}
+    >
+      <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M0 5h10" stroke="currentColor" /></svg>
+    </button>
+    <button
+      class="winbtn"
+      aria-label="最大化或還原視窗"
+      onclick={() => void getCurrentWindow().toggleMaximize().catch(() => {})}
+    >
+      <svg viewBox="0 0 10 10" aria-hidden="true"><rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor" /></svg>
+    </button>
+    <button
+      class="winbtn close"
+      aria-label="關閉視窗"
+      onclick={() => void getCurrentWindow().close().catch(() => {})}
+    >
+      <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M0 0l10 10M10 0L0 10" stroke="currentColor" /></svg>
+    </button>
+  </div>
 </header>
 
 <!-- P1-O→膠囊:iPhone 式頂端滑入通知;警示在前、通知在後,點擊本體執行動作 -->
@@ -2848,7 +2879,6 @@
     gap: 14px;
     padding: 8px 14px;
     background: var(--bg-panel);
-    border-bottom: 1px solid var(--border);
   }
   .settings {
     padding: 2px 8px;

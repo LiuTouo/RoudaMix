@@ -19,7 +19,9 @@
         "minHeight": 600,
         "maximized": true,
         "visible": false,
-        "dragDropEnabled": false
+        "dragDropEnabled": false,
+        "decorations": false,
+        "shadow": true
       }
     ],
     "security": {

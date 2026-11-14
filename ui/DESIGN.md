@@ -41,8 +41,8 @@ typography:
     fontFeature: "tabular-nums"
 rounded:
   control: "3px"
-  strip: "8px"
-  well: "12px"
+  strip: "0px"
+  well: "0px"
 spacing:
   xs: "4px"
   sm: "6px"
@@ -142,7 +142,7 @@ components:
 
 ## Layout
 
-單一工作區、無路由:頂部 32px 工作列(狀態燈 + telemetry 讀數),下方 main 16px 內距,主體是 Inputs/Outputs 兩欄 board grid(minmax(256px,2fr) / minmax(256px,1fr),gap 20px),每欄是一個 12px 圓角凹槽井(well),內容垂直排列軌道。每條軌道是 230px 寬的固定卡(strip,8px 圓角),以 16px lane pitch 水平虛擬化排列——間距是拖曳命中測試的契約,不可改。軌道卡下半固定為「左推桿/錶 + 右全高 VST 機架」;機架高度可拖曳並存於 localStorage。回應式僅一檔:≤1000px 時工作列換行。視窗最小高 640px。
+單一工作區、無路由:頂部 36px 無框工作列(品牌熱區 + 狀態燈 + telemetry 讀數 + 自繪視窗鈕),下方 main 上緣 0px（工作列上下留白對稱）、其餘 16px 內距,主體是 Inputs/Outputs 兩欄 board grid(minmax(256px,2fr) / minmax(256px,1fr),gap 20px),每欄是一個直角凹槽井(well),內容垂直排列軌道。每條軌道是 230px 寬的固定卡(strip,直角),以 16px lane pitch 水平虛擬化排列——間距是拖曳命中測試的契約,不可改。軌道卡下半固定為「左推桿/錶 + 右全高 VST 機架」;機架高度可拖曳並存於 localStorage。回應式僅一檔:≤1000px 時工作列換行。視窗最小高 640px。
 
 密度契約:列高 24–28px、工作列 32px、群組頭 48px;間距單位 4/6/8/12/16/20。
 
@@ -187,7 +187,7 @@ components:
 Canvas 繪製,雙柱(L/R):正常 #40C985、警告 #D9A441、剪波 #DD5A5A(剪波保持 hold,直到下一次量測清除)、刻度 #8A93A3、錶底 #181B1E、柱間 6% 白分格。屬於狀態燈系統:顏色永不另作裝飾用途。
 
 ### 軌道卡 Strip
-230px 固定寬、8px 圓角、raised 底、1px hairline。頭部 32px:遮罩著色的軌道圖示(自訂色 + 兩層低透明同色光暈)、刪除鈕;底部整條識別色帶(colorbar)承載軌名——色帶以 inline matteColor 填滿,名稱直接疊其上,hover 時加 15% 黑霧。拖曳中原卡 0.22 透明 + accent 虛線框;其他卡以 transform 滑動預覽落點(160ms,僅拖曳中啟用 transition)。
+230px 固定寬、直角、raised 底、1px hairline。頭部 32px:遮罩著色的軌道圖示(自訂色 + 兩層低透明同色光暈)、刪除鈕;底部整條識別色帶(colorbar)承載軌名——色帶以 inline matteColor 填滿,名稱直接疊其上,hover 時加 15% 黑霧。拖曳中原卡 0.22 透明 + accent 虛線框;其他卡以 transform 滑動預覽落點(160ms,僅拖曳中啟用 transition)。
 
 ### 浮層(對話框 / 抽屜 / Popover / 右鍵選單 / Capsule)
 統一 console-surface 底 + 1px hairline + 3px 圓角 + **無投影**;內部再以 raised 表 hover、以 hairline 分段。進場 140–180ms 淡入微上浮(@starting-style;不支援時瞬切退化),離場一律 120ms 加速退場。右鍵選單本體走 Svelte 過場,外殼透明。

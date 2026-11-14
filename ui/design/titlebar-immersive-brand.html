@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<title>RoudaMix 標題列 · 沉浸 × 品牌感</title>
+<style>
+  @font-face {
+    font-family: "IBM Plex Sans TC";
+    src: url("../public/fonts/IBMPlexSansTC-Regular.ttf") format("truetype");
+    font-weight: 400; font-display: swap;
+  }
+  @font-face {
+    font-family: "IBM Plex Sans TC";
+    src: url("../public/fonts/IBMPlexSansTC-SemiBold.ttf") format("truetype");
+    font-weight: 500 600; font-display: swap;
+  }
+  @font-face {
+    font-family: "IBM Plex Sans TC";
+    src: url("../public/fonts/IBMPlexSansTC-Bold.ttf") format("truetype");
+    font-weight: 700; font-display: swap;
+  }
+  :root {
+    --flat-0: #0D0F10; --flat-1: #121416; --flat-2: #181B1E; --flat-4: #202428;
+    --border: #292D31; --divider: #1E2225;
+    --text: #E2E5E8; --text-dim: #9CA5AE;
+    --accent: #6EA8FE; --ok: #55C2A3; --warn: #D9A441; --err: #DD5A5A;
+    --channel-surface: #22272C; --divider-strong: #3B444D;
+    --well: #090B0D; --well-edge: #080A0C;
+    --font-ui: "IBM Plex Sans TC", "Segoe UI", system-ui, sans-serif;
+    --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #060708; color: var(--text);
+    font-family: var(--font-ui); font-size: 13px;
+    padding: 40px 48px 80px;
+    display: flex; flex-direction: column; gap: 56px; align-items: center;
+  }
+  .page-head { max-width: 1080px; }
+  .page-head h1 { font-size: 20px; font-weight: 600; letter-spacing: .3px; }
+  .page-head p { color: var(--text-dim); margin-top: 6px; font-size: 13px; line-height: 1.6; }
+
+  section.option { width: 1080px; max-width: 100%; }
+  .option-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 14px; }
+  .option-head .tag {
+    font: 700 12px var(--font-ui); letter-spacing: 1px; color: var(--accent);
+    border: 1px solid #2A3550; padding: 2px 8px; border-radius: 3px;
+  }
+  .option-head .tag.rec { color: #0D0F10; background: var(--accent); border-color: var(--accent); }
+  .option-head h2 { font-size: 16px; font-weight: 600; }
+  .option-head .sub { color: var(--text-dim); font-size: 12px; }
+  .option-notes {
+    margin-top: 12px; padding: 10px 14px; border-left: 2px solid var(--divider-strong);
+    color: var(--text-dim); font-size: 12px; line-height: 1.7; background: #0B0D0E;
+  }
+  .option-notes b { color: var(--text); font-weight: 600; }
+  .hint { margin-top: 8px; font: 11px var(--mono); color: var(--accent); }
+
+  .win {
+    width: 100%; height: 520px; border-radius: 10px; overflow: hidden;
+    border: 1px solid #1F2428; box-shadow: 0 24px 70px #000c, 0 2px 8px #0008;
+    display: flex; flex-direction: column; background: var(--flat-0); position: relative;
+  }
+
+  /* 視窗控制(幽靈) */
+  .winctl { display: flex; align-items: stretch; height: 100%; }
+  .winctl button {
+    width: 42px; height: 100%; border: 0; background: transparent; color: var(--text-dim);
+    display: grid; place-items: center;
+  }
+  .winctl button svg { width: 10px; height: 10px; }
+  .winctl button:hover { background: var(--flat-4); color: var(--text); }
+  .winctl .close:hover { background: #C42B1C; color: #fff; }
+
+  /* 品牌標記 */
+  .mark {
+    width: 16px; height: 16px; border-radius: 4px; flex: none;
+    background: conic-gradient(from 220deg, #6EA8FE, #55C2A3, #6EA8FE);
+    box-shadow: inset 0 0 0 1px #FFFFFF22;
+  }
+  .wordmark { font-weight: 600; font-size: 12px; letter-spacing: .6px; }
+
+  /* 舞台 */
+  .d-stage { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .d-strip { height: 40px; flex: none; display: flex; align-items: center; }
+
+  /* 主畫面(共用) */
+  .console-main { flex: 1; min-height: 0; padding: 16px; display: flex; flex-direction: column; }
+  .board { flex: 1; min-height: 0; display: grid; grid-template-columns: 2fr 1fr; gap: 20px; }
+  .group { border: 1px solid var(--well-edge); border-radius: 12px; background: var(--well);
+    box-shadow: inset 0 3px 9px #000A, 0 1px 0 #FFFFFF0D; padding: 0 12px 12px;
+    display: flex; flex-direction: column; min-height: 0; }
+  .colhead { min-height: 48px; display: flex; align-items: center; gap: 6px 8px; padding: 8px 4px 6px; }
+  .group-title { display: flex; align-items: center; gap: 8px; margin-right: auto; }
+  .group-title h3 { font-size: 14px; font-weight: 600; letter-spacing: .3px; }
+  .track-count { color: var(--text-dim); font: 10px var(--mono); border: 1px solid var(--border); padding: 1px 5px; }
+  .mini { font: 11px var(--font-ui); color: var(--text-dim); border: 1px solid var(--border);
+    background: transparent; border-radius: 3px; padding: 3px 8px; }
+  .lanes { display: flex; gap: 16px; overflow: hidden; }
+  .strip { flex: 0 0 176px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--channel-surface); padding: 6px 10px 8px; display: flex; flex-direction: column; gap: 6px; }
+  .strip .name { font-size: 12px; font-weight: 600; display: flex; justify-content: space-between; }
+  .strip .kind { font: 10px var(--mono); color: var(--text-dim); }
+  .strip .src { font: 11px var(--mono); color: var(--text); border-bottom: 1px solid var(--divider); padding: 3px 0; }
+  .strip .fader { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+  .strip .rail { flex: 1; height: 3px; background: var(--well); border-radius: 2px; position: relative; }
+  .strip .rail::before { content: ""; position: absolute; left: 55%; top: -4px; width: 6px; height: 11px;
+    background: linear-gradient(#98A2AC, #6E7883); border: 1px solid #B9C2CB; border-radius: 2px; }
+  .strip .db { font: 10px var(--mono); color: var(--text-dim); }
+  .strip .meter { display: flex; gap: 3px; height: 44px; align-items: flex-end; margin-top: 4px; }
+  .strip .meter i { width: 8px; border-radius: 1px;
+    background: linear-gradient(to top, var(--ok) 0 62%, var(--warn) 62% 84%, var(--err) 84%); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok);
+    box-shadow: 0 0 5px #55C2A399; display: inline-block; }
+
+  /* =========================================================
+     手法 1 · 品牌熱區 — mark + wordmark 常駐拖曳帶
+     ========================================================= */
+  .m1-brand {
+    display: flex; align-items: center; gap: 8px; height: 100%;
+    padding: 0 6px 0 14px; border-radius: 6px;
+    color: var(--text-dim); cursor: default;
+    transition: color .15s;
+  }
+  .m1-brand:hover { color: var(--text); }
+  .m1-brand .wordmark { color: inherit; }
+
+  /* =========================================================
+     手法 2 · 品牌膠囊 — mark 帶頭遙測膠囊
+     ========================================================= */
+  .capsule {
+    position: absolute; top: 6px; z-index: 5;
+    display: inline-flex; align-items: center; gap: 10px;
+    background: #14161AB8; backdrop-filter: blur(10px);
+    border: 1px solid var(--border); border-radius: 999px;
+    padding: 3px 6px 3px 5px; font: 10.5px var(--mono); color: var(--text-dim);
+  }
+  .capsule .t { color: var(--text); }
+  .capsule .sep { width: 1px; height: 12px; background: var(--border); }
+  .capsule .mark { width: 20px; height: 20px; border-radius: 999px; }
+  .capsule .wordmark { font-size: 11px; color: var(--text); letter-spacing: .5px; }
+  .capsule .wordmark small { display: block; font: 400 8px var(--mono); color: var(--text-dim); letter-spacing: 0; margin-top: -1px; }
+
+  /* =========================================================
+     手法 3 · 品牌光帶 — 頂緣 1px 漸層 hairline
+     ========================================================= */
+  .edge-glow {
+    position: absolute; top: 0; left: 0; right: 0; height: 2px; z-index: 9;
+    background: linear-gradient(90deg, #6EA8FE55, #6EA8FE1A 30%, #55C2A31A 70%, #55C2A355);
+  }
+
+  /* 手法 1/2/3 疊加時的左右配置 */
+  .strip-left { display: flex; align-items: center; height: 100%; }
+  .strip-right { margin-left: auto; display: flex; align-items: stretch; height: 100%; }
+</style>
+</head>
+<body>
+
+<div class="page-head">
+  <h1>沉浸 × 品牌感 — 三種手法 + 綜合</h1>
+  <p>基礎 = 方案 D(無欄、幽靈視窗鈕、膠囊遙測)。品牌感不加回「一條欄」,而是讓品牌元素以最低視覺重量常駐角落。滑到視窗控制鈕看 hover 態。</p>
+</div>
+
+<!-- ================= 手法 1 ================= -->
+<section class="option">
+  <div class="option-head">
+    <span class="tag">1</span>
+    <h2>品牌熱區 Brand Hot Corner</h2>
+    <span class="sub">— mark + wordmark 常駐左上拖曳帶;hover 亮起</span>
+  </div>
+  <div class="win">
+    <div class="d-stage">
+      <div class="d-strip" data-tauri-drag-region>
+        <div class="strip-left">
+          <span class="m1-brand"><span class="mark"></span><span class="wordmark">RoudaMix</span></span>
+        </div>
+        <div class="strip-right">
+          <div class="winctl">
+            <button aria-label="最小化"><svg viewBox="0 0 10 10"><path d="M0 5h10" stroke="currentColor"/></svg></button>
+            <button aria-label="最大化"><svg viewBox="0 0 10 10"><rect x=".5" y=".5" width="9" height="9" fill="none" stroke="currentColor"/></svg></button>
+            <button class="close" aria-label="關閉"><svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0L0 10" stroke="currentColor"/></svg></button>
+          </div>
+        </div>
+      </div>
+      <div class="capsule" style="left:16px; top:46px;">
+        <span style="display:flex;align-items:center;gap:6px"><span class="dot"></span>已連線</span>
+        <span class="t">48.0 kHz</span><span><span>BUF</span> 128</span><span><span>XRUN</span> 0</span>
+      </div>
+      <div class="console-main"><div class="board">
+        <div class="group">
+          <div class="colhead">
+            <div class="group-title"><h3>Inputs</h3><span class="track-count">3</span></div>
+            <button class="mini">＋ Audio</button><button class="mini">＋ App</button><button class="mini">＋ FX</button>
+          </div>
+          <div class="lanes">
+            <div class="strip"><div class="name">麥克風 <span class="kind">audio</span></div><div class="src">asio · Main Mic</div>
+              <div class="fader"><div class="rail"></div><span class="db">−3.2</span></div>
+              <div class="meter"><i style="height:38%"></i><i style="height:62%"></i></div></div>
+            <div class="strip"><div class="name">瀏覽器 <span class="kind">app</span></div><div class="src">wasapi · Chrome</div>
+              <div class="fader"><div class="rail"></div><span class="db">−8.0</span></div>
+              <div class="meter"><i style="height:20%"></i><i style="height:33%"></i></div></div>
+            <div class="strip"><div class="name">Reverb <span class="kind">fx</span></div><div class="src" style="color:var(--text-dim)">—</div>
+              <div class="fader"><div class="rail"></div><span class="db">−∞</span></div>
+              <div class="meter"><i style="height:10%;opacity:.25"></i><i style="height:14%;opacity:.25"></i></div></div>
+          </div>
+        </div>
+        <div class="group">
+          <div class="colhead"><div class="group-title"><h3>Outputs</h3><span class="track-count">1</span></div></div>
+          <div class="lanes">
+            <div class="strip"><div class="name">系統輸出 <span class="kind">stream</span></div>
+              <div class="src" style="color:var(--text-dim)">asio · HD Audio</div>
+              <div class="fader"><div class="rail"></div><span class="db">−4.5</span></div>
+              <div class="meter"><i style="height:44%"></i><i style="height:70%"></i></div></div>
+          </div>
+        </div>
+      </div></div>
+    </div>
+  </div>
+  <div class="option-notes">
+    <b>做法:</b>拖曳帶左端 6px 內縮放 mark + wordmark,平時 --text-dim(約 40% 視覺重量),hover 整組亮到 --text。<br>
+    <b>效果:</b>品牌常駐但不搶內容;hover 亮起 = 微互動品牌時刻。實作最便宜(純 CSS 一個 span)。
+    <div class="hint">↑ 試著把滑鼠移到左上「RoudaMix」— 會亮</div>
+  </div>
+</section>
+
+<!-- ================= 手法 2 ================= -->
+<section class="option">
+  <div class="option-head">
+    <span class="tag">2</span>
+    <h2>品牌膠囊 Brand Capsule</h2>
+    <span class="sub">— logo 直接帶頭遙測膠囊,一朵雲搞定品牌 + 狀態</span>
+  </div>
+  <div class="win">
+    <div class="d-stage">
+      <div class="d-strip" data-tauri-drag-region>
+        <div class="strip-right">
+          <div class="winctl">
+            <button aria-label="最小化"><svg viewBox="0 0 10 10"><path d="M0 5h10" stroke="currentColor"/></svg></button>
+            <button aria-label="最大化"><svg viewBox="0 0 10 10"><rect x=".5" y=".5" width="9" height="9" fill="none" stroke="currentColor"/></svg></button>
+            <button class="close" aria-label="關閉"><svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0L0 10" stroke="currentColor"/></svg></button>
+          </div>
+        </div>
+      </div>
+      <div class="capsule" style="left:16px; top:6px;">
+        <span class="mark"></span>
+        <span class="wordmark">RoudaMix<small>MIX CONSOLE</small></span>
+        <span class="sep"></span>
+        <span style="display:flex;align-items:center;gap:6px"><span class="dot"></span>已連線</span>
+        <span class="t">48.0 kHz</span><span><span>BUF</span> 128</span><span><span>XRUN</span> 0</span>
+      </div>
+      <div class="console-main"><div class="board">
+        <div class="group">
+          <div class="colhead">
+            <div class="group-title"><h3>Inputs</h3><span class="track-count">3</span></div>
+            <button class="mini">＋ Audio</button><button class="mini">＋ App</button><button class="mini">＋ FX</button>
+          </div>
+          <div class="lanes">
+            <div class="strip"><div class="name">麥克風 <span class="kind">audio</span></div><div class="src">asio · Main Mic</div>
+              <div class="fader"><div class="rail"></div><span class="db">−3.2</span></div>
+              <div class="meter"><i style="height:38%"></i><i style="height:62%"></i></div></div>
+            <div class="strip"><div class="name">瀏覽器 <span class="kind">app</span></div><div class="src">wasapi · Chrome</div>
+              <div class="fader"><div class="rail"></div><span class="db">−8.0</span></div>
+              <div class="meter"><i style="height:20%"></i><i style="height:33%"></i></div></div>
+            <div class="strip"><div class="name">Reverb <span class="kind">fx</span></div><div class="src" style="color:var(--text-dim)">—</div>
+              <div class="fader"><div class="rail"></div><span class="db">−∞</span></div>
+              <div class="meter"><i style="height:10%;opacity:.25"></i><i style="height:14%;opacity:.25"></i></div></div>
+          </div>
+        </div>
+        <div class="group">
+          <div class="colhead"><div class="group-title"><h3>Outputs</h3><span class="track-count">1</span></div></div>
+          <div class="lanes">
+            <div class="strip"><div class="name">系統輸出 <span class="kind">stream</span></div>
+              <div class="src" style="color:var(--text-dim)">asio · HD Audio</div>
+              <div class="fader"><div class="rail"></div><span class="db">−4.5</span></div>
+              <div class="meter"><i style="height:44%"></i><i style="height:70%"></i></div></div>
+          </div>
+        </div>
+      </div></div>
+    </div>
+  </div>
+  <div class="option-notes">
+    <b>做法:</b>把 logo(mark)做進遙測膠囊開頭 + 副標「MIX CONSOLE」,品牌、狀態、遙測收進同一個浮動物件;頂緣完全淨空。<br>
+    <b>效果:</b>資訊密度最高、零專屬空間;膠囊本身就是品牌容器,和現有通知膠囊語彙一致。
+  </div>
+</section>
+
+<!-- ================= 手法 3 ================= -->
+<section class="option">
+  <div class="option-head">
+    <span class="tag">3</span>
+    <h2>品牌光帶 Brand Hairline</h2>
+    <span class="sub">— 頂緣 2px 漸層微光,藍→綠品牌色只留痕跡</span>
+  </div>
+  <div class="win">
+    <div class="edge-glow"></div>
+    <div class="d-stage">
+      <div class="d-strip" data-tauri-drag-region>
+        <div class="strip-left">
+          <span class="m1-brand"><span class="mark" style="width:13px;height:13px"></span></span>
+        </div>
+        <div class="strip-right">
+          <div class="winctl">
+            <button aria-label="最小化"><svg viewBox="0 0 10 10"><path d="M0 5h10" stroke="currentColor"/></svg></button>
+            <button aria-label="最大化"><svg viewBox="0 0 10 10"><rect x=".5" y=".5" width="9" height="9" fill="none" stroke="currentColor"/></svg></button>
+            <button class="close" aria-label="關閉"><svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0L0 10" stroke="currentColor"/></svg></button>
+          </div>
+        </div>
+      </div>
+      <div class="capsule" style="left:16px; top:46px;">
+        <span style="display:flex;align-items:center;gap:6px"><span class="dot"></span>已連線</span>
+        <span class="t">48.0 kHz</span><span><span>BUF</span> 128</span><span><span>XRUN</span> 0</span>
+      </div>
+      <div class="console-main"><div class="board">
+        <div class="group">
+          <div class="colhead">
+            <div class="group-title"><h3>Inputs</h3><span class="track-count">3</span></div>
+            <button class="mini">＋ Audio</button><button class="mini">＋ App</button><button class="mini">＋ FX</button>
+          </div>
+          <div class="lanes">
+            <div class="strip"><div class="name">麥克風 <span class="kind">audio</span></div><div class="src">asio · Main Mic</div>
+              <div class="fader"><div class="rail"></div><span class="db">−3.2</span></div>
+              <div class="meter"><i style="height:38%"></i><i style="height:62%"></i></div></div>
+            <div class="strip"><div class="name">瀏覽器 <span class="kind">app</span></div><div class="src">wasapi · Chrome</div>
+              <div class="fader"><div class="rail"></div><span class="db">−8.0</span></div>
+              <div class="meter"><i style="height:20%"></i><i style="height:33%"></i></div></div>
+            <div class="strip"><div class="name">Reverb <span class="kind">fx</span></div><div class="src" style="color:var(--text-dim)">—</div>
+              <div class="fader"><div class="rail"></div><span class="db">−∞</span></div>
+              <div class="meter"><i style="height:10%;opacity:.25"></i><i style="height:14%;opacity:.25"></i></div></div>
+          </div>
+        </div>
+        <div class="group">
+          <div class="colhead"><div class="group-title"><h3>Outputs</h3><span class="track-count">1</span></div></div>
+          <div class="lanes">
+            <div class="strip"><div class="name">系統輸出 <span class="kind">stream</span></div>
+              <div class="src" style="color:var(--text-dim)">asio · HD Audio</div>
+              <div class="fader"><div class="rail"></div><span class="db">−4.5</span></div>
+              <div class="meter"><i style="height:44%"></i><i style="height:70%"></i></div></div>
+          </div>
+        </div>
+      </div></div>
+    </div>
+  </div>
+  <div class="option-notes">
+    <b>做法:</b>視窗頂緣拉一條 2px 藍→綠漸層(左端 33% 透明度、中央淡出),角落只留 13px mark。<br>
+    <b>效果:</b>品牌用「光」而非「字」存在;一眼認出品質感,幾乎不佔任何注意力預算。錄音/直播截圖時帶得出品牌。
+  </div>
+</section>
+
+<!-- ================= 綜合推薦 ================= -->
+<section class="option">
+  <div class="option-head">
+    <span class="tag rec">★</span>
+    <h2>綜合 · 光帶 + 品牌膠囊</h2>
+    <span class="sub">— 手法 2 + 3 疊加:推薦組合</span>
+  </div>
+  <div class="win">
+    <div class="edge-glow"></div>
+    <div class="d-stage">
+      <div class="d-strip" data-tauri-drag-region>
+        <div class="strip-right">
+          <div class="winctl">
+            <button aria-label="最小化"><svg viewBox="0 0 10 10"><path d="M0 5h10" stroke="currentColor"/></svg></button>
+            <button aria-label="最大化"><svg viewBox="0 0 10 10"><rect x=".5" y=".5" width="9" height="9" fill="none" stroke="currentColor"/></svg></button>
+            <button class="close" aria-label="關閉"><svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0L0 10" stroke="currentColor"/></svg></button>
+          </div>
+        </div>
+      </div>
+      <div class="capsule" style="left:16px; top:6px;">
+        <span class="mark"></span>
+        <span class="wordmark">RoudaMix<small>MIX CONSOLE</small></span>
+        <span class="sep"></span>
+        <span style="display:flex;align-items:center;gap:6px"><span class="dot"></span>已連線</span>
+        <span class="t">48.0 kHz</span><span><span>BUF</span> 128</span><span><span>IN</span> 2.7ms</span><span><span>OUT</span> 5.3ms</span><span><span>XRUN</span> 0</span>
+      </div>
+      <div class="console-main"><div class="board">
+        <div class="group">
+          <div class="colhead">
+            <div class="group-title"><h3>Inputs</h3><span class="track-count">3</span></div>
+            <button class="mini">＋ Audio</button><button class="mini">＋ App</button><button class="mini">＋ FX</button>
+          </div>
+          <div class="lanes">
+            <div class="strip"><div class="name">麥克風 <span class="kind">audio</span></div><div class="src">asio · Main Mic</div>
+              <div class="fader"><div class="rail"></div><span class="db">−3.2</span></div>
+              <div class="meter"><i style="height:38%"></i><i style="height:62%"></i></div></div>
+            <div class="strip"><div class="name">瀏覽器 <span class="kind">app</span></div><div class="src">wasapi · Chrome</div>
+              <div class="fader"><div class="rail"></div><span class="db">−8.0</span></div>
+              <div class="meter"><i style="height:20%"></i><i style="height:33%"></i></div></div>
+            <div class="strip"><div class="name">Reverb <span class="kind">fx</span></div><div class="src" style="color:var(--text-dim)">—</div>
+              <div class="fader"><div class="rail"></div><span class="db">−∞</span></div>
+              <div class="meter"><i style="height:10%;opacity:.25"></i><i style="height:14%;opacity:.25"></i></div></div>
+          </div>
+        </div>
+        <div class="group">
+          <div class="colhead"><div class="group-title"><h3>Outputs</h3><span class="track-count">1</span></div></div>
+          <div class="lanes">
+            <div class="strip"><div class="name">系統輸出 <span class="kind">stream</span></div>
+              <div class="src" style="color:var(--text-dim)">asio · HD Audio</div>
+              <div class="fader"><div class="rail"></div><span class="db">−4.5</span></div>
+              <div class="meter"><i style="height:44%"></i><i style="height:70%"></i></div></div>
+          </div>
+        </div>
+      </div></div>
+    </div>
+  </div>
+  <div class="option-notes">
+    <b>組合邏輯:</b>頂緣光帶 = 品牌色存在(被動、永遠在);品牌膠囊 = 品牌 + 狀態 + 遙測一體(主動、可讀);頂緣其餘 = 純拖曳熱區。<br>
+    <b>實作備註:</b>膠囊內文字元素需 <code style="font:10px var(--mono);color:var(--accent)">data-tauri-drag-region</code> 以外處理(膠囊本身可互動,不做拖曳);未存變更「●」可掛在膠囊尾端,滑入即現。
+  </div>
+</section>
+
+</body>
+</html>

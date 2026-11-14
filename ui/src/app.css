@@ -29,7 +29,7 @@
 
 .latency-drawer {
   position: fixed;
-  inset: 48px 0 0 auto;
+  inset: 36px 0 0 auto;
   z-index: 80;
   width: min(620px, 92vw);
   overflow: auto;
