@@ -98,7 +98,7 @@
   >
     <div class="drawer-head">
       <strong>Plugin 延遲與 Process Load</strong>
-      <button class="dialog-close" aria-label="關閉延遲明細" data-tooltip="關閉明細。" onclick={onClose}>×</button>
+      <button class="dialog-close" aria-label="關閉延遲明細" data-tooltip="關閉。" onclick={onClose}>×</button>
     </div>
     {#if loading && !report}<p class="dim">載入中…</p>{/if}
     {#if error}<p class="err">{error}</p>{/if}
@@ -112,8 +112,8 @@
             <span>Compensation Delay：{ms(output.compensationDelaySamples)} ms</span>
             <small
               data-tooltip={output.synchronized
-                ? "Full PDC：加補償延遲，平行路徑 sample-exact 對齊。"
-                : "Low Latency：不加補償延遲，路徑不保證同步。"}
+                ? "加補償延遲，sample-exact 對齊。"
+                : "不加補償延遲，路徑不保證同步。"}
               >{output.synchronized ? "Full PDC · sample-exact" : "Low Latency · 不保證路徑同步"}</small
             >
           </article>
@@ -124,7 +124,7 @@
         <select
           bind:value={sortBy}
           aria-label="Plugin 延遲明細排序"
-          data-tooltip="僅調整 Track 內順序，不拆散群組。"
+          data-tooltip="僅調整 Track 內順序。"
         >
           <option value="chain">Chain 順序</option>
           <option value="latency">Plugin Latency</option>

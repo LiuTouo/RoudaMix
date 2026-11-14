@@ -27,9 +27,9 @@
     report?.state === "stopped" ? "已停止 · 數值凍結" :
     !report || report.elapsedSeconds < 3 ? "收集資料中…" : "量測中");
   const metrics = [
-    { key: "momentaryLufs", label: "LUFS-M", window: "瞬時 · 400 ms", help: "最近 400 毫秒的響度。" },
-    { key: "shortTermLufs", label: "LUFS-S", window: "短期 · 3 秒", help: "最近 3 秒的響度。" },
-    { key: "integratedLufs", label: "LUFS-I", window: "整體 · 本次", help: "本次量測的整體響度，排除過低音量。" },
+    { key: "momentaryLufs", label: "LUFS-M", window: "瞬時 · 400 ms", help: "最近 400 ms 響度。" },
+    { key: "shortTermLufs", label: "LUFS-S", window: "短期 · 3 秒", help: "最近 3 秒響度。" },
+    { key: "integratedLufs", label: "LUFS-I", window: "整體 · 本次", help: "整體響度，排除過低音量。" },
   ] as const;
 
   // 釘選 = 本視窗跨程式永遠置頂(與 VST 編輯器視窗釘選同語意);淡紫色 = 啟用。
@@ -88,7 +88,7 @@
     <button type="button" class="pin-toggle" class:pinned aria-pressed={pinned}
       aria-label={pinned ? "取消視窗置頂" : "釘選視窗置頂"}
       data-tooltip={pinned ? "取消置頂。"
-        : "釘選：面板保持在最上層。"}
+        : "面板保持在最上層。"}
       onclick={togglePin}>
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <path d="M12 17v5" /><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1z" />
@@ -109,9 +109,9 @@
     {/each}
   </div>
   <dl>
-    <div><dt data-tooltip="最高真峰值（含取樣點間峰值）。">最高 True Peak</dt>
+    <div><dt data-tooltip="含取樣點間峰值。">最高 True Peak</dt>
       <dd data-metric="truePeakDbtp">{loudnessValue(report, "truePeakDbtp")} <span>dBTP</span></dd></div>
-    <div><dt data-tooltip="響度變化範圍；越小越平穩。">響度範圍（LRA）</dt>
+    <div><dt data-tooltip="響度變化範圍；越小越平。">響度範圍（LRA）</dt>
       <dd data-metric="loudnessRangeLu">{loudnessValue(report, "loudnessRangeLu")} <span>LU</span></dd></div>
   </dl>
   <!-- 成品參考：https://podcasters.apple.com/support/893-audio-requirements
@@ -123,15 +123,15 @@
       <div><span>Spotify 音樂</span><strong>−14 LUFS</strong></div>
     </div>
     <p class="reference-peak">True Peak <strong>≤ −1 dBTP</strong></p>
-    <p class="note">Spotify 高於 −14 LUFS 時，真峰值建議低於 −2 dBTP。</p>
-    <p class="note">非單軌目標；M／S、LRA 不設固定值。</p>
+    <p class="note">Spotify 高於 −14 時，真峰值建議 ≤ −2 dBTP。</p>
+    <p class="note">M／S、LRA 不設目標。</p>
   </section>
-  {#if interrupted}<p class="error" role="alert">{panel.view.error || report?.error || "量測中斷，請重置後再試。"}</p>{/if}
+  {#if interrupted}<p class="error" role="alert">{panel.view.error || report?.error || "量測中斷，請重置。"}</p>{/if}
   {#if panel.view.restarted && !panel.view.busy}<p class="note">引擎變更，量測已重置。</p>{/if}
   <footer>
     <span>已量測 <time>{loudnessDuration(report?.elapsedSeconds ?? 0)}</time></span>
     <button type="button" disabled={!panel.running || panel.view.busy} onclick={resetPanel}
-      aria-label="重置響度量測" data-tooltip="重新量測。">{!report && panel.view.error ? "重試量測" : "重置量測"}</button>
+      aria-label="重置響度量測" data-tooltip="重新量測。">{!report && panel.view.error ? "重試" : "重置"}</button>
   </footer>
   <p class="note">— 無有效資料 · −∞ 靜音 · 開啟或重置後累積</p>
   <p class="note">{panel.trackKind === "output" ? "量測點：實際輸出（含監聽）。" : "量測點：插件、音量與靜音控制之後。"}</p>

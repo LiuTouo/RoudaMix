@@ -96,7 +96,7 @@
       if (automatic && result.available) onAvailable(result.version);
     } catch (reason) {
       if (disposed) return;
-      message = "檢查更新失敗，可稍後重試";
+      message = "檢查更新失敗";
       error = reason instanceof Error ? reason.message : String(reason);
     } finally {
       checking = false;
@@ -121,7 +121,7 @@
     try {
       await invoke("open_release_page");
     } catch {
-      error = "無法開啟瀏覽器，請稍後重試";
+      error = "無法開啟瀏覽器";
     } finally {
       opening = false;
     }
@@ -143,8 +143,8 @@
     }).then((cleanup) => {
       if (disposed) cleanup();
       else unlisten = cleanup;
-    }).catch(() => { error = "系統匣更新事件無法連線，仍可手動檢查更新"; });
-    void loadVersion().catch(() => { error = "無法讀取程式版本，請按檢查更新重試"; });
+    }).catch(() => { error = "系統匣事件無法連線；可手動檢查"; });
+    void loadVersion().catch(() => { error = "無法讀取版本"; });
     invoke<{ portable: boolean }>("updater_state").then(
       (state) => { portable = state.portable; },
     ).catch(() => { /* 維持保守預設:走瀏覽器下載 */ });
@@ -170,8 +170,8 @@
       <span
         class="setrow-name"
         data-tooltip={portable
-          ? "便攜版：開啟瀏覽器下載最新版 zip。"
-          : "安裝版：下載後自動安裝並重新啟動。"}>更新狀態</span
+          ? "便攜版：瀏覽器下載新版 zip。"
+          : "安裝版：自動安裝並重啟。"}>更新狀態</span
       >
     </div>
     <div class="setrow-ctrl">
@@ -180,7 +180,7 @@
         <button class="primary" disabled={installPhase !== "idle"} onclick={installUpdate}>
           {installPhase === "checking" ? "確認中…"
             : installPhase === "downloading" ? `下載中 ${downloadProgress}`
-            : installPhase === "installing" ? "安裝中，即將重新啟動…"
+            : installPhase === "installing" ? "安裝中，即將重啟…"
             : installPhase === "error" ? "重試更新"
             : "立即更新"}
         </button>
@@ -198,7 +198,7 @@
       <label
         class="setrow-name"
         for="autocheck"
-        data-tooltip="啟動時於背景檢查新版本。">自動檢查更新</label
+        data-tooltip="啟動時背景檢查。">自動檢查更新</label
       >
     </div>
     <div class="setrow-ctrl">

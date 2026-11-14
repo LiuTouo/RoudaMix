@@ -67,7 +67,7 @@
   <div class="dialog-head">
     <span class="dialog-title">VST 插件列表 — 加入「{trackName}」</span>
     <button class="dialog-close" type="button" aria-label="關閉插件選擇器"
-      data-tooltip="關閉，不加入插件。" onclick={() => dialog.close()}>×</button>
+      data-tooltip="關閉，不加入。" onclick={() => dialog.close()}>×</button>
   </div>
   <div class="toolbar">
     <label class="search-field">
@@ -76,7 +76,7 @@
     </label>
     <label class="category-field">
       <span>分類</span>
-      <select bind:value={category} data-tooltip="依分類過濾；分類來自插件 metadata。">
+      <select bind:value={category} data-tooltip="依分類過濾（來自插件 metadata）。">
         <option value="">全部分類</option>
         {#each categories as item (item)}<option value={item}>{item}</option>{/each}
       </select>
@@ -85,10 +85,10 @@
       onclick={() => { query = ""; search.focus(); }}>清除搜尋</button>
     {#if scanRunning}
       <button class="scan" type="button" onclick={onCancelScan}
-        data-tooltip="取消掃描；保留掃描前清單。">取消掃描</button>
+        data-tooltip="取消；保留原清單。">取消掃描</button>
     {:else}
       <button class="scan" type="button" disabled={!scanReady} onclick={() => void onStartScan()}
-        data-tooltip="背景掃描 VST3 目錄；未變更插件沿用快取。">掃描 VST</button>
+        data-tooltip="掃描 VST3 目錄；未變更沿用快取。">掃描 VST</button>
     {/if}
   </div>
   <div class="statusline">
@@ -107,9 +107,9 @@
   {#if scanNotice}<p class="notice">{scanNotice}</p>{/if}
   <div class="results" aria-label="插件搜尋結果" aria-busy={pending}>
     {#if catalog.length === 0}
-      <p class="empty">{scanRunning ? "正在掃描 VST，完成後會顯示可加入的插件。" : "尚無 VST 清單 — 請按上方「掃描 VST」"}</p>
+      <p class="empty">{scanRunning ? "掃描中，完成後顯示插件。" : "尚無 VST 清單 — 請按「掃描 VST」"}</p>
     {:else if tree.count === 0}
-      <p class="empty">找不到符合條件的插件，請更換關鍵字、分類或清除搜尋。</p>
+      <p class="empty">找不到符合條件的插件。</p>
     {:else}
       {#each tree.vendors as vendor (vendor.name)}
         <details class="plugin-group" open={query !== ""} aria-label={vendor.name}>
@@ -139,7 +139,7 @@
     {/if}
     {#if failures.length > 0}
       <details class="quarantine">
-        <summary>無法載入 ({failures.length}) — 已隔離</summary>
+        <summary>無法載入（{failures.length}）</summary>
         {#each failures as failure}
           <p data-tooltip={`掃描失敗：${failure.error}\n${failure.path}`}>{failure.path}：{failure.error}</p>
         {/each}

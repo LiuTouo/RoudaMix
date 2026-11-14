@@ -32,7 +32,7 @@ export function observeLatencyRuntimeStates(
         if (state === "suspended" || state === "degraded")
           notices.push({
             level: "error",
-            text: `${plugin.name} 的 ${role} 已${state === "suspended" ? "暫停" : "降級"}，受影響路徑改送 dry audio。`,
+            text: `${plugin.name} 的 ${role} 已${state === "suspended" ? "暫停" : "降級"}，改送 dry audio。`,
           });
         else if (state === "active" && previous && previous !== "active")
           notices.push({ level: "info", text: `${plugin.name} 的 ${role} 已恢復。` });

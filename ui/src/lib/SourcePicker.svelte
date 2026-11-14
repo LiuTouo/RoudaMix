@@ -120,7 +120,7 @@
     aria-expanded={expanded}
     aria-controls={panelId}
     aria-label="{trackName} 輸入來源：{summary}"
-    data-tooltip="ASIO 輸入或麥克風（WASAPI）；清單點開時載入。"
+    data-tooltip="ASIO 輸入或麥克風（WASAPI）。"
     onclick={onOpen}
   >
     <span class="source-summary">{summary}</span>

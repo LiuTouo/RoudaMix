@@ -256,7 +256,7 @@
   }
   function copyNoticeText(msg: string, raw?: string): void {
     void copyText(`${msg}\n${raw ?? ""}`).then((ok) =>
-      addNotice("info", ok ? "已複製到剪貼簿" : "複製失敗(剪貼簿不可用)"),
+      addNotice("info", ok ? "已複製" : "複製失敗"),
     );
   }
   // ---- 膠囊通知:iPhone 式頂端滑入(純資料由 lib/capsules.ts 產生) ----
@@ -303,7 +303,7 @@
       if (overloadOn)
         addNotice(
           "error",
-          "音訊負載持續過載 —— 請增大 Buffer 或減少 plugin",
+          "負載過載 —— 請增大 Buffer 或減少 plugin",
           `callbackLoad = ${Math.round(v * 100)}%`,
         );
     }
@@ -329,14 +329,14 @@
   }
 
   function alarmMsg(key: AlarmKey): string {
-    if (key === "stale") return "音訊未啟動 —— 沒有輸入訊號，請檢查音訊裝置設定";
+    if (key === "stale") return "音訊未啟動 —— 請檢查裝置設定";
     const i = key.indexOf(":");
     const id = Number(key.slice(i + 1));
     const t = status?.tracks.find((x) => x.trackId === id);
     const name = t?.name ?? `軌道 ${id}`;
     if (key.startsWith("silence:"))
-      return `輸入沒有聲音：軌道「${name}」已 ${SILENT_SECONDS} 秒完全無訊號 —— 麥克風可能被靜音或來源已中斷`;
-    return `輸入來源失效：軌道「${name}」— ${t?.error ?? "來源已失效"}`;
+      return `輸入靜音：「${name}」已 ${SILENT_SECONDS} 秒無訊號 —— 麥克風可能靜音或已中斷`;
+    return `來源失效：「${name}」— ${t?.error ?? "來源已失效"}`;
   }
 
   function syncBeeper(): void {
@@ -482,7 +482,7 @@
 
     if (applied.deviceAccepted && applied.state.status?.error &&
         applied.state.status.error !== status?.error)
-      addNotice("error", "音訊已停止，請確認輸出裝置後按 Start", applied.state.status.error);
+      addNotice("error", "音訊已停止 —— 請按 Start", applied.state.status.error);
     status = applied.state.status;
     latencyEnabled = applied.state.pluginLatencyPdcSupported;
     scanModules = applied.state.scanModules;
@@ -616,7 +616,7 @@
       sub(await onTrayExitRequested(() => void requestAppExit()));
       sub(
         await onSingleInstance(() =>
-          addNotice("info", "RoudaMix 已經在執行，已切換到目前的主視窗"),
+          addNotice("info", "已在執行，切換到主視窗"),
         ),
       );
 
@@ -719,7 +719,7 @@
           });
           scanJob = transition.state;
           if (transition.accepted) {
-            addNotice("error", "VST 掃描失敗，已保留原清單", p.error, undefined, undefined, () => {
+            addNotice("error", "VST 掃描失敗；保留原清單", p.error, undefined, undefined, () => {
               scanJob = transitionScanJob(scanJob, {
                 type: "dismiss",
                 jobId: p.jobId,
@@ -735,7 +735,7 @@
           });
           scanJob = transition.state;
           if (transition.accepted) {
-            addNotice("info", "VST 掃描已取消，已保留原清單", undefined, undefined, undefined, () => {
+            addNotice("info", "VST 掃描已取消", undefined, undefined, undefined, () => {
               scanJob = transitionScanJob(scanJob, {
                 type: "dismiss",
                 jobId: p.jobId,
@@ -835,7 +835,7 @@
       appSettings = next as unknown as AppSettings;
     }
     if (reply.warnings.length > 0)
-      addNotice("error", "設定有部分值不合法,已回復預設", reply.warnings.join("\n"));
+      addNotice("error", "設定值不合法，已回復預設", reply.warnings.join("\n"));
   }
 
   type SettingsMutationTag =
@@ -865,7 +865,7 @@
       if (appSettings?.closeBehavior === choice) appSettings.closeBehavior = previous;
       addNotice(
         "error",
-        "關閉視窗偏好儲存失敗，下次仍會再次詢問",
+        "關閉偏好儲存失敗，下次再詢問",
         errorText(result.error),
       );
     }
@@ -944,7 +944,7 @@
       rejectRevisionBaseline();
       // P1-F:存檔失敗 dirty 不清(cleanRevision 沒動)、原檔仍在(原子寫入)
       showNotice(e);
-      addNotice("error", "Session 儲存失敗 —— 未儲存的變更仍在", errorText(e));
+      addNotice("error", "Session 儲存失敗 —— 變更仍在", errorText(e));
       return false;
     }
   }
@@ -960,7 +960,7 @@
         void updateUiScale(r.settings.uiScale ?? 100);
         // P1-E:normalize 警告(known field 壞值已回預設)—— 頂欄通知呈現
         if (r.warnings.length > 0)
-          addNotice("error", "設定檔有問題,部分值已回復預設", r.warnings.join("\n"));
+          addNotice("error", "設定檔部分值已回復預設", r.warnings.join("\n"));
       })
       .catch(() => {}); // 讀不到 = 用預設(blank)
     return settingsP;
@@ -1155,8 +1155,8 @@
       if (next && next.id !== request.id)
         return runDeviceRequest(next, tag);
       if (request.kind === "rollback") {
-        notice = `切換與回滾都失敗,音訊已停止 — ${errorText(result.error)}`;
-        addNotice("error", "裝置切換與回滾都失敗,音訊已停止", errorText(result.error));
+        notice = `切換與回滾都失敗，音訊已停止 — ${errorText(result.error)}`;
+        addNotice("error", "切換與回滾都失敗，音訊已停止", errorText(result.error));
       }
       return false;
     }
@@ -1214,7 +1214,7 @@
       deviceStream.request === null &&
       failures.length > 0
     ) {
-      addNotice("error", "沒有任何 ASIO/系統音訊裝置能成功啟動", failures.join("\n"));
+      addNotice("error", "無法啟動任何音訊裝置", failures.join("\n"));
       notice = failures.join(" | ");
       return;
     }
@@ -1224,7 +1224,7 @@
       const name = devices.find((device) => device.deviceKey === actual.deviceKey)?.name;
       addNotice(
         "info",
-        `已改用「${name ?? actual.deviceKey}」啟動(偏好裝置不可用)`,
+        `已改用「${name ?? actual.deviceKey}」（偏好裝置不可用）`,
         `偏好:${preferredDeviceKey ?? "無"};失敗:${failures.join(" | ")}`,
       );
     }
@@ -1807,7 +1807,7 @@
   function toggleMonitorMute() {
     const monitor = status?.tracks.find((t) => t.systemRole === "monitor");
     if (!monitor) {
-      addNotice("info", "監聽快捷鍵無效:音訊未啟動,沒有監聽輸出軌");
+      addNotice("info", "監聽快捷鍵無效：音訊未啟動");
       return;
     }
     mutations.run(mutKey.track(monitor.trackId), "mute", () =>
@@ -1829,7 +1829,7 @@
       if (previous && previous !== next) {
         await registerShortcut(previous, monitorHotkeyHandler).catch(() => {});
       }
-      addNotice("error", "全域快捷鍵註冊失敗(可能與其他程式的快捷鍵衝突)", errorText(err));
+      addNotice("error", "快捷鍵註冊失敗（可能與其他程式衝突）", errorText(err));
       return false;
     }
   }
@@ -1892,7 +1892,7 @@
           ? appSettings?.vstHotkey ?? "Ctrl+V"
           : appSettings?.monitorHotkey ?? null;
         if (other && shortcut === other) {
-          captureHint = `「${shortcut}」已綁定給 ${capturingHotkey === "monitor" ? "VST 面板" : "監聽靜音"}，請換一組；按 Esc 取消。`;
+          captureHint = `「${shortcut}」已綁定給 ${capturingHotkey === "monitor" ? "VST 面板" : "監聽靜音"}，請換一組；Esc 取消。`;
           return;
         }
         captureHint = null;
@@ -1903,7 +1903,7 @@
       }
       // 純修飾鍵是組合中途,不提示;其餘無法綁定的鍵當場說明原因
       if (!["Control", "Shift", "Alt", "Meta"].includes(e.key))
-        captureHint = `「${e.key}」無法綁定：需含 Ctrl / Alt / Win 修飾鍵，或為 F1–F24（純字母／Shift 組合會在其他程式打字時誤觸）。仍在此等候，按 Esc 取消。`;
+        captureHint = `「${e.key}」無法綁定：需含 Ctrl / Alt / Win 或為 F1–F24；Esc 取消。`;
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
@@ -1943,7 +1943,7 @@
       return true;
     }
     appSettings.checkUpdatesOnStartup = previous;
-    addNotice("error", "自動檢查更新偏好儲存失敗，請重試");
+    addNotice("error", "自動檢查更新偏好儲存失敗");
     return false;
   }
 
@@ -2030,7 +2030,7 @@
 {/if}
 <header class="bar">
   {#if dirty}
-    <span class="dim" data-tooltip="Session 有未儲存的變更。">● 未儲存</span>
+    <span class="dim" data-tooltip="未儲存的變更">● 未儲存</span>
   {/if}
   <span style="flex:1"></span>
   {#if running}
@@ -2038,7 +2038,7 @@
     <span
       class="mono"
       class:warn={overloadOn}
-      data-tooltip="音訊 callback 運算負載；持續 100% 以上會爆音。"
+      data-tooltip="Callback 負載；持續 >100% 會爆音"
       >LOAD {Math.round((meters?.callbackLoad ?? 0) * 100)}%</span
     >
       <span class="console-telemetry mono">
@@ -2051,7 +2051,7 @@
   {:else if selDev?.currentSampleRate}
     <span
       class="dim mono"
-      data-tooltip="取樣率與緩衝大小；取樣率於驅動面板調整。"
+      data-tooltip="取樣率／Buffer；取樣率於驅動面板調整"
       >{selDev.currentSampleRate} Hz · buf {bufSize ?? selDev.preferredBufferSize}</span
     >
   {/if}
@@ -2061,14 +2061,14 @@
       onclick={() => (latencyDrawerOpen = !latencyDrawerOpen)}
       aria-expanded={latencyDrawerOpen}
       aria-label="開啟 Plugin 延遲與 Process Load 明細"
-      data-tooltip="Monitor/Stream 最大插件延遲；點擊開明細。"
+      data-tooltip="Monitor/Stream 最大插件延遲；點擊開明細"
       >PDC M {samplesToMs(status?.pluginDelay?.monitorSamples ?? null, status?.sampleRate ?? 0)} / S {samplesToMs(status?.pluginDelay?.streamSamples ?? null, status?.sampleRate ?? 0)} ms</button
     >
   {/if}
   {#if status?.pluginFails}
     <span
       class="warn mono"
-      data-tooltip="音訊執行緒 plugin 失敗累計；失敗插件自動 bypass。"
+      data-tooltip="Plugin 失敗累計；自動 bypass"
       >plugin fail {status.pluginFails}</span
     >
   {/if}
@@ -2081,18 +2081,18 @@
   {#if cv.phase !== "connected"}
     <button
       class="settings"
-      data-tooltip="複製連線診斷資訊。"
+      data-tooltip="連線診斷資訊"
       onclick={() =>
         void copyText(
           `phase=${cv.phase} connected=${conn.connected} epoch=${conn.epoch} engine=${conn.engineVersion} detail=${cv.detail}`,
-        ).then((ok) => addNotice("info", ok ? "已複製連線診斷" : "複製失敗(剪貼簿不可用)"))}
+        ).then((ok) => addNotice("info", ok ? "已複製診斷" : "複製失敗"))}
       >複製診斷</button
     >
   {/if}
   <button
     class="settings gear"
     aria-label="設定"
-    data-tooltip="開啟設定頁面。"
+    data-tooltip="設定"
     onclick={() => (settingsOpen = true)}
   >
     <!-- 幾何齒輪:圓環 + 八齒,純線段無填色 -->
@@ -2129,14 +2129,14 @@
         <button
           class="capsule-btn"
           onclick={() => copyNoticeText(c.msg, c.raw)}
-          data-tooltip="複製完整技術資訊。"
+          data-tooltip="複製技術資訊。"
         >複製</button>
       {/if}
       {#if c.closable}
         <button
           class="capsule-btn"
           aria-label="關閉此警示"
-          data-tooltip="關閉；再失效時會重新出現。"
+          data-tooltip="關閉；再失效會再出現。"
           onclick={() => onCapsuleClose(c)}
         >×</button>
       {/if}
@@ -2204,11 +2204,11 @@
         {:else}
           <!-- P1-L:空輸入帶的起始區(中性入口:最近 session、裝置狀態、加入軌) -->
           <div class="startcard">
-            <p>尚未加入輸入來源。先確認音訊設定，再新增麥克風或 App 軌，也可載入 Session。</p>
+            <p>尚未加入輸入來源。先設定音訊，再新增軌或載入 Session。</p>
             <div class="startrow">
               <button class="mini" onclick={() => { tab = "audio"; settingsOpen = true; }}>設定音訊…</button>
-              <button class="mini" onclick={() => addTrack("audio")}>＋ Audio 軌(麥克風/樂器)</button>
-              <button class="mini" onclick={() => addTrack("app")}>＋ App 軌(抓程式聲音)</button>
+              <button class="mini" onclick={() => addTrack("audio")}>＋ Audio</button>
+              <button class="mini" onclick={() => addTrack("app")}>＋ App</button>
               <button class="mini" onclick={loadSession}>載入 Session…</button>
               {#if appSettings?.lastSessionPath}
                 <button
@@ -2221,7 +2221,7 @@
             </div>
             <p class="dim startinfo">
               裝置：{startDeviceLabel} ·
-              {#if sessionLoading}正在還原 Session（載入插件中，重型插件可能需要數秒）…{:else if running}{`引擎執行中 ${Math.round(status!.sampleRate)} Hz`}{:else}引擎未啟動{/if}
+              {#if sessionLoading}正在還原 Session…{:else if running}{`引擎執行中 ${Math.round(status!.sampleRate)} Hz`}{:else}引擎未啟動{/if}
             </p>
             <p class="dim startinfo">
               {systemOutputsCreated ? "監聽／串流輸出軌已建立" : "監聽／串流輸出軌尚未建立"}。
@@ -2473,7 +2473,7 @@
         <label
           class="setrow-name"
           for="startminimizedonautostart"
-          data-tooltip="自動啟動時縮小到系統匣；僅影響開機自動啟動，手動開啟仍顯示主視窗。">啟動時最小化</label
+          data-tooltip="自動啟動時縮到系統匣；手動開啟不受影響">啟動時最小化</label
         >
       </div>
       <div class="setrow-ctrl">
@@ -2516,7 +2516,7 @@
         <label
           class="setrow-name"
           for="uiscale"
-          data-tooltip="75%–150%，等比例縮放介面與 VST 工具列，不改變插件內容；方向鍵每次 5%。">介面縮放</label
+          data-tooltip="75%–150% 等比縮放；方向鍵每次 5%">介面縮放</label
         >
       </div>
       <div class="setrow-ctrl scale-controls">
@@ -2529,14 +2529,14 @@
           value={uiScale}
           disabled={!appSettings}
           aria-valuetext={`${uiScale}%`}
-          data-tooltip="等比例縮放介面與 VST 工具列；方向鍵每次 5%。"
+          data-tooltip="等比縮放；方向鍵每次 5%。"
           oninput={(e) => void updateUiScale(e.currentTarget.valueAsNumber)}
           onchange={(e) => void updateUiScale(e.currentTarget.valueAsNumber, true)}
         />
         <output class="mono" for="uiscale">{uiScale}%</output>
         <button
           disabled={!appSettings}
-          data-tooltip="還原為 100%。"
+          data-tooltip="還原 100%。"
           onclick={() => void updateUiScale(100, true)}>還原 100%</button
         >
       </div>
@@ -2547,7 +2547,7 @@
         <label
           class="setrow-name"
           for="uifont"
-          data-tooltip="本機已安裝字型，即時套用於主介面文字；VST 插件視窗不受影響。">介面字型</label
+          data-tooltip="本機字型，即時套用；VST 視窗不受影響">介面字型</label
         >
       </div>
       <div class="setrow-ctrl">
@@ -2575,7 +2575,7 @@
         <label
           class="setrow-name"
           for="noticedismiss"
-          data-tooltip="通知與警示膠囊在此時間後自動消失；設為「按一下才消失」時，點擊通知本體仍能立即關閉。例外：Session 還原膠囊為一次性動作入口，不自動消失。">通知顯示時間</label
+          data-tooltip="通知自動消失時間；「按一下才消失」時點擊即關。Session 還原膠囊不自動消失">通知顯示時間</label
         >
       </div>
       <div class="setrow-ctrl">
@@ -2603,7 +2603,7 @@
         <label
           class="setrow-name"
           for="inputsilencealert"
-          data-tooltip="麥克風 30 秒無訊號時警示；降噪／閘門型麥克風（如 NVIDIA Broadcast）沒說話時送出靜音會誤判，請關閉。">輸入靜音警示</label
+          data-tooltip="麥克風 30 秒無訊號警示；降噪型麥克風（如 NVIDIA Broadcast）請關閉">輸入靜音警示</label
         >
       </div>
       <div class="setrow-ctrl">
@@ -2695,7 +2695,7 @@
       <div class="setrow-info">
         <span
           class="setrow-name"
-          data-tooltip="新 Session 的預設儲存位置。">Session 資料夾</span
+          data-tooltip="新 Session 預設儲存位置">Session 資料夾</span
         >
       </div>
       <div class="setrow-ctrl">
@@ -2714,7 +2714,7 @@
         <label
           class="setrow-name"
           for="deferbypassedplugins"
-          data-tooltip="還原 Session 時先略過 Bypass 中的插件，加快還原速度；解除 Bypass 或重試時才真的載入（重插件初始可達數秒～數十秒）。">延遲載入 Bypass 插件</label
+          data-tooltip="還原時略過 Bypass 插件加快速度；解除 Bypass 時才載入">延遲載入 Bypass 插件</label
         >
       </div>
       <div class="setrow-ctrl">
@@ -2747,22 +2747,22 @@
       <div class="setrow-info">
         <span
           class="setrow-name"
-          data-tooltip="全域快捷鍵：RoudaMix 在背景時也能切換監聽靜音。">監聽靜音</span
+          data-tooltip="全域：背景也能切換監聽靜音">監聽靜音</span
         >
       </div>
       <div class="setrow-ctrl">
         {#if capturingHotkey === "monitor"}
-          <button class="primary" onclick={() => (capturingHotkey = null)}>按下快捷鍵…（點此或 Esc 取消）</button>
+          <button class="primary" onclick={() => (capturingHotkey = null)}>按下快捷鍵…（Esc 取消）</button>
         {:else}
           <button
             onclick={() => { captureHint = null; capturingHotkey = "monitor"; }}
-            data-tooltip="點擊後按下組合鍵（需含 Ctrl/Alt/Win，或 F1–F24）。"
+            data-tooltip="點擊後按下組合鍵（Ctrl/Alt/Win 或 F1–F24）"
             >{appSettings?.monitorHotkey ?? "未設定"}</button
           >
           {#if appSettings?.monitorHotkey}
             <button
               onclick={() => void setMonitorHotkey(null)}
-              data-tooltip="解除快捷鍵綁定。"
+              data-tooltip="解除綁定。"
             >清除</button>
           {/if}
         {/if}
@@ -2772,22 +2772,22 @@
       <div class="setrow-info">
         <span
           class="setrow-name"
-          data-tooltip="僅在 RoudaMix 視窗內生效，預設 Ctrl+V；焦點在輸入欄位時讓給原生行為。">展開／收合 VST 面板</span
+          data-tooltip="視窗內生效，預設 Ctrl+V；輸入欄位時讓給原生">展開／收合 VST 面板</span
         >
       </div>
       <div class="setrow-ctrl">
         {#if capturingHotkey === "vst"}
-          <button class="primary" onclick={() => (capturingHotkey = null)}>按下快捷鍵…（點此或 Esc 取消）</button>
+          <button class="primary" onclick={() => (capturingHotkey = null)}>按下快捷鍵…（Esc 取消）</button>
         {:else}
           <button
             onclick={() => { captureHint = null; capturingHotkey = "vst"; }}
-            data-tooltip="點擊後按下組合鍵（需含 Ctrl/Alt/Win，或 F1–F24）；焦點在輸入欄位時讓給原生行為。"
+            data-tooltip="點擊後按下組合鍵（Ctrl/Alt/Win 或 F1–F24）"
             >{appSettings?.vstHotkey ?? "Ctrl+V（預設）"}</button
           >
           {#if appSettings?.vstHotkey}
             <button
               onclick={() => void setVstHotkey(null)}
-              data-tooltip="重設回預設 Ctrl+V。"
+              data-tooltip="回預設 Ctrl+V。"
             >重設</button>
           {/if}
         {/if}
@@ -2806,7 +2806,7 @@
     autoCheck={appSettings ? (appSettings.checkUpdatesOnStartup ?? true) : undefined}
     onShow={() => { tab = "about"; settingsOpen = true; }}
     onPreference={updateCheckPreference}
-    onAvailable={(version) => addNotice("info", `有新版本 v${version} 可供下載，請至「設定 → 關於」查看。`)}
+    onAvailable={(version) => addNotice("info", `新版本 v${version} —— 「設定 → 關於」可更新`)}
   />
   </div>
 </dialog>
@@ -2822,8 +2822,8 @@
     answerCloseBehavior(null);
   }}
 >
-  <p class="dirtyq" id="close-behavior-title">按下關閉按鈕時要執行哪個動作？</p>
-  <p class="dim">之後可在「設定 → 通用」變更。</p>
+  <p class="dirtyq" id="close-behavior-title">關閉視窗時要？</p>
+  <p class="dim">之後可於「設定 → 一般」變更。</p>
   <div class="dirtyrow">
     <button class="primary" onclick={() => answerCloseBehavior("tray")}>縮小到系統匣</button>
     <button class="danger" onclick={() => answerCloseBehavior("exit")}>關閉程式</button>

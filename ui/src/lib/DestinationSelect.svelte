@@ -12,7 +12,7 @@
     onToggle,
     label = "輸出到",
     panelSuffix = "destinations",
-    emptyText = "沒有可接收路由的 FX 或輸出軌。",
+    emptyText = "無可接收的 FX／輸出軌。",
     omitIds = [],
   }: {
     trackId: number;

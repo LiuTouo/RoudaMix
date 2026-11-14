@@ -82,14 +82,14 @@
       type="button"
       aria-label="關閉程序選擇器"
       onclick={onClose}
-      data-tooltip="關閉，不變更綁定。">×</button
+      data-tooltip="關閉，不變更。">×</button
     >
   </div>
   {#if savedName}
     <p class="dim saved">
       Session 記錄的來源:<span class="mono">{savedName}</span
       >{#if apps.some((a) => a.name === savedName)}
-        — 清單內有同名程序,請用路徑/PID 確認
+        — 有同名程序，請以路徑／PID 確認
       {/if}
     </p>
   {/if}
@@ -102,8 +102,8 @@
   {:else if shown.length === 0}
     <p class="dim empty">
       {apps.length === 0
-        ? "目前沒有正在出聲的程式。清單只列「正在播放音訊」的作用中工作階段 —— 在目標程式裡播放一段聲音,再按「重新整理」。"
-        : "沒有符合搜尋的程式。"}
+        ? "沒有正在出聲的程式 —— 先在目標程式播放聲音，再重新整理。"
+        : "無符合的程式。"}
     </p>
   {:else}
     <div class="applist">

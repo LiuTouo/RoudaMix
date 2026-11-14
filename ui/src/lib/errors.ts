@@ -6,32 +6,32 @@ import { toCommandError, type CommandError } from "./protocol-commands.generated
 import type { ErrorCode } from "./error-codes.generated.ts";
 
 export const ENGINE_ERROR_MESSAGES = {
-  unsupported_version: "引擎協議版本不符 — 請更新 RoudaMix(bridge 與 engine 需同版)",
+  unsupported_version: "引擎協議版本不符 — 請更新 RoudaMix",
   bad_frame: "通訊框格式錯誤",
   bad_command: "指令參數不合法",
   not_running: "音訊未啟動 — 先按 Start",
   already_running: "音訊已在執行中",
-  device_open_failed: "音訊裝置開啟失敗 — 裝置可能被其他程式占用,或已拔除",
-  device_lost: "音訊裝置已失效 — 請重新選擇裝置",
-  track_not_found: "找不到該軌道(可能已被刪除)",
-  cycle_detected: "這樣接會形成迴圈 — 路由未套用",
-  device_busy: "音訊裝置忙碌或無法啟動 — 檢查裝置設定或先停用相關軌道",
-  app_not_found: "找不到該程序 — 程式可能已關閉,請重新選擇",
-  unsupported_windows: "此 Windows 版本不支援抓取應用程式音訊(process loopback 需 Win10 2004+)",
-  plugin_not_found: "找不到該 plugin(可能已被移除)",
-  plugin_load_failed: "plugin 載入或初始化失敗 — 請查看技術詳細資訊；必要時可重新定位",
+  device_open_failed: "裝置開啟失敗 — 可能被占用或已拔除",
+  device_lost: "裝置已失效 — 請重選",
+  track_not_found: "找不到軌道（可能已刪除）",
+  cycle_detected: "會形成迴圈 — 路由未套用",
+  device_busy: "裝置忙碌 — 檢查設定或停用相關軌道",
+  app_not_found: "找不到程序 — 可能已關閉",
+  unsupported_windows: "Windows 版本過舊（需 Win10 2004+）",
+  plugin_not_found: "找不到 plugin（可能已移除）",
+  plugin_load_failed: "plugin 載入或初始化失敗",
   plugin_no_editor: "此 plugin 沒有可開啟的操作介面",
   param_not_found: "找不到該參數",
-  session_io: "Session 檔讀寫失敗 — 路徑可能無法存取,或檔案損壞",
-  preset_io: "Preset 檔讀寫失敗 — 檔案可能不存在或格式不符",
-  plugin_state_failed: "plugin 狀態同步失敗 — 原設定與目前音訊路徑已保留",
+  session_io: "Session 讀寫失敗",
+  preset_io: "Preset 讀寫失敗",
+  plugin_state_failed: "plugin 狀態同步失敗",
   internal: "內部錯誤",
 } satisfies Record<ErrorCode, string>;
 
 const MESSAGES: Record<string, string> = {
-  not_connected: "尚未連上引擎 — 稍後自動重試,或按「重試連線」",
-  disconnected: "與引擎的連線中斷 — 指令未送達",
-  timeout: "引擎沒有回應(逾時)— 引擎可能忙碌或已停止",
+  not_connected: "尚未連上引擎 — 自動重試中",
+  disconnected: "連線中斷 — 指令未送達",
+  timeout: "引擎無回應（逾時）",
   ...ENGINE_ERROR_MESSAGES,
 };
 

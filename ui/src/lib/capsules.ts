@@ -46,8 +46,8 @@ export function capsuleItems(input: CapsuleInputs): CapsuleItem[] {
     items.push({
       key: "respawnRestore",
       kind: "error",
-      msg: `引擎已重啟，場景遺失 — 點此還原 Session「${name}」`,
-      tooltip: `點擊還原最後 Session：\n${input.respawnRestorePath}\n（未儲存的變更無法救回）`,
+      msg: `引擎已重啟，場景遺失 — 還原 Session「${name}」`,
+      tooltip: `還原 Session：\n${input.respawnRestorePath}\n（未儲存變更無法救回）`,
       action: "respawnRestore",
       closable: true,
     });
@@ -57,7 +57,7 @@ export function capsuleItems(input: CapsuleInputs): CapsuleItem[] {
       key: "audioStale",
       kind: "error",
       msg: "音訊未啟動 — 詳情見設定",
-      tooltip: input.audioStaleDetail ? `音訊啟動異常：${input.audioStaleDetail}` : "音訊啟動異常（無詳細資訊）。",
+      tooltip: input.audioStaleDetail ? `音訊啟動異常：${input.audioStaleDetail}` : "音訊啟動異常（無詳情）。",
       action: "openSettings",
       closable: true,
     });
@@ -76,7 +76,7 @@ export function capsuleItems(input: CapsuleInputs): CapsuleItem[] {
     items.push({
       key: "missing",
       kind: "error",
-      msg: `⚠ ${input.missing.length} 個 plugin 無法載入(已保留 placeholder)— 點此收起`,
+      msg: `⚠ ${input.missing.length} 個 plugin 無法載入 — 點此收起`,
       tooltip: `未載入的 plugin：\n${input.missing
         .map((m) => `${m.trackName} [${m.index}] ${m.name || m.pluginPath}：${m.message}`)
         .join("\n")}`,
@@ -89,7 +89,7 @@ export function capsuleItems(input: CapsuleInputs): CapsuleItem[] {
       key: `notice-${n.id}`,
       kind: n.kind,
       msg: n.msg,
-      tooltip: `詳細訊息：${n.raw ?? n.msg}`,
+      tooltip: n.raw ?? n.msg,
       action: "dismiss",
       noticeId: n.id,
       raw: n.raw,

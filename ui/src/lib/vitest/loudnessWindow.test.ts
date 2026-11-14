@@ -238,7 +238,7 @@ it("announces itself ready on mount and renders a pushed view", async () => {
   await settle();
   const text = document.body.textContent ?? "";
   for (const expected of ["麥克風", "LUFS-M", "LUFS-S", "LUFS-I", "最高 True Peak", "響度範圍（LRA）",
-    "成品輸出參考", "Apple Podcasts", "−16 ±1 LUFS", "Spotify 音樂", "−14 LUFS", "≤ −1 dBTP", "M／S、LRA 不設固定值"]) {
+    "成品輸出參考", "Apple Podcasts", "−16 ±1 LUFS", "Spotify 音樂", "−14 LUFS", "≤ −1 dBTP", "M／S、LRA 不設目標"]) {
     expect(text).toContain(expected);
   }
 });
