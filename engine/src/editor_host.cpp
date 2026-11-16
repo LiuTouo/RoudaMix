@@ -994,6 +994,24 @@ RECT close_btn_rect(int cw) noexcept { return {cw - chrome_px(kCaptionH), 0, cw,
 // 釘選鈕：caption 最左同尺寸方塊；釘選 = 視窗跨程式永遠置頂(不隨前景切換解除)
 RECT pin_btn_rect() noexcept { return {0, 0, chrome_px(kCaptionH), chrome_px(kCaptionH)}; }
 
+// SVG 弧段(rx=ry、large=0)→ GDI+ AddArc:由起終點+半徑+方向解圓心與角度,
+// 讓 draw_pin_glyph 逐段重現 lucide pin 的 path 數值而不重算幾何。
+void add_svg_arc(Gdiplus::GraphicsPath& p, float x0, float y0, float x1, float y1,
+                 float r, bool sweep_cw) noexcept {
+    const float dx = (x1 - x0) / 2.0f, dy = (y1 - y0) / 2.0f;
+    const float chord = std::sqrt(dx * dx + dy * dy);
+    const float h = chord >= r ? 0.0f : std::sqrt(r * r - chord * chord);
+    const float sign = sweep_cw ? 1.0f : -1.0f;  // 圓心在弦的哪一側
+    const float cx = (x0 + x1) / 2.0f + sign * h * (-dy / chord);
+    const float cy = (y0 + y1) / 2.0f + sign * h * (dx / chord);
+    const float deg = 57.2957795f;
+    const float a0 = std::atan2(y0 - cy, x0 - cx) * deg;
+    float sweep = (std::atan2(y1 - cy, x1 - cx) - std::atan2(y0 - cy, x0 - cx)) * deg;
+    if (sweep_cw && sweep < 0.0f) sweep += 360.0f;
+    if (!sweep_cw && sweep > 0.0f) sweep -= 360.0f;
+    p.AddArc(cx - r, cy - r, 2.0f * r, 2.0f * r, a0, sweep);
+}
+
 void draw_pin_glyph(HDC dc, bool pinned, bool hover) noexcept {
     const RECT r = pin_btn_rect();
     if (hover) {
@@ -1004,36 +1022,52 @@ void draw_pin_glyph(HDC dc, bool pinned, bool hover) noexcept {
     ensure_gdiplus();
     Gdiplus::Graphics g(dc);
     g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
-    // 與主程式響度面板同一顆圖釘(lucide pin:頭身圓角矩形 + 外擴底托 + 針桿),
-    // 兩邊視覺統一;啟用狀態只以色分辨 —— 釘選 = 淡紫 #C4B5FD,未釘 = 暗灰。
+    // 與主程式響度面板同一顆圖釘 —— 逐段重現 lucide pin 的 SVG path
+    // (LoudnessWindow.svelte),兩邊視覺統一;啟用狀態只以色分辨 ——
+    // 釘選 = 淡紫 #C4B5FD,未釘 = 暗灰。
     const Gdiplus::Color color = pinned ? Gdiplus::Color(255, 0xc4, 0xb5, 0xfd)
                                  : hover ? Gdiplus::Color(255, 0xd8, 0xdc, 0xe2)
                                          : Gdiplus::Color(255, 0x8a, 0x91, 0x9b);
     const float cx = (r.left + r.right) / 2.0f;
     const float cy = (r.top + r.bottom) / 2.0f;
-    const float k = static_cast<float>(r.right - r.left) / 24.0f * 0.8f;  // 24 格座標系
+    // 24 格座標系;icon 佔按鈕 16/28,與響度面板 28px 鈕內 16px svg 同比例。
+    const float k = static_cast<float>(r.right - r.left) / 24.0f * 16.0f / 28.0f;
     g.TranslateTransform(cx, cy);
     g.ScaleTransform(k, k);
     g.TranslateTransform(-12.0f, -12.0f);  // 原點移到 24 格中心
-    Gdiplus::Pen pen(color, 1.7f);  // 線寬在縮放座標系 = 等比縮放
+    Gdiplus::Pen pen(color, 2.0f);  // 線寬在縮放座標系 = 等比縮放(與響度面板 stroke 2 同值)
     pen.SetStartCap(Gdiplus::LineCapRound);
     pen.SetEndCap(Gdiplus::LineCapRound);
     pen.SetLineJoin(Gdiplus::LineJoinRound);
-    // 針桿 + 底托外擴 + 橫桿 + 頭身圓角矩形 + 頂部掛環
+    // 針桿(line x1=12 x2=12 y1=17 y2=22)
     g.DrawLine(&pen, 12.0f, 17.0f, 12.0f, 22.0f);
-    g.DrawLine(&pen, 9.0f, 12.0f, 5.6f, 14.9f);
-    g.DrawLine(&pen, 15.0f, 12.0f, 18.4f, 14.9f);
-    g.DrawLine(&pen, 5.6f, 16.0f, 18.4f, 16.0f);
+    // 主體:依 SVG 段落順序 —— 頭身左右邊 + 底托外擴斜邊與圓角 + 底桿 + 頂部掛環。
+    // 每段終點 = 下一段起點,與 lucide path M9 10.76…z 一一對應。
     Gdiplus::GraphicsPath body;
-    body.AddArc(9.0f, 6.0f, 2.6f, 2.6f, 180.0f, 90.0f);   // 左上角
-    body.AddArc(12.4f, 6.0f, 2.6f, 2.6f, 270.0f, 90.0f);  // 右上角
-    body.AddArc(12.4f, 9.4f, 2.6f, 2.6f, 0.0f, 90.0f);    // 右下角
-    body.AddArc(9.0f, 9.4f, 2.6f, 2.6f, 90.0f, 90.0f);    // 左下角
-    body.CloseFigure();
+    body.StartFigure();
+    body.AddLine(9.0f, 10.76f, 9.0f, 10.76f);  // M 9 10.76(figure 起點,零長度)
+    add_svg_arc(body, 9.0f, 10.76f, 7.89f, 12.55f, 2.0f, true);   // a2 2 0 0 1 -1.11 1.79
+    body.AddLine(7.89f, 12.55f, 6.11f, 13.45f);                   // l -1.78 .9
+    add_svg_arc(body, 6.11f, 13.45f, 5.0f, 15.24f, 2.0f, false);  // A2 2 0 0 0 5 15.24
+    body.AddLine(5.0f, 15.24f, 5.0f, 16.0f);                      // V16
+    add_svg_arc(body, 5.0f, 16.0f, 6.0f, 17.0f, 1.0f, false);     // a1 1 0 0 0 1 1
+    body.AddLine(6.0f, 17.0f, 18.0f, 17.0f);                      // h12(底桿)
+    add_svg_arc(body, 18.0f, 17.0f, 19.0f, 16.0f, 1.0f, false);   // a1 1 0 0 0 1 -1
+    body.AddLine(19.0f, 16.0f, 19.0f, 15.24f);                    // v-.76
+    add_svg_arc(body, 19.0f, 15.24f, 17.89f, 13.45f, 2.0f, false);  // a2 2 0 0 0 -1.11 -1.79
+    body.AddLine(17.89f, 13.45f, 16.11f, 12.55f);                 // l -1.78 -.9
+    add_svg_arc(body, 16.11f, 12.55f, 15.0f, 10.76f, 2.0f, true);  // A2 2 0 0 1 15 10.76
+    body.AddLine(15.0f, 10.76f, 16.0f, 6.0f);                     // V6 h1
+    add_svg_arc(body, 16.0f, 6.0f, 16.0f, 2.0f, 2.0f, false);     // a2 2 0 0 0 0 -4(右半圓)
+    body.AddLine(16.0f, 2.0f, 8.0f, 2.0f);                        // H8(掛環頂線)
+    add_svg_arc(body, 8.0f, 2.0f, 8.0f, 6.0f, 2.0f, false);       // a2 2 0 0 0 0 4(左半圓)
+    body.AddLine(8.0f, 6.0f, 9.0f, 6.0f);                         // h1
+    body.CloseFigure();                                           // z(左邊回身體頂)
+    if (pinned) {  // 釘選 = 主體實填(輪廓→實心,與響度面板同款狀態變化)
+        const Gdiplus::SolidBrush fill(color);
+        g.FillPath(&fill, &body);
+    }
     g.DrawPath(&pen, &body);
-    g.DrawArc(&pen, 10.0f, 1.4f, 4.0f, 4.0f, 180.0f, 180.0f);  // 掛環上半圓
-    g.DrawLine(&pen, 10.0f, 3.4f, 10.0f, 6.0f);
-    g.DrawLine(&pen, 14.0f, 3.4f, 14.0f, 6.0f);
 }
 
 void draw_close_glyph(HDC dc, int cw, bool hover, bool pressed) noexcept {

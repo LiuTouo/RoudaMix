@@ -152,15 +152,17 @@
   header { display: flex; align-items: center; justify-content: space-between; gap: 12px;
     margin: 0 -16px; padding: 0 16px 10px; border-bottom: 1px solid var(--border);
     cursor: grab; user-select: none; }
-  /* 釘選鈕:與 .dialog-close 同款幽靈圖示鈕;釘選中 = 淡紫(與 VST 編輯器視窗
-     釘選色 #C4B5FD 同值,兩視窗統一圖示與色彩語彙) */
+  /* 釘選鈕:與 .dialog-close 同款幽靈圖示鈕;釘選中 = 淡紫實心(與 VST 編輯器視窗
+     釘選色 #C4B5FD 同值、同「實心 = 釘選」輪廓變化,兩視窗統一圖示與色彩語彙) */
   .pin-toggle { display: grid; flex: 0 0 auto; place-items: center; width: 28px; height: 28px;
     padding: 0; background: none; border: none; border-radius: var(--flat-radius);
     color: var(--text-dim); }
   .pin-toggle:hover { background: var(--bg-raised); color: var(--text); }
   .pin-toggle.pinned, .pin-toggle.pinned:hover { color: #c4b5fd; }
   .pin-toggle svg { width: 16px; height: 16px; fill: none; stroke: currentColor;
-    stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+    stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  /* 釘選 = 主體實填(輪廓 → 實心),紫色狀態更醒目 */
+  .pin-toggle.pinned svg path:last-of-type { fill: currentColor; }
   /* 標題 = DESIGN Title:600/14px/+0.3px(全系統最大字級) */
   h2 { margin: 0; font: 600 14px/1.45 var(--font-ui); letter-spacing: .3px; min-width: 0;
     flex: 1 1 auto; overflow-wrap: anywhere; }
