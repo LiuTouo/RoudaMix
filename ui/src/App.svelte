@@ -3145,7 +3145,7 @@
     flex: 1;
     min-height: 0;
     display: flex;
-    gap: 16px; /* 與 laneView.ts STRIP_GAP 同步 */
+    gap: 8px; /* 與 laneView.ts STRIP_GAP 同步 */
   }
   .hint {
     font-size: 11px;

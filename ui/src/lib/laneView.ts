@@ -5,7 +5,7 @@
 // strip)拖放計算依然正確。
 
 export const STRIP_W = 176;
-export const STRIP_GAP = 16;
+export const STRIP_GAP = 8;
 export const SIDE_W = STRIP_W; // VST sidecar 與軌條同寬
 export const SIDE_GAP = 0; // 緊貼整合:sidecar 以 -1px 疊合軌條右框,視覺同一張卡(無溝槽)
 
