@@ -184,9 +184,12 @@ Remove-Item -LiteralPath $probe, "$probe.sig" -Force -ErrorAction SilentlyContin
 if (-not $signOk) {
     throw 'Updater signing probe failed (error above); wrong -KeyPassword for the key generated 2026-09-16?'
 }
+# build-release.ps1 以 pwsh 執行（與 CI 的 shell: pwsh 一致）；本機 Windows PowerShell 5.1 的
+# Microsoft.PowerShell.Utility 模組損壞（缺 Get-FileHash），不可作為後備。
+$psExe = if (Get-Command pwsh -ErrorAction SilentlyContinue) { 'pwsh' } else { throw 'pwsh (PowerShell 7) is required' }
 $buildArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'scripts/build-release.ps1', '-Version', $Version)
 if ($SkipTests) { $buildArgs += '-SkipTests' }
-Invoke-ReleaseCommand powershell $buildArgs
+Invoke-ReleaseCommand $psExe $buildArgs
 
 # --- 資產完整性（= CI publish job 的 sha256sum --check 與必備檔案檢查）---
 $assetRoot = Join-Path $repoRoot 'output/release'
