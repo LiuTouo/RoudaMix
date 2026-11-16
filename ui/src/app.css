@@ -285,6 +285,11 @@ button:disabled {
   outline: 1px solid var(--accent);
   outline-offset: 1px;
 }
+/* 滑鼠操作不出鍵盤焦點框；Tab 導覽仍顯示。
+   !important 壓過各元件/主題的 focus-visible 外框，:has 連包住焦點的容器框（colorbar、sys-dest）一起壓掉。 */
+body.using-mouse :is(:focus-visible, :has(:focus-visible)) {
+  outline: none !important;
+}
 
 /* ---- 應用程式提示:取代瀏覽器原生 title，統一 console 主題語彙 ----
    桌面原生提示語彙（Windows/DAW 讀出感）:實心近黑面板、全周 1px 細框，
