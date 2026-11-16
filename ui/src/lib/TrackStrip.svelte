@@ -1182,10 +1182,6 @@
     <span class="proc-count mono">{track.plugins.length}</span>
     <span class="proc-arrow" aria-hidden="true">▸</span>
   </button>
-  <!-- M/B 獨立一列(Processing Row 下方) -->
-  <div class="row switches-row">
-    <div class="console-switches">{@render muteSwitch()}{@render rackSwitch()}</div>
-  </div>
   <div class="lower">
 
 
@@ -1256,6 +1252,8 @@
         </svg></span>
       </button>
     </div>
+    <!-- M/B 直欄:錶右側,B 上 M 下;置中排版下錶群組左移 -->
+    <div class="console-switches">{@render rackSwitch()}{@render muteSwitch()}</div>
   </div>
   </div>
 
@@ -1787,10 +1785,6 @@
     min-width: 0;
   }
   .routing-row {
-    flex-basis: 32px;
-    min-height: 32px;
-  }
-  .switches-row {
     flex-basis: 32px;
     min-height: 32px;
   }

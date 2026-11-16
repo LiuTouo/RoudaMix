@@ -73,7 +73,6 @@ body { background: var(--flat-0); }
   & .lbl { color: var(--text-dim); font: 11px var(--font-ui); letter-spacing: 0; }
   & .destination-row:not(.routing-row) { min-height: 28px; flex-basis: 28px; }
   & .routing-row { min-height: 28px; flex-basis: 28px; }
-  & .switches-row { min-height: 28px; flex-basis: 28px; }
   & :is(.row select, .destination-trigger, :is(dialog:not(.ctxdlg), .latency-drawer) select) { border: 0; border-bottom: 1px solid transparent; background: transparent; color: var(--text); min-height: 24px; padding: 3px 4px; font: 12px var(--font-ui); }
   /* 對話框/抽屜內的欄位走同一套下劃線語彙(DESIGN Selects/Fields)；文字輸入框 rest 態以 1px var(--border) 底線示意可輸入 */
   & :is(dialog:not(.ctxdlg), .latency-drawer) input:not([type="checkbox"], [type="range"], [type="radio"]) { border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; color: var(--text); }
@@ -93,8 +92,8 @@ body { background: var(--flat-0); }
   & .sys-dest:has(input:focus-visible) { outline: 1px solid var(--accent); outline-offset: -1px; }
   & .latency-toggle { font: 11px var(--font-ui); color: var(--text-dim); }
   & .latency-toggle input { width: 12px; height: 12px; accent-color: var(--ok); }
-  /* M/B/VST 獨立一列(routing row 下方)流排版；不做絶對定位，下拉列永不覆蓋。 */
-  & .console-switches { display: flex; align-items: center; gap: 6px; flex: none; height: 28px; padding: 0; border: 0; }
+  /* M/B 直欄(錶右側,B 上 M 下)；padding-bottom 同 .fctl 讓位 meter-more(44px)，M 底 = 音頻錶底 */
+  & .console-switches { display: flex; flex-direction: column; align-items: stretch; justify-content: flex-end; gap: 6px; flex: none; padding: 0 0 44px; border: 0; }
   & button { border: 0; border-radius: 3px; background: transparent; color: var(--text); }
   /* Danger rest 態如常(DESIGN：enabled:hover 才染紅)；壓過 flat-theme 同名 ID 規則的紅框 */
   & button.danger:not(.plugicon) { border: 0; background: transparent; color: var(--text); }
