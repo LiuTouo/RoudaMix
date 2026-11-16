@@ -189,8 +189,12 @@
     color: var(--text);
     overflow: hidden;
     box-shadow: 0 8px 24px rgb(0 0 0 / 0.55);
+    /* flex-direction 放 base:allow-discrete 離場的 120ms 內 display 仍是 flex,
+       綁 [open] 會瞬間退回 row,內容水平擠壓、文字垂直換行閃爍 */
+    flex-direction: column;
+    gap: 14px;
   }
-  .plugin-picker[open] { display: flex; flex-direction: column; gap: 14px; }
+  .plugin-picker[open] { display: flex; }
   .plugin-picker::backdrop { background: rgb(0 0 0 / 0.5); }
   .dialog-head, .toolbar, .statusline { flex-shrink: 0; }
   .plugin-picker .dialog-title { overflow-wrap: anywhere; }

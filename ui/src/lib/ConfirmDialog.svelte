@@ -58,9 +58,8 @@
     padding: 16px 18px;
     width: min(400px, 90vw);
     box-shadow: 0 8px 24px rgb(0 0 0 / 0.55);
-  }
-  .confirmdlg[open] {
-    display: flex;
+    /* 版面屬性放 base:allow-discrete 離場的 120ms 內 display 仍是 flex,
+       flex-direction 若綁 [open] 會瞬間退回 row,文字垂直換行閃爍 */
     flex-direction: column;
     gap: 12px;
     position: fixed;
@@ -68,6 +67,10 @@
     left: 50%;
     transform: translate(-50%, -50%);
     margin: 0;
+  }
+  /* display:flex 只在 open 慢套:無條件寫會蓋掉 UA display:none → 關不掉 */
+  .confirmdlg[open] {
+    display: flex;
   }
   .confirmdlg::backdrop {
     background: rgb(0 0 0 / 0.5);

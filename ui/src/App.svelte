@@ -2909,11 +2909,9 @@
     padding: 14px 16px;
     width: min(560px, 90vw);
     box-shadow: 0 8px 24px rgb(0 0 0 / 0.55);
-  }
-  /* 只在 open 慢套:display:flex 若無條件寫,會蓋掉 UA 的 dialog:not([open])
-     { display:none } → dialog 載入即常駐顯示、close() 因無 open attr throw 關不掉 */
-  .settingsdlg[open] {
-    display: flex;
+    /* 版面屬性放 base(非 [open]):allow-discrete 離場的 120ms 內 display
+       仍是 flex,但 [open] 屬性已拔除 —— flex-direction 若綁 [open] 會瞬間
+       退回 row,內容水平擠壓、文字垂直換行閃爍(2026 修) */
     flex-direction: column;
     gap: 12px;
     position: fixed; /* 釘死自適應視窗正中(UA 預設位置不可靠) */
@@ -2924,6 +2922,11 @@
     /* P1-K:窄視窗不裁掉關閉/確認 —— 內容上限 85vh;捲動交由 .settings-content */
     max-height: 85vh;
     overflow: hidden;
+  }
+  /* display:flex 只在 open 慢套:無條件寫會蓋掉 UA 的 dialog:not([open])
+     { display:none } → dialog 載入即常駐顯示、close() 因無 open attr throw 關不掉 */
+  .settingsdlg[open] {
+    display: flex;
   }
   .settingsdlg::backdrop {
     background: rgb(0 0 0 / 0.5);
@@ -2951,9 +2954,6 @@
     padding: 16px 18px;
     width: min(360px, 90vw);
     box-shadow: 0 8px 24px rgb(0 0 0 / 0.55);
-  }
-  .dirtydlg[open] {
-    display: flex;
     flex-direction: column;
     gap: 14px;
     position: fixed;
@@ -2961,6 +2961,9 @@
     left: 50%;
     transform: translate(-50%, -50%);
     margin: 0;
+  }
+  .dirtydlg[open] {
+    display: flex;
   }
   .dirtydlg::backdrop {
     background: rgb(0 0 0 / 0.5);

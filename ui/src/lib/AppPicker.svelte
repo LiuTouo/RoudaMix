@@ -130,10 +130,8 @@
     padding: 14px 16px;
     width: min(520px, 92vw);
     box-shadow: 0 8px 24px rgb(0 0 0 / 0.55);
-  }
-  /* P1-K:dialog 內容上限 85vh,超出垂直捲動;關閉鈕不被裁 */
-  .pickerdlg[open] {
-    display: flex;
+    /* 版面屬性放 base:allow-discrete 離場的 120ms 內 display 仍是 flex,
+       flex-direction 若綁 [open] 會瞬間退回 row,文字垂直換行閃爍 */
     flex-direction: column;
     gap: 10px;
     position: fixed;
@@ -141,7 +139,11 @@
     left: 50%;
     transform: translate(-50%, -50%);
     margin: 0;
+    /* P1-K:dialog 內容上限 85vh,超出垂直捲動;關閉鈕不被裁 */
     max-height: 85vh;
+  }
+  .pickerdlg[open] {
+    display: flex;
   }
   .pickerdlg::backdrop {
     background: rgb(0 0 0 / 0.5);
