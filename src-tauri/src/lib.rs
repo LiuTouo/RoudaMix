@@ -42,6 +42,25 @@ fn show_dashboard(app: &AppHandle) {
     }
 }
 
+/// 教學視窗：靜態內容，由 tray 直接建立（比照 ensure_main_window 的 builder
+/// 用法），內容不依賴主視窗狀態，不經前端事件繞路。
+fn show_tutorial(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("tutorial") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+        return;
+    }
+    let _ = WebviewWindowBuilder::new(app, "tutorial", WebviewUrl::App("/?window=tutorial".into()))
+        .title("RoudaMix 使用教學")
+        .inner_size(720.0, 560.0)
+        .min_inner_size(480.0, 420.0)
+        .decorations(false)
+        .shadow(true)
+        .skip_taskbar(true)
+        .build();
+}
+
 fn ensure_main_window(app: &mut tauri::App) -> tauri::Result<()> {
     if app.get_webview_window("main").is_some() {
         return Ok(());
@@ -65,10 +84,11 @@ fn ensure_main_window(app: &mut tauri::App) -> tauri::Result<()> {
 
 fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let show = MenuItemBuilder::with_id("show-dashboard", "顯示儀表板").build(app)?;
+    let tutorial = MenuItemBuilder::with_id("show-tutorial", "使用教學").build(app)?;
     let check = MenuItemBuilder::with_id("check-updates", "檢查更新").build(app)?;
     let about = MenuItemBuilder::with_id("show-about", "關於 RoudaMix").build(app)?;
     let quit = MenuItemBuilder::with_id("quit", "結束程式").build(app)?;
-    let menu = MenuBuilder::new(app).items(&[&show, &check, &about, &quit]).build()?;
+    let menu = MenuBuilder::new(app).items(&[&show, &tutorial, &check, &about, &quit]).build()?;
 
     let mut tray = TrayIconBuilder::with_id("main-tray")
         .menu(&menu)
@@ -76,6 +96,7 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
         .tooltip(format!("RoudaMix v{}", app.package_info().version))
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show-dashboard" => show_dashboard(app),
+            "show-tutorial" => show_tutorial(app),
             "check-updates" | "show-about" => {
                 show_dashboard(app);
                 let _ = app.emit("tray-about-requested", event.id().as_ref() == "check-updates");

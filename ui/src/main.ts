@@ -14,6 +14,9 @@ async function resolveRoot() {
   const params = new URLSearchParams(location.search);
   if (params.get("window") === "loudness")
     return (await import("./lib/LoudnessWindow.svelte")).default;
+  // 使用教學獨立視窗(tray 選單建立)。
+  if (params.get("window") === "tutorial")
+    return (await import("./lib/TutorialWindow.svelte")).default;
   // Throwaway studies: DEV-only, isolated from engine mutations and persistence.
   if (import.meta.env.DEV) {
     const prototype = params.get("prototype");

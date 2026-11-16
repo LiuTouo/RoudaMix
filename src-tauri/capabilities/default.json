@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "RoudaMix 主視窗能力",
-  "windows": ["main", "loudness"],
+  "windows": ["main", "loudness", "tutorial"],
   "permissions": [
     "core:default",
     "core:webview:allow-set-webview-zoom",
