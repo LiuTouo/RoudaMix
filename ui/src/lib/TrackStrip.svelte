@@ -1013,7 +1013,7 @@
     {/if}
   </div>
 
-  <div class="row source-row">
+  <div class="row source-row" data-tour="source">
     {#if track.kind === "audio"}
       <span class="lbl">來源</span>
       <!-- 樹狀來源選單:父層 ASIO / WASAPI(chev hover 放大,同 VST 插件選擇器) -->
@@ -1102,7 +1102,7 @@
     {/if}
   </div>
 
-  <div class="row destination-row">
+  <div class="row destination-row" data-tour="dest">
     <span class="lbl">送至</span>
     <DestinationSelect trackId={track.trackId} trackName={track.name}
       options={destCandidates(tracks, track.trackId)} selected={shownDests}
@@ -1219,11 +1219,12 @@
           onpointermove={onFaderMove}
           onpointerup={onFaderUp}
           onpointercancel={onFaderUp}
+          data-tour="fader"
           data-tooltip="音量 {Math.round(shownGain * 100)}%；滾輪微調，Ctrl+點擊 100%。"
         />
       </div>
     </div>
-    <div class="meterwrap">
+    <div class="meterwrap" data-tour="meter">
       {#if metered}
         <button type="button" class="meter-trigger" aria-disabled={!loudnessEnabled}
           aria-label={`開啟 ${track.name} 的響度分析`}
@@ -1335,6 +1336,7 @@
         class="vsticonbtn vstadd"
         onclick={() => { pluginPickerOpen = true; }}
         aria-label="加入插件到 {track.name}"
+        data-tour="plugin-add"
         data-tooltip="VST 清單；不自動掃描。"
       >
         <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">

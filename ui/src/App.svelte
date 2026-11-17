@@ -15,6 +15,7 @@
   import TrackStrip from "./lib/TrackStrip.svelte";
   import { LoudnessController, emptyLoudnessView } from "./lib/loudness";
   import UpdatePanel from "./lib/UpdatePanel.svelte";
+  import GuidedTour from "./lib/GuidedTour.svelte";
   import { resetPluginTransfer } from "./lib/pluginTransfer";
   import { observeLatencyRuntimeStates } from "./lib/latencyRuntime";
   import LatencyDrawer from "./lib/LatencyDrawer.svelte";
@@ -515,7 +516,9 @@
   let exitFlowActive = false;
   $effect(() => {
     if (settingsOpen) {
-      settingsDlg?.showModal();
+      // 引導教學中改非 modal show():不進 top-layer,教學遮罩/卡片才能蓋在設定上
+      if (tourOpen) settingsDlg?.show();
+      else settingsDlg?.showModal();
       void ensureFontChoices();
     }
     // open 才 close:dialog.close() 對未 open 的 dialog throw InvalidStateError
@@ -614,6 +617,7 @@
     void (async () => {
 
       sub(await onTrayExitRequested(() => void requestAppExit()));
+      sub(await listen("tray-tutorial-requested", () => (tourOpen = true)));
       sub(
         await onSingleInstance(() =>
           addNotice("info", "已在執行，切換到主視窗"),
@@ -1418,6 +1422,25 @@
     setVstOpen(anyVstClosed ? new Set(vstExpandableIds) : new Set());
   }
 
+  // ---------- 引導式教學（GuidedTour；tray「使用教學」與空狀態入口啟動） ----------
+  let tourOpen = $state(false);
+  // 教學示範軌：優先 audio，否則第一條輸入軌（app/fx 也行）；輸入帶全空 = null
+  const tourTrackId = $derived(
+    (inputTracks.find((t) => t.kind === "audio") ?? inputTracks[0])?.trackId ?? null,
+  );
+  const hasInputTracks = $derived(inputTracks.length > 0);
+  function ensureTrackVisible(id: number): void {
+    const lane = inputLaneEl;
+    if (!lane) return;
+    const el = lane.querySelector<HTMLElement>(`[data-track-id="${id}"]`);
+    if (el) el.scrollIntoView({ block: "nearest", inline: "center" });
+    // shortcut: 不在虛擬化窗口多半 = 新軌在尾端,直接捲到底;非尾端場景退回 optional 跳過
+    else lane.scrollLeft = lane.scrollWidth;
+  }
+  function openTrackVst(id: number): void {
+    if (!vstOpenIds.has(id)) toggleVst(id);
+  }
+
   function bindLane(group: LaneGroup): HTMLDivElement | null {
     return group === "input" ? inputLaneEl : outputLaneEl;
   }
@@ -2099,6 +2122,7 @@
   <button
     class="settings gear"
     aria-label="設定"
+    data-tour="settings-gear"
     data-tooltip="設定"
     onclick={() => (settingsOpen = true)}
   >
@@ -2182,9 +2206,9 @@
     <section class="group" aria-labelledby="inputs-heading">
       <div class="colhead">
         <div class="group-title"><h2 id="inputs-heading">Inputs</h2><span class="track-count">{inputTracks.length}</span></div>
-        <button class="mini" onclick={() => addTrack("audio")}>＋ Audio</button>
-        <button class="mini" onclick={() => addTrack("app")}>＋ App</button>
-        <button class="mini" onclick={() => addTrack("fx")}>＋ FX</button>
+        <button class="mini" data-tour="add-audio" onclick={() => addTrack("audio")}>＋ Audio</button>
+        <button class="mini" data-tour="add-app" onclick={() => addTrack("app")}>＋ App</button>
+        <button class="mini" data-tour="add-fx" onclick={() => addTrack("fx")}>＋ FX</button>
       </div>
       <div
         class="lanes"
@@ -2241,6 +2265,7 @@
               <button class="mini" onclick={() => addTrack("audio")}>＋ Audio</button>
               <button class="mini" onclick={() => addTrack("app")}>＋ App</button>
               <button class="mini" onclick={loadSession}>載入 Session…</button>
+              <button class="mini" onclick={() => (tourOpen = true)}>使用教學</button>
               {#if appSettings?.lastSessionPath}
                 <button
                   class="mini"
@@ -2339,6 +2364,26 @@
 <!-- P2-M:右鍵選單(全域一份) -->
 <ContextMenu {menu} onClose={() => (menu = null)} />
 
+<!-- 引導式教學 overlay（tray / 空狀態入口啟動） -->
+{#if tourOpen}
+  <GuidedTour
+    tourTrackId={() => tourTrackId}
+    hasInputTracks={() => hasInputTracks}
+    {settingsOpen}
+    onAddTrack={() => void addTrack("audio")}
+    onEnsureTrack={ensureTrackVisible}
+    onOpenVst={openTrackVst}
+    onOpenSettings={(t) => {
+      // 僅教學前就以 modal 開著的設定需要關掉重開（非 modal 不必，避免每步閃爍）
+      if (settingsDlg?.open && settingsDlg.matches(":modal")) settingsDlg.close();
+      tab = t;
+      settingsOpen = true;
+    }}
+    onCloseSettings={() => { if (settingsDlg?.open) settingsDlg.close(); }}
+    onEnd={() => (tourOpen = false)}
+  />
+{/if}
+
 <dialog
   bind:this={settingsDlg}
   class="settingsdlg"
@@ -2366,7 +2411,7 @@
   <div class="settings-content" id="settings-panel" role="tabpanel" aria-labelledby={`settings-tab-${tab}`} tabindex="0">
   {#if tab === "audio"}
     <div class="tabpane" in:fade={{ duration: 120 }}>
-    <div class="setrow">
+    <div class="setrow" data-tour="set-device">
       <div class="setrow-info">
         <label class="setrow-name" for="setdev" data-tooltip="ASIO 裝置或系統音訊（WASAPI）。">音訊裝置</label>
       </div>
@@ -2400,7 +2445,7 @@
         {/if}
       </div>
     </div>
-    <div class="setrow">
+    <div class="setrow" data-tour="set-buffer">
       <div class="setrow-info">
         <label
           class="setrow-name"
@@ -2424,7 +2469,7 @@
         </select>
       </div>
     </div>
-    <div class="setrow">
+    <div class="setrow" data-tour="set-asiopanel">
       <div class="setrow-info">
         <span
           class="setrow-name"
@@ -2766,7 +2811,7 @@
       <div class="setrow-info">
         <span class="setrow-name">手動操作</span>
       </div>
-      <div class="setrow-ctrl">
+      <div class="setrow-ctrl" data-tour="set-sessions">
         <button onclick={saveSession}>儲存 Session</button>
         <button onclick={loadSession}>載入 Session</button>
       </div>

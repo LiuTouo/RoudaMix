@@ -42,23 +42,10 @@ fn show_dashboard(app: &AppHandle) {
     }
 }
 
-/// 教學視窗：靜態內容，由 tray 直接建立（比照 ensure_main_window 的 builder
-/// 用法），內容不依賴主視窗狀態，不經前端事件繞路。
+/// 引導式教學：改在主視窗內進行（spotlight 引導），喚醒主視窗後 emit 事件由前端啟動。
 fn show_tutorial(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("tutorial") {
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
-        return;
-    }
-    let _ = WebviewWindowBuilder::new(app, "tutorial", WebviewUrl::App("/?window=tutorial".into()))
-        .title("RoudaMix 使用教學")
-        .inner_size(720.0, 560.0)
-        .min_inner_size(480.0, 420.0)
-        .decorations(false)
-        .shadow(true)
-        .skip_taskbar(true)
-        .build();
+    show_dashboard(app);
+    let _ = app.emit("tray-tutorial-requested", ());
 }
 
 fn ensure_main_window(app: &mut tauri::App) -> tauri::Result<()> {
