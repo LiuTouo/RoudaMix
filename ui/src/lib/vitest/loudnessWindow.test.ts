@@ -38,8 +38,6 @@ vi.mock("@tauri-apps/api/event", () => ({
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
     onCloseRequested: async () => () => {},
-    outerPosition: async () => ({ x: 0, y: 0 }),
-    innerSize: async () => ({ width: 1100, height: 820 }),
     setAlwaysOnTop: async (v: boolean) => { alwaysOnTopCalls.push(v); },
     close: async () => { windowCloseCount.n++; },
     startDragging: async () => { dragCount.n++; },
