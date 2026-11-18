@@ -1877,7 +1877,7 @@ std::vector<AudioEngine::PluginTabInfo> AudioEngine::plugin_tabs() const {
     std::vector<PluginTabInfo> tabs;
     for (const auto& t : tracks_) {
         for (const auto& s : t.chain) {
-            tabs.push_back({s.instance_id, s.name, t.name,
+            tabs.push_back({s.instance_id, t.track_id, s.name, t.name,
                             s.plugin != nullptr && s.plugin->editor_capable(), s.bypass});
         }
     }

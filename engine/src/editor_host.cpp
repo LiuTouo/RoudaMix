@@ -401,6 +401,7 @@ struct EditorHost::Impl {
     HWND post_to = nullptr;  // EditorHostCmd 投遞目標(main window)
     HWND wnd = nullptr, tabs = nullptr, client = nullptr;
     std::uint32_t active_id = 0;
+    std::uint32_t scope_track_id = 0;  // 分頁只顯示 active 插件所屬音軌（open 切軌即換 scope）
     std::vector<std::uint32_t> opened_ids;
     std::wstring preset_name;  // 當前 active slot 顯示用的 preset 檔名(切換即清)
     struct Tab {
@@ -452,14 +453,16 @@ struct EditorHost::Impl {
     }
 
     // 以 tracks 現況重建 tab 快取 + 重繪(main thread 直接讀,無需鎖)。
-    // 名稱前加全域連續流水號(1.、2.…):分頁列順序 = tracks × chain,chain 內
-    // 即聲音實際進入順序;與主畫面機架列表編號同源同號。
+    // **分頁只列 scope_track_id 音軌的插件**（使用者要求：不同音軌編輯介面
+    // 分開，不看別軌插件）；名稱前加軌內流水號(1.、2.…)：順序 = chain 內
+    // 聲音實際進入順序，與主畫面該軌機架列表同源同號。
     void render_tabs() {
         tabs_data.clear();
         tabs_measured = false;  // 名單變了,待重新量測
         if (engine == nullptr) return;
         int n = 0;
         for (const auto& t : engine->plugin_tabs()) {
+            if (t.track_id != scope_track_id) continue;
             tabs_data.push_back({t.instance_id,
                                  std::to_wstring(++n) + L". " + to_wide(t.label),
                                  !t.editor_capable, t.bypass});
@@ -818,6 +821,13 @@ struct EditorHost::Impl {
             err = "unknown instanceId";
             return false;
         }
+        // 先定 scope：分頁列只列這顆插件所屬音軌（跨軌 open = 整批換分頁）
+        for (const auto& t : engine->plugin_tabs()) {
+            if (t.instance_id == id) {
+                scope_track_id = t.track_id;
+                break;
+            }
+        }
         const bool fresh = ensure_window();
         if (wnd == nullptr) {
             err = "editor window creation failed";
@@ -876,10 +886,12 @@ struct EditorHost::Impl {
     }
 
     // active 遺失後的自動切換:opened_ids 依 tab 序找第一個能 attach 的。
+    // 僅限 scope 音軌 —— 分頁看不到別軌插件，也不該自動跳去別軌。
     // 絕不自動開使用者沒開過的 plugin(能力會 resurrect 關掉的 editor = 翻來覆去)
     bool switch_to_next() {
         std::string err;
         for (const auto& t : engine->plugin_tabs()) {
+            if (t.track_id != scope_track_id) continue;
             if (std::find(opened_ids.begin(), opened_ids.end(), t.instance_id) ==
                 opened_ids.end())
                 continue;
@@ -1212,6 +1224,7 @@ LRESULT CALLBACK host_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) noexcept 
             self->preset_name.clear();
             self->topmost = false;  // 視窗已滅,重置快取;重開時建窗會重設 true
             self->pinned = false;  // 釘選隨窗滅,重開預設未釘選
+            self->scope_track_id = 0;  // 下次 open 重新定 scope
             self->opened_ids.clear();
         }
         return 0;

@@ -210,9 +210,11 @@ public:
     // (未登記,release 不必呼)。
     const TrackGraph* acquire_graph() noexcept;
     void release_graph() noexcept;
-    // editor host 顯示資料：tab 用 plugin 名，視窗標題用音軌名
+    // editor host 顯示資料：tab 用 plugin 名，視窗標題用音軌名；track_id 供
+    // host 分頁過濾（只顯示當前音軌的插件）
     struct PluginTabInfo {
         std::uint32_t instance_id{};
+        std::uint32_t track_id{};
         std::string label;
         std::string track_name;
         bool editor_capable{};
