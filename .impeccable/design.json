@@ -1,0 +1,107 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-17T13:00:00Z",
+  "title": "Design System: RoudaMix 桌面主控台",
+  "extensions": {
+    "colorMeta": {
+      "carbon-panel": { "role": "neutral", "displayName": "碳黑面板", "canonical": "#0D0F10", "tonalRamp": ["#070809", "#0D0F10", "#121416", "#181B1E", "#202428", "#2A2F35", "#3A4048", "#E2E5E8"] },
+      "master-blue": { "role": "primary", "displayName": "主控藍", "canonical": "#6EA8FE", "tonalRamp": ["#0B1524", "#12233D", "#1C3559", "#2E4E7E", "#4E74AE", "#6EA8FE", "#9DC3FE", "#D6E6FF"] },
+      "scope-green": { "role": "primary", "displayName": "示波綠", "canonical": "#55C2A3", "tonalRamp": ["#07211B", "#0B332A", "#104A3C", "#1A6653", "#2E8A72", "#55C2A3", "#86DCC3", "#C8F2E6"] },
+      "amber-warn": { "role": "secondary", "displayName": "琥珀警示", "canonical": "#D9A441", "tonalRamp": ["#2A1F09", "#3D2C0D", "#57401A", "#75572a", "#A87E31", "#D9A441", "#E8C073", "#F6E3BC"] },
+      "clip-red": { "role": "secondary", "displayName": "剪波紅", "canonical": "#DD5A5A", "tonalRamp": ["#2A0D0D", "#3F1313", "#5A1D1D", "#7C2A2A", "#A83E3E", "#DD5A5A", "#EA8C8C", "#F8C9C9"] },
+      "ink": { "role": "neutral", "displayName": "墨", "canonical": "#E2E5E8", "tonalRamp": ["#0D0F10", "#1E2225", "#3A4048", "#5C646D", "#7E8791", "#9CA5AE", "#C6CCD2", "#E2E5E8"] }
+    },
+    "typographyMeta": {
+      "title": { "displayName": "Title", "purpose": "群組標題與對話框標題；全系統最大字級，刻意儀表化。" },
+      "body": { "displayName": "Body", "purpose": "主控台基準字級；選單、插件名、一般內容。" },
+      "label": { "displayName": "Label", "purpose": "軌道小標籤、MON/STR、tooltip。" },
+      "readout": { "displayName": "Readout", "purpose": "一切會跳動的數值（dB、%、延遲、計數）；tabular-nums。" },
+      "caption": { "displayName": "Caption", "purpose": "藥丸徽章等 13px 半粗字。" }
+    },
+    "shadows": [
+      { "name": "well-inset", "value": "inset 0 3px 9px #000A, 0 1px 0 #FFFFFF0D", "purpose": "Input/Output 群組凹槽井的下陷感。" },
+      { "name": "drag-ghost", "value": "0 18px 36px rgba(0,0,0,.45), 0 6px 12px rgba(0,0,0,.3)", "purpose": "僅拖曳中的軌道卡（scale 1.05 + accent 細框）。" },
+      { "name": "drawer-edge", "value": "-12px 0 28px #0008", "purpose": "貼右緣的延遲抽屜。" },
+      { "name": "tooltip-float", "value": "0 4px 14px rgb(0 0 0 / .5)", "purpose": "唯一的小陰影：tooltip 懸浮於一切之上。" }
+    ],
+    "motion": [
+      { "name": "state", "value": "90ms standard", "purpose": "hover/狀態切換。" },
+      { "name": "pop", "value": "140ms", "purpose": "小浮層進場。" },
+      { "name": "dialog", "value": "180ms", "purpose": "對話框、軌道進場。" },
+      { "name": "exit", "value": "120ms", "purpose": "一律離場。" }
+    ],
+    "breakpoints": [
+      { "name": "bar-wrap", "value": "1000px", "purpose": "工作列換行；主控台僅此一檔。" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button", "kind": "button", "refersTo": "button-primary",
+      "description": "主操作；主控藍底碳黑字，hover 轉墨色。",
+      "html": "<button class=\"ds-btn-primary\">開始引擎</button>",
+      "css": ".ds-btn-primary { background: #6EA8FE; color: #0D0F10; border: 0; border-radius: 3px; min-height: 24px; padding: 4px 10px; font: 12px/1 'IBM Plex Sans TC', 'Segoe UI', system-ui, sans-serif; cursor: pointer; transition: background 90ms standard; } .ds-btn-primary:hover { background: #E2E5E8; } .ds-btn-primary:focus-visible { outline: 1px solid #6EA8FE; outline-offset: -1px; }"
+    },
+    {
+      "name": "Ghost Button", "kind": "button", "refersTo": "button-ghost",
+      "description": "預設幽靈鈕：透明底，hover 浮現 raised。",
+      "html": "<button class=\"ds-btn-ghost\">＋ Audio</button>",
+      "css": ".ds-btn-ghost { background: transparent; color: #E2E5E8; border: 0; border-radius: 3px; min-height: 24px; padding: 3px 6px; font: 11px/1 'IBM Plex Sans TC', 'Segoe UI', system-ui, sans-serif; cursor: pointer; transition: background 90ms standard; } .ds-btn-ghost:hover { background: #202428; } .ds-btn-ghost:focus-visible { outline: 1px solid #6EA8FE; outline-offset: -1px; }"
+    },
+    {
+      "name": "Mute Toggle", "kind": "button",
+      "description": "on 態：亮紅底 hot-ink 字。",
+      "html": "<button class=\"ds-toggle-mute on\">M</button>",
+      "css": ".ds-toggle-mute { background: transparent; color: #E2E5E8; border: 0; border-radius: 3px; min-height: 24px; padding: 3px 6px; font: 11px/1 'IBM Plex Sans TC', system-ui, sans-serif; cursor: pointer; } .ds-toggle-mute.on { background: #382022; color: #F0ABAB; border-color: #DD5A5A; } .ds-toggle-mute:hover { background: #202428; } .ds-toggle-mute.on:hover { background: #382022; }"
+    },
+    {
+      "name": "Field Select", "kind": "input",
+      "description": "原生 select 去外觀：透明底、1px 透明底線，focus 染主控藍。",
+      "html": "<select class=\"ds-select\"><option>Input 1（單聲）</option></select>",
+      "css": ".ds-select { appearance: none; border: 0; border-bottom: 1px solid transparent; background: transparent; color: #E2E5E8; min-height: 24px; padding: 3px 4px; font: 12px 'IBM Plex Sans TC', system-ui, sans-serif; cursor: pointer; } .ds-select:hover { background: #202428; } .ds-select:focus-visible { outline: none; border-bottom-color: #6EA8FE; background: #181B1E; }"
+    },
+    {
+      "name": "Track Strip Card", "kind": "card", "refersTo": "strip-card",
+      "description": "230px 固定寬直角軌道卡；頭部 32px、髮絲框、底部識別色帶。",
+      "html": "<div class=\"ds-strip\"><div class=\"ds-strip-head\">01 · 麥克風</div><div class=\"ds-strip-colorbar\">麥克風</div></div>",
+      "css": ".ds-strip { width: 230px; border: 1px solid #292D31; background: #22272C; padding: 4px 10px 0; font: 12px 'IBM Plex Sans TC', system-ui, sans-serif; color: #E2E5E8; } .ds-strip-head { height: 32px; display: flex; align-items: center; gap: 6px; color: #9CA5AE; font-size: 11px; } .ds-strip-colorbar { background: #6EA8FE; color: #0D0F10; padding: 2px 6px; font-size: 12px; }"
+    },
+    {
+      "name": "Global Tooltip", "kind": "custom",
+      "description": "全域 .app-tooltip：方角、左緣 2px 主控藍頻道焦點燈、tabular-nums。",
+      "html": "<div class=\"ds-tooltip">音量 100%；滾輪微調，Ctrl+點擊 100%。</div>",
+      "css": ".ds-tooltip { background: #181B1E; border: 1px solid #292D31; border-left: 2px solid #6EA8FE; padding: 6px 9px; font: 11px/1.5 'IBM Plex Sans TC', system-ui, sans-serif; color: #E2E5E8; font-variant-numeric: tabular-nums; box-shadow: 0 4px 14px rgb(0 0 0 / .5); max-width: 260px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "夜航混音台",
+    "overview": "深夜錄音室裡那張燈光昏暗的硬體混音台：近黑的霧面面板、細如髮絲的框線分割、只有訊號在的地方才亮燈。UI 是冷靜精密的儀器，不是裝飾的舞台——聲音是主角，介面退後成面板。所有視覺決策都服務「開播中的人掃一眼就懂」：狀態用燈色說話，讀值用等寬數字對齊，操作在需要時才現形。",
+    "keyCharacteristics": [
+      "方角為預設：全域 border-radius 重置為 0，圓角只出現在明確賦予的地方",
+      "髮絲框線 1px hairline（#292D31）劃分一切，不用色塊堆疊層級",
+      "面板靠色階抬升：carbon-panel → panel → console-surface → raised，四階走完深度",
+      "數值一律 mono + tabular-nums（dB、%、延遲、計數）",
+      "動畫專業克制：90/140/180ms 階梯，只動 transform/opacity 與三態顏色",
+      "互動前安靜：幽靈圖示鈕無底色無框，hover 才浮出 raised 底"
+    ],
+    "rules": [
+      { "name": "狀態三色分離 Rule", "body": "啟用(active/ok)、警告(warn)、危險(err)三種狀態各有專屬燈色，絕不混用；暖色永不出現在非警示語境。", "section": "colors" },
+      { "name": "稀有彩度 Rule", "body": "中性灰階承擔 90% 以上的畫面；彩色只在語義成立處亮燈。", "section": "colors" },
+      { "name": "讀值上錶 Rule", "body": "凡是會跳動的數字必須 mono + tabular-nums；正文與標籤永不用等寬。", "section": "typography" },
+      { "name": "拿起才浮起 Rule", "body": "靜止的 UI 永不投影；陰影只屬於拖曳中的物件、貼邊抽屜與 tooltip。", "section": "elevation" }
+    ],
+    "dos": [
+      "Do 用四階面板色表達深度：#0D0F10 → #121416 → #181B1E → #202428。",
+      "Do 所有變動數值用 mono + tabular-nums。",
+      "Do hover 底色一律 raised(#202428)，過場 90ms。",
+      "Do 純圖示控制項附 aria-label，提示一律 data-tooltip。",
+      "Do 可點控制項最小命中 24×24px。"
+    ],
+    "donts": [
+      "Don't 給靜止面板加投影或大圓角；浮層明文無影。",
+      "Don't 以原生 title 屬性做提示。",
+      "Don't 以 reduced-motion 媒體查詢閘門任何動畫（ADR 0007）。",
+      "Don't 只靠顏色傳達狀態（WCAG 2.1 AA）。",
+      "Don't 更動 230px strip 寬與 16px lane pitch。"
+    ]
+  }
+}
