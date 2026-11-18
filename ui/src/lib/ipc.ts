@@ -101,3 +101,5 @@ export const pickSessionOpen = () => invoke<string | null>("pick_session_open");
 export const pickSessionSave = () => invoke<string | null>("pick_session_save");
 /** 資料夾模式:選 Session 資料夾(list_sessions 僅收核准/設定內資料夾)。 */
 export const pickSessionFolder = () => invoke<string | null>("pick_session_folder");
+/** 既有 session 路徑是否仍具寫核准(seed 還原/過期 → false;UI 改走 Save As)。 */
+export const sessionWriteApproved = (path: string) => invoke<boolean>("session_write_approved", { path });

@@ -190,6 +190,7 @@ pub fn run() {
             fs_guard::pick_session_open,
             fs_guard::pick_session_save,
             fs_guard::pick_session_folder,
+            fs_guard::session_write_approved,
             settings::get_settings,
             settings::set_settings,
             settings::list_sessions,

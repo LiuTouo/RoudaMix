@@ -84,6 +84,7 @@
     pickSessionOpen,
     pickSessionSave,
     pickSessionFolder,
+    sessionWriteApproved,
     type AppSettings,
     type SettingsReply,
   } from "./lib/ipc";
@@ -921,6 +922,9 @@
   /** 儲存目前 Session：已有目前檔案就覆寫，否則開存檔對話框。回傳是否成功 */
   async function saveSessionForClose(): Promise<boolean> {
     let path = currentSessionPath;
+    // fs_guard:啟動還原(seed 僅讀)或核准過期的路徑不能直接覆寫 → 走 Save As 對話框取寫核准;
+    // 查詢失敗(預覽/舊版)視為已核可,維持原行為由 engine_command 端拒絕
+    if (path && !(await sessionWriteApproved(path).catch(() => true))) path = null;
     if (!path) {
       try {
         path = await pickSessionSave();

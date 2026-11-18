@@ -140,6 +140,13 @@ pub fn folder_approved(dir: &str) -> bool {
     GUARD.check(dir, Access::Read)
 }
 
+/// UI 送 save_session 前檢查既有路徑是否仍具寫核准(對話框命中且未過期)。
+/// false = seed 還原路徑或核准已過期,UI 應改開 Save As 對話框而非直接覆寫。
+#[tauri::command]
+pub fn session_write_approved(path: String) -> bool {
+    GUARD.check(&path, Access::Write)
+}
+
 /// 啟動時由 lib.rs 播種:持久化的還原路徑/資料夾僅授 load_session 讀取。
 /// shortcut: 攻陷 webview 可寫入 settings 再重啟播種讀路徑,殘餘面為
 /// 「load_session 讀取並回報 missing 診斷」;寫入路徑不受此影響。
