@@ -19,6 +19,8 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+# 本機 PS 5.1 的 Microsoft.PowerShell.Utility 損壞（缺 Get-FileHash），必須用 pwsh 7 執行本腳本。
+if ($PSVersionTable.PSVersion.Major -lt 7) { throw 'Run this script with pwsh (PowerShell 7): pwsh -NoProfile -File scripts/release-local.ps1 ...' }
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 Set-Location -LiteralPath $repoRoot
 
