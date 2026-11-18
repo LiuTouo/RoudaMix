@@ -36,11 +36,15 @@ RoutePlan plan_routes(const std::vector<RouteTrackSpec>& tracks,
     std::vector<PdcOutputSpec> latency_outputs;
     latency_nodes.reserve(tracks.size());
     for (const auto& track : tracks) {
+        // muted 軌:RT 端跳過 plugin 處理、輸出恆零 → 鏈延遲不進 PDC 計畫
+        // (靜音路徑不得拉高 Total Plugin Delay 與其他軌的補償延遲)
         std::uint64_t latency = 0;
-        for (const auto& slot : track.slots) {
-            if (!add_latency(primary_latency(slot), latency)) {
-                result.latency.error = PdcPlanError::kArithmeticOverflow;
-                return result;
+        if (!track.muted) {
+            for (const auto& slot : track.slots) {
+                if (!add_latency(primary_latency(slot), latency)) {
+                    result.latency.error = PdcPlanError::kArithmeticOverflow;
+                    return result;
+                }
             }
         }
         // 第一階段只規劃 full-PDC edges；low-latency 的有效 latency 必須等
@@ -179,7 +183,8 @@ RoutePlan plan_routes(const std::vector<RouteTrackSpec>& tracks,
     }
 
     for (std::size_t i = 0; i < latency_nodes.size(); ++i)
-        latency_nodes[i].monitor_latency_samples = monitor_chain_latency[i];
+        latency_nodes[i].monitor_latency_samples =
+            tracks[i].muted ? 0u : monitor_chain_latency[i];
     result.latency = plan_plugin_delay(latency_nodes, latency_outputs, limits);
     return result;
 }

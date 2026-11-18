@@ -259,18 +259,33 @@ int main() {
         const auto muted_plan = rmx::plan_routes(muted, limits());
         CHECK(!audible_plan.tracks[0].muted);
         CHECK(muted_plan.tracks[0].muted);
-        CHECK(output_latency(audible_plan, 2).total_plugin_delay_samples ==
-              output_latency(muted_plan, 2).total_plugin_delay_samples);
-        CHECK(audible_plan.latency.edge_delays.size() ==
-              muted_plan.latency.edge_delays.size());
-        for (std::size_t i = 0; i < audible_plan.latency.edge_delays.size(); ++i) {
-            CHECK(audible_plan.latency.edge_delays[i].from_track_id ==
-                  muted_plan.latency.edge_delays[i].from_track_id);
-            CHECK(audible_plan.latency.edge_delays[i].to_track_id ==
-                  muted_plan.latency.edge_delays[i].to_track_id);
-            CHECK(audible_plan.latency.edge_delays[i].delay_samples ==
-                  muted_plan.latency.edge_delays[i].delay_samples);
-        }
+        // muted 軌鏈延遲不進 PDC：輸出 Total Plugin Delay 歸零
+        CHECK(output_latency(audible_plan, 2).total_plugin_delay_samples == 64u);
+        CHECK(output_latency(muted_plan, 2).total_plugin_delay_samples == 0u);
+    }
+
+    {
+        // 匯流點不等待靜音的慢分支：可聽分支的補償延遲與輸出總延遲隨 mute 下降
+        const std::vector<rmx::RouteTrackSpec> graph{
+            {1, false, false, rmx::OutputLatencyPolicy::kFullPdc,
+             {active_slot(91, 8)}, {3}},
+            {2, false, false, rmx::OutputLatencyPolicy::kFullPdc,
+             {active_slot(92, 64)}, {3}},
+            {3, false, true, rmx::OutputLatencyPolicy::kFullPdc, {}, {}},
+        };
+        const auto base = rmx::plan_routes(graph, limits());
+        CHECK(base.ok());
+        CHECK(output_latency(base, 3).total_plugin_delay_samples == 64u);
+        CHECK(find_track(base, 1).sends[0].primary_delay_samples == 56u);
+        CHECK(find_track(base, 2).sends[0].primary_delay_samples == 0u);
+        auto muted = graph;
+        muted[1].muted = true;
+        const auto plan = rmx::plan_routes(muted, limits());
+        CHECK(plan.ok());
+        CHECK(output_latency(plan, 3).total_plugin_delay_samples == 8u);
+        CHECK(find_track(plan, 1).sends[0].primary_delay_samples == 0u);
+        // 靜音分支自己仍被對齊（unmute 後瞬間同步）
+        CHECK(find_track(plan, 2).sends[0].primary_delay_samples == 8u);
     }
 
     {

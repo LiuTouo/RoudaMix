@@ -11,7 +11,7 @@ RoudaMix will expose runtime Plugin Latency, provide sample-exact Plugin Delay C
 - The system Monitor Output defaults to `lowLatency`.
 - The system Stream Output defaults to `fullPdc`.
 - User-created Output Tracks can select either policy and default to `fullPdc`.
-- A `fullPdc` output aligns incoming branches at every DAG summing point. Muted paths remain in the plan so mute/unmute does not change timing.
+- A `fullPdc` output aligns incoming branches at every DAG summing point. Muted paths contribute no latency; unmute re-aligns the graph.
 - A `lowLatency` output adds no Compensation Delay and does not promise that parallel input paths are synchronized.
 - All `lowLatency` outputs share the same per-slot Monitor Bypass state. Monitor Bypass may be configured before any low-latency route exists.
 - Global bypass affects every output. Monitor Bypass affects only low-latency outputs.
@@ -31,7 +31,7 @@ RoudaMix will expose runtime Plugin Latency, provide sample-exact Plugin Delay C
 ## Full-PDC planning and safety
 
 - Full PDC inserts integer-sample delay at every summing point, not only at the final output.
-- Steady-state alignment must be sample-exact. Muted paths remain planned.
+- Steady-state alignment must be sample-exact. Muted paths are excluded from path latency.
 - PDC buffers are allocated and graph plans are built on the control thread. The audio callback performs no allocation, lock acquisition, plugin loading, or system call.
 - A path may require at most two seconds of delay, and all PDC buffers together may consume at most 256 MiB.
 - A user mutation that would exceed either limit fails transactionally and leaves plugin state, UI state, and the current audio graph unchanged.
