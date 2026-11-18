@@ -31,7 +31,7 @@ TypeScript command interface 由該表衍生，不得直接修改其 generated �
   讀秘密逾時 5 秒 = 未認證 client 不得佔住唯一 pipe 槽,斷線。
 - 認證通過前 server **不送 snapshot、不 dispatch 任何 command**。
 - Bridge 等 ack 逾時 5 秒、或收到 `0x00`、或斷線 = fail closed,丟棄連線回到重試迴圈。
-- Engine 拿不到 `ROUDAMIX_IPC_SECRET` = fallback 無認證(僅開發/探針);
+- Engine 拿不到 `ROUDAMIX_IPC_SECRET` = fallback 無認證(僅開發/探針);稽核 run-1 起補：`ROUDAMIX_IPC_PIPE` 有設但 `ROUDAMIX_IPC_SECRET` 缺 = 拒絕啟動(不出現自選名稱的無認證引擎)。
   拿到但解不開(非 hex 或 < 16 bytes)= fail closed 拒絕啟動。
 
 ### 2.2 JSON frame

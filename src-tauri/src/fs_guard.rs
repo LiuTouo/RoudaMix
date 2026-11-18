@@ -62,17 +62,16 @@ impl Guard {
         }
         let m = self.approved.lock().unwrap_or_else(|e| e.into_inner());
         match m.get(&normalize_key(path)) {
-            Some((t, a)) => t.elapsed() < APPROVAL_TTL && *a == access,
+            // 寫核准隱含讀(存過的檔案本 launch 可再載);讀不跨用為寫
+            Some((t, a)) => {
+                t.elapsed() < APPROVAL_TTL && (*a == access || (access == Access::Read && *a == Access::Write))
+            }
             None => false,
         }
     }
 
-    /// load_session 專用:對話框核准 or 啟動種將(lastSessionPath 精確 /
-    /// sessionDir 前經)任一命中即放行。
-    fn check_load(&self, path: &str) -> bool {
-        if self.check(path, Access::Read) {
-            return true;
-        }
+    /// load_session 專用:seed(lastSessionPath 精確 / sessionDir 前綴)命中。
+    fn seed_matches(&self, path: &str) -> bool {
         let key = normalize_key(path);
         if let Some(p) = self.seeded_path.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
             if *p == key {
@@ -156,28 +155,36 @@ pub fn seed_restore(last_session_path: Option<&str>, session_dir: Option<&str>) 
 /// engine_command 送出前的路徑核准閘。回 Err(訊息) = 拒絕送出。
 /// null path(engine 預設路徑)不受限 —— 不攜帶攻擊者選擇的資源。
 pub fn authorize(kind: &str, payload: &Value) -> Result<(), String> {
-    let need = |access: Access| -> Result<(), String> {
-        match payload.get("path") {
-            None | Some(Value::Null) => Ok(()),
-            Some(Value::String(p)) => {
-                let ok = match access {
-                    Access::Write => GUARD.check(p, access),
-                    Access::Read => GUARD.check_load(p),
-                };
-                if ok {
-                    Ok(())
-                } else {
-                    Err(format!(
-                        "path not approved by a file dialog: {p}"
-                    ))
-                }
-            }
-            Some(_) => Ok(()), // 非 string 交給契約驗證器拒絕
-        }
+    let path = match payload.get("path") {
+        None | Some(Value::Null) => return Ok(()),
+        Some(Value::String(p)) => p.clone(),
+        Some(_) => return Ok(()), // 非 string 交給契約驗證器拒絕
     };
+    let deny = || Err(format!("path not approved by a file dialog: {path}"));
     match kind {
-        "save_session" | "save_preset" => need(Access::Write),
-        "load_session" | "load_preset" => need(Access::Read),
+        "save_session" | "save_preset" => {
+            if !GUARD.check(&path, Access::Write) {
+                return deny();
+            }
+            // 命中即刷新 TTL:長編輯階段的重複存檔不因 15min 過期而斷
+            GUARD.approve(&path, Access::Write);
+            Ok(())
+        }
+        "load_session" | "load_preset" => {
+            // 對話框核准(讀,或寫隱含讀)或啟動 seed 任一命中
+            let dialog_hit = GUARD.check(&path, Access::Read);
+            let seeded = !dialog_hit && GUARD.seed_matches(&path);
+            if !dialog_hit && !seeded {
+                return deny();
+            }
+            // 對話框開檔 = 使用者手勢已立 → 升級授寫回(開檔後編輯直接存回)。
+            // seed 命中不升級:避免「寫 settings → 重啟播種 → load → save」
+            // 經持久化重開寫入鏈(seed 僅讀,存回走一次 Save As)。
+            if dialog_hit {
+                GUARD.approve(&path, Access::Write);
+            }
+            Ok(())
+        }
         _ => Ok(()),
     }
 }
@@ -193,8 +200,8 @@ mod tests {
         GUARD.approve(w, Access::Write);
         // 核准(寫)可寫
         assert!(authorize("save_session", &json!({"path": "C:\\Sessions\\a.rmsession"})).is_ok());
-        // 讀需要讀核准 —— 寫核准不可跨用
-        assert!(authorize("load_session", &json!({"path": w})).is_err());
+        // 寫核准隱含讀：存過的檔案同 launch 可再載入
+        assert!(authorize("load_session", &json!({"path": w})).is_ok());
         // 未核准路徑拒絕
         let other = "C:\\Windows\\win.ini";
         assert!(authorize("save_session", &json!({"path": other})).is_err());
@@ -215,6 +222,16 @@ mod tests {
         // 前綴外路徑仍拒絕
         let outside = "C:/Other/y.rmsession";
         assert!(authorize("load_session", &json!({"path": outside})).is_err());
+        seed_restore(None, None);
+        // 對話框開檔(load)後升級寫回；seed 路徑不升級
+        let opened = "C:\\Sessions\\opened.rmsession";
+        GUARD.approve(opened, Access::Read);
+        assert!(authorize("load_session", &json!({"path": opened})).is_ok());
+        assert!(authorize("save_session", &json!({"path": opened})).is_ok());
+        let seeded_last = "C:\\Users\\me\\seed.rmsession";
+        seed_restore(Some(seeded_last), None);
+        assert!(authorize("load_session", &json!({"path": seeded_last})).is_ok());
+        assert!(authorize("save_session", &json!({"path": seeded_last})).is_err());
         seed_restore(None, None);
         // 其他 kind 不受影響
         assert!(authorize("track_add", &json!({"name": "x"})).is_ok());

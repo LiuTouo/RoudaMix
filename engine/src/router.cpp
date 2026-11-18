@@ -438,37 +438,35 @@ void Router::scan_job_thread(std::uint64_t job_id,
     nlohmann::json committed_failed;
     if (outcome == 0) {
         vst_registry::normalize(candidate);
-        // 稽核 run-1:檔案寫入與記憶體 swap 同鎖序列化(與 approve_module 的
-        // save 競態會丢核准/交錯寫檔);掃描期間 approve 的 verified 併回
-        // candidate,掃描 commit 不再盖掉使用者核准。
-        {
-            std::lock_guard<std::mutex> lock(scan_mutex_);
-            for (const auto& old : vst_registry_.entries) {
-                if (old.verified.empty()) continue;
-                for (auto& fresh : candidate.entries) {
-                    if (vst_registry::path_key(old.path) ==
-                            vst_registry::path_key(fresh.path) &&
-                        old.fingerprint == fresh.fingerprint) {
-                        for (const auto& v : old.verified)
-                            if (std::find(fresh.verified.begin(), fresh.verified.end(), v) ==
-                                fresh.verified.end())
-                                fresh.verified.push_back(v);
-                    }
+        // 稽核 run-1: 合併 + 寫檔 + 記憶體 swap 同一臨界區完成(與
+        // approve_module 的 save 序列化;掃描期間 approve 的 verified 併回
+        // candidate, 掃描 commit 不再蓋掉使用者核可, 檔案/ 記憶體不分歧)。
+        std::lock_guard<std::mutex> lock(scan_mutex_);
+        for (const auto& old : vst_registry_.entries) {
+            if (old.verified.empty()) continue;
+            for (auto& fresh : candidate.entries) {
+                if (vst_registry::path_key(old.path) ==
+                        vst_registry::path_key(fresh.path) &&
+                    old.fingerprint == fresh.fingerprint) {
+                    for (const auto& v : old.verified)
+                        if (std::find(fresh.verified.begin(), fresh.verified.end(), v) ==
+                            fresh.verified.end())
+                            fresh.verified.push_back(v);
                 }
             }
-            if (!vst_registry::save_atomic(vst_registry_path_, candidate, job_error))
-                outcome = 1;
         }
-    }
-    {
-        std::lock_guard<std::mutex> lock(scan_mutex_);
-        if (outcome == 0) {
+        if (vst_registry::save_atomic(vst_registry_path_, candidate, job_error)) {
             vst_registry_ = std::move(candidate);
             last_scan_ = vst_registry::plugins_json(vst_registry_);
             last_scan_failed_ = vst_registry::failures_json(vst_registry_);
             committed_plugins = last_scan_;
             committed_failed = last_scan_failed_;
+        } else {
+            outcome = 1;
         }
+    }
+    {
+        std::lock_guard<std::mutex> lock(scan_mutex_);
         scan_job_.running.store(false, std::memory_order_release);
     }
     if (outcome == 0) {

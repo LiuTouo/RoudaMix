@@ -41,7 +41,8 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
-#include <unordered_map>
+#include <map>
+#include <mutex>
 #include <cstdio>
 #include <thread>
 #include <utility>
@@ -51,7 +52,8 @@ namespace rmx {
 // ---- EditorHostCmd ticket 佇列(稽核 run-1:取代 LPARAM 裸指標)---------
 namespace {
 std::mutex g_hostcmd_mu;
-std::unordered_map<std::uint64_t, EditorHostCmd> g_hostcmd_q;
+// ticket 單調遞增 → std::map 的 begin() 即最舊(容量滿時逐出最舊)
+std::map<std::uint64_t, EditorHostCmd> g_hostcmd_q;
 std::uint64_t g_hostcmd_next = 1;
 constexpr std::size_t kHostcmdQueueCap = 64;
 std::atomic<DWORD> g_bridge_pid{0};
