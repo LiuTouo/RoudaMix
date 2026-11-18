@@ -59,6 +59,8 @@ function changed(action: string) {
 
 // 響度視窗事件僅桌面版作用;預覽不開獨立視窗,送出即忘。
 export async function emitTo(): Promise<void> {}
+// LoudnessWindow imports `emit` from @tauri-apps/api/event; expose the internal dispatcher under that name.
+export { emit };
 export async function listen<T>(name: string, handler: (event: { payload: T }) => void) {
   if (!handlers.has(name)) handlers.set(name, new Set());
   handlers.get(name)!.add(handler);

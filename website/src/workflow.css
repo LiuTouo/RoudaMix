@@ -67,34 +67,34 @@
 .draw-route { fill:none;stroke-width:2;stroke-dasharray:1;stroke-linecap:round; }
 .monitor-path,.bypass-path { stroke:var(--cyan); }
 .stream-path { stroke:var(--purple); }
-.flow-effect,.flow-bypass { position:absolute;top:30%;left:50%;transform:translateX(-50%);font-size:9px;border:1px solid #786093;background:#292136;padding:3px 7px;border-radius:4px;color:var(--purple); }
+.flow-effect,.flow-bypass { position:absolute;top:30%;left:50%;transform:translateX(-50%);font-size:10px;border:1px solid #786093;background:#292136;padding:3px 7px;border-radius:4px;color:var(--purple); }
 .flow-bypass { left:10%;top:50%;border-color:#387e74;color:var(--cyan);background:#182e2e; }
 .external-route { position:absolute;bottom:54px;right:20px;width:40%;height:65px;pointer-events:none; }
 .external-route svg { height:100%;width:100%;overflow:visible; }
-.external-route>span { position:absolute;top:18px;right:40%;font:8px Consolas,monospace;letter-spacing:.04em;background:#090b12;color:var(--purple);padding:3px 6px; }
+.external-route>span { position:absolute;top:18px;right:40%;font:9px Consolas,monospace;letter-spacing:.04em;background:#090b12;color:var(--purple);padding:3px 6px; }
 .animated-workflow .destination-app { z-index:10;bottom:20px; padding-bottom:28px; }
 .app-device-menu { bottom:80%;left:30px;right:10px; }
 .animated-workflow .app-monogram,.app-title { display:grid; }
 .animated-workflow .app-monogram>span,.app-title>span { grid-area:1/1;margin:0;color:inherit;font-size:inherit; }
 .animated-workflow .app-monogram>span { align-self:center;justify-self:center; }
-.connection-confirmation { position:absolute;bottom:6px;left:64px;color:var(--cyan)!important;font-size:8px!important; }
+.connection-confirmation { position:absolute;bottom:6px;left:64px;color:var(--cyan)!important;font-size:9px!important; }
 
 @media(max-width:760px){
   .animated-workflow.started { padding-top:46px; }
-  .workflow-instruction { top:0;left:0;right:0;min-height:32px;padding:6px 9px;font-size:10px;gap:8px; }
-  .instruction-step { font-size:9px; }
+  .workflow-instruction { top:0;left:0;right:0;min-height:32px;padding:6px 9px;font-size:11px;gap:8px; }
+  .instruction-step { font-size:10px; }
   .animated-workflow .plugin-slot { min-height:48px; }
   .animated-workflow .plugin-installed { inset:7px;gap:6px; }
   .animated-workflow .bypass-chip { gap:4px;padding:4px; }
   .animated-workflow .empty-plugin { min-height:30px; }
   .animated-workflow .routing { height:30px; }
   .animated-workflow .routing.explaining-bypass { height:60px; }
-  .flow-effect,.flow-bypass { font-size:8px;padding:2px 5px; }
+  .flow-effect,.flow-bypass { font-size:9px;padding:2px 5px; }
   .animated-workflow[data-stage='5'] .routing,.animated-workflow[data-stage='6'] .routing { height:43px; }
   .animated-workflow[data-stage='5'],.animated-workflow[data-stage='6'] { padding-bottom:72px; }
   .animated-workflow .destination-app { bottom:0;padding:10px 10px 24px;width:235px;right:0; }
   .external-route { bottom:55px;right:16px;height:55px; }
-  .demo-pointer b { font-size:8px; }
+  .demo-pointer b { font-size:9px; }
   .animated-workflow .settings-card.highlight,.animated-workflow .track.highlight,.animated-workflow .plugin-slot.highlight { transform:none; }
 }
 @media(max-height:750px) and (max-width:760px){

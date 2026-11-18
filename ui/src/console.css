@@ -73,7 +73,7 @@ body { background: var(--flat-0); }
   & .lbl { color: var(--text-dim); font: 11px var(--font-ui); letter-spacing: 0; }
   & .destination-row:not(.routing-row) { min-height: 28px; flex-basis: 28px; }
   & .routing-row { min-height: 28px; flex-basis: 28px; }
-  & :is(.row select, .destination-trigger, :is(dialog:not(.ctxdlg), .latency-drawer) select) { border: 0; border-bottom: 1px solid transparent; background: transparent; color: var(--text); min-height: 24px; padding: 3px 4px; font: 12px var(--font-ui); }
+  & :is(.row select, .destination-trigger, .source-trigger, :is(dialog:not(.ctxdlg), .latency-drawer) select) { border: 0; border-bottom: 1px solid transparent; background: transparent; color: var(--text); min-height: 24px; padding: 3px 4px; font: 12px var(--font-ui); }
   /* 對話框/抽屜內的欄位走同一套下劃線語彙(DESIGN Selects/Fields)；文字輸入框 rest 態以 1px var(--border) 底線示意可輸入 */
   & :is(dialog:not(.ctxdlg), .latency-drawer) input:not([type="checkbox"], [type="range"], [type="radio"]) { border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; color: var(--text); }
   & select { appearance: none; padding-right: 18px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='m3 4 3 3 3-3' stroke='%239ca5ae' fill='none'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 3px center; }
@@ -95,6 +95,8 @@ body { background: var(--flat-0); }
   /* M/B 直欄(錶右側,B 上 M 下)；padding-bottom 同 .fctl 讓位 meter-more(44px)，M 底 = 音頻錶底 */
   & .console-switches { display: flex; flex-direction: column; align-items: stretch; justify-content: flex-end; gap: 6px; flex: none; padding: 0 0 44px; border: 0; }
   & button { border: 0; border-radius: 3px; background: transparent; color: var(--text); }
+  /* WCAG 2.5.8：可點控制項最小 24px（.mini/.capsule/.bar .settings 原本僅 17–21px） */
+  & :is(.mini, .capsule-body, .capsule-btn, .bar .settings) { min-height: 24px; }
   /* Danger rest 態如常(DESIGN：enabled:hover 才染紅)；壓過 flat-theme 同名 ID 規則的紅框 */
   & button.danger:not(.plugicon) { border: 0; background: transparent; color: var(--text); }
   & button:enabled:hover { background: var(--flat-4); border-color: transparent; }
@@ -135,7 +137,7 @@ body { background: var(--flat-0); }
   & .plug:focus-within { background: color-mix(in srgb, var(--accent) 12%, var(--processing-surface)); }
   & .plug .plugicon { width: 24px; min-width: 24px; height: 24px; border: 0; border-radius: 3px; }
   & .plug .plugicon:hover { background: var(--flat-4); opacity: 1; }
-  & .plug.placeholder { opacity: 1; border-left: 2px solid var(--warn); grid-template-columns: minmax(0, 1fr); }
+  & .plug.placeholder { opacity: 1; border-left: 1px solid var(--warn); grid-template-columns: minmax(0, 1fr); }
   & .plug.placeholder:has(.monitor-badge) { grid-template-columns: minmax(0, 1fr) auto; }
   & .plug.placeholder .plugtitle { grid-column: 1; }
   & .plug.placeholder .monitor-badge { grid-column: 2; align-self: start; }

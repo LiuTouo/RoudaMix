@@ -19,6 +19,23 @@ colors:
   meter-green: "#40C985"
   amber-warn: "#D9A441"
   clip-red: "#DD5A5A"
+  hot-bg: "#382022"
+  hot-ink: "#F0ABAB"
+  rack-bg: "#332A1B"
+  well-edge: "#080A0C"
+  ruler-gray: "#8A93A3"
+  scrollbar-thumb: "#363C44"
+  fader-tick: "#525B63"
+  fader-thumb-edge: "#B9C2CB"
+  fader-thumb-face: "#98A2AC"
+  fader-thumb-waist: "#29303A"
+  white-04: "rgb(255 255 255 / 4%)"
+  white-07: "rgb(255 255 255 / 7%)"
+  white-15: "rgb(255 255 255 / 15%)"
+  white-18: "rgb(255 255 255 / 18%)"
+  white-35: "rgb(255 255 255 / 35%)"
+  win-close-red: "#C42B1C"
+  loudness-accent: "#C4B5FD"
 typography:
   title:
     fontFamily: "IBM Plex Sans TC, Segoe UI, system-ui, sans-serif"
@@ -36,13 +53,28 @@ typography:
     fontWeight: 400
   readout:
     fontFamily: "ui-monospace, Cascadia Mono, Consolas, monospace"
-    fontSize: "11px"
+    fontSize: "10px"
     fontWeight: 400
     fontFeature: "tabular-nums"
+  caption:
+    fontFamily: "IBM Plex Sans TC, Segoe UI, system-ui, sans-serif"
+    fontSize: "13px"
+    fontWeight: 600
+  glyph:
+    fontFamily: "IBM Plex Sans TC, Segoe UI, system-ui, sans-serif"
+    fontSize: "18px"
+    fontWeight: 400
 rounded:
+  chip: "2px"
   control: "3px"
+  inline: "4px"
+  scroll: "5px"
+  pop: "6px"
+  dialog: "8px"
+  pill: "11px"
   strip: "0px"
   well: "0px"
+  round: "50%"
 spacing:
   xs: "4px"
   sm: "6px"
@@ -161,14 +193,14 @@ components:
 
 ## Shapes
 
-全域方角:`#app .audio-console * { border-radius: 0 }` 是整個系統的基準宣言——之後每一個圓角都是明確決定:控制項 3px、軌道卡 8px、群組井 12px。早期樣式裡的藥丸(11px)已被此重置覆蓋,現行語彙是直角硬邊。線條一律 1px hairline;兩種例外刻度:tooltip 與同族浮層的**左緣 2px accent**(頻道焦點燈)、placeholder 插件的**左緣 2px warn**。圓形只屬於訊號燈:電源 dot(6px)、radio(7px)、狀態點。指示器幾何:下拉選單以內嵌 SVG chevron 取代原生外觀,select 底線 1px 只在 focus/展開時染藍。
+全域方角:`#app .audio-console * { border-radius: 0 }` 是整個系統的基準宣言——之後每一個圓角都是明確決定:控制項 3px、inline chip 4px、scrollbar 拇指 5px、彈出卡/tour 卡 6px、對話框與選擇器 8px、藥丸徽章 11px。線條一律 1px hairline;兩種例外刻度:tooltip 與同族浮層的**左緣 2px accent**(頻道焦點燈)、placeholder 插件的**左緣 1px warn**。圓形只屬於訊號燈:電源 dot(6px)、radio(7px)、狀態點。指示器幾何:下拉選單以內嵌 SVG chevron 取代原生外觀,select 底線 1px 只在 focus/展開時染藍。
 
 ## Components
 
 共用語彙:邊框 0 或 1px hairline;hover 一律 raised 底 + 90ms standard 曲線;focus 一律 1px accent outline(offset -1,色條內縮 2px);disabled 一律 opacity .4。動畫一律播放,不連動 OS「減少動態」設定(ADR 0007),只動 transform/translate/scale/opacity 與三態顏色;時長階梯 90ms(狀態)/140ms(小浮層)/180ms(對話框、軌道進場)/120ms(一律離場)。
 
 ### Buttons
-- **Shape:** 直角或 3px;高度 24–28px,無原生框。
+- **Shape:** 直角或 3px;高度最小 24px(WCAG 2.5.8),常用 24–28px,無原生框。
 - **Ghost(預設):** 透明底,hover 浮現 raised;圖示鈕(關閉、齒輪)平時僅暗墨示意——「靜音、互動才現形」。
 - **Primary:** 主控藍底 + 碳黑字;hover 轉墨色(#E2E5E8)。
 - **Toggle.on:** mute 亮紅(#382022 底/#F0ABAB 字/err 框);rack bypass 亮琥珀(#332A1B 底/warn 字);一般啟用態走示波綠 12% 混合底。
@@ -203,6 +235,7 @@ body 層、方角、console-surface 底、1px hairline、**左緣 2px 主控藍�
 - **Do** hover 底色一律 raised(#202428),過場 90ms standard。
 - **Do** 狀態燈各守其色:啟用/健康 = 示波綠(#55C2A3),警示 = 琥珀(#D9A441),故障/剪波 = 紅(#DD5A5A),焦點/主控 = 藍(#6EA8FE)。
 - **Do** 純圖示控制項附 `aria-label`,提示一律 `data-tooltip`(全域 tooltip 層呈現)。
+- **Do** 可點控制項(含 capsule、工作列鈕)最小命中 24×24px;視覺不縮就撐大 hit area。
 - **Do** 拖曳回饋用 transform 滑動預覽;拿起感交給幽靈圖層(scale 1.05 + 深陰影,不傾斜)。
 
 ### Don't:

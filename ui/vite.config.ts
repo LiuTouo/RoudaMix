@@ -10,6 +10,8 @@ export default defineConfig(({ command, mode }) => {
     plugins: [svelte()],
     define: { 'import.meta.env.VITE_CONSOLE_PREVIEW': JSON.stringify(consolePreview) },
     cacheDir: consolePreview ? 'node_modules/.vite-console-prototype' : undefined,
+    // design/ 內是靜態稿，不是入口；掃進去會把 mock 的缺漏 export 當成錯誤
+    optimizeDeps: { entries: ['index.html'] },
     resolve: {
       ...(process.env.VITEST ? { conditions: ['browser'] } : {}),
       alias: consolePreview ? ['api/core', 'api/event', 'api/window', 'api/webview', 'api/app', 'plugin-dialog', 'plugin-autostart', 'plugin-global-shortcut', 'plugin-updater']
