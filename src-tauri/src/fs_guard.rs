@@ -10,7 +10,7 @@
 //! 且 worker 預檢+registry 核准閘門已涵蓋其風險;若日後要收緊再擴充。
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
@@ -112,15 +112,26 @@ pub fn pick_session_open(app: AppHandle) -> Option<String> {
 }
 
 /// 開啟 Session 儲存對話框;回傳路徑計為「已核准寫」。
+/// default_dir/default_file:對話框起始落點(UI 傳目前 session 檔的資料夾/檔名,
+/// 退化到設定的 Session 資料夾);僅影響落點,不影響核准語意。
 #[tauri::command]
-pub fn pick_session_save(app: AppHandle) -> Option<String> {
-    let picked = app
+pub fn pick_session_save(
+    app: AppHandle,
+    default_dir: Option<String>,
+    default_file: Option<String>,
+) -> Option<String> {
+    // 目錄不存在(已被刪)就退回系統預設,避免對話框開不了
+    let dir = default_dir.filter(|d| !d.is_empty() && Path::new(d).exists());
+    let mut dlg = app
         .dialog()
         .file()
         .add_filter("RoudaMix Session", &["rmsession"])
         .set_title("儲存 Session")
-        .set_file_name("session.rmsession")
-        .blocking_save_file();
+        .set_file_name(default_file.filter(|f| !f.is_empty()).unwrap_or_else(|| "session.rmsession".into()));
+    if let Some(d) = dir {
+        dlg = dlg.set_directory(d);
+    }
+    let picked = dlg.blocking_save_file();
     let s = to_string(picked)?;
     GUARD.approve(&s, Access::Write);
     Some(s)

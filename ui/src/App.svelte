@@ -919,6 +919,14 @@
     }
   }
 
+  /** Save As 對話框落點:目前 session 檔的資料夾/檔名優先,退化到設定指定的 Session 資料夾。 */
+  function saveDialogDefaults(): { dir: string | null; file: string | null } {
+    const p = currentSessionPath;
+    const i = p ? Math.max(p.lastIndexOf("\\"), p.lastIndexOf("/")) : -1;
+    if (p && i > 0) return { dir: p.slice(0, i), file: p.slice(i + 1) };
+    return { dir: appSettings?.sessionDir ?? null, file: null };
+  }
+
   /** 儲存目前 Session：已有目前檔案就覆寫，否則開存檔對話框。回傳是否成功 */
   async function saveSessionForClose(): Promise<boolean> {
     let path = currentSessionPath;
@@ -927,7 +935,8 @@
     if (path && !(await sessionWriteApproved(path).catch(() => true))) path = null;
     if (!path) {
       try {
-        path = await pickSessionSave();
+        const d = saveDialogDefaults();
+        path = await pickSessionSave(d.dir, d.file);
       } catch {
         return false;
       }
@@ -1593,7 +1602,8 @@
 
   async function saveSession() {
     try {
-      const path = await pickSessionSave();
+      const d = saveDialogDefaults();
+      const path = await pickSessionSave(d.dir, d.file);
       if (!path) return;
       const r = await engineCommand("save_session", {
         path,

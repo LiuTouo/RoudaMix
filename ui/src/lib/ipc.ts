@@ -98,7 +98,8 @@ export const respawnEngine = () => invoke<void>("respawn_engine");
 // 回傳路徑即記入本 launch 核准表;engine_command 的 save/load session 路徑
 // 必須出自這裡(攻陷的 webview 拿不到對話框手勢就帶不出核准路徑)。
 export const pickSessionOpen = () => invoke<string | null>("pick_session_open");
-export const pickSessionSave = () => invoke<string | null>("pick_session_save");
+export const pickSessionSave = (defaultDir?: string | null, defaultFile?: string | null) =>
+  invoke<string | null>("pick_session_save", { defaultDir, defaultFile });
 /** 資料夾模式:選 Session 資料夾(list_sessions 僅收核准/設定內資料夾)。 */
 export const pickSessionFolder = () => invoke<string | null>("pick_session_folder");
 /** 既有 session 路徑是否仍具寫核准(seed 還原/過期 → false;UI 改走 Save As)。 */
