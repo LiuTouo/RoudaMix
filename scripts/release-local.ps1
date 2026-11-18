@@ -163,7 +163,8 @@ if ([string]::IsNullOrEmpty($plainKeyPassword)) {
     Write-Host 'KeyPassword not provided/empty; reading password from clipboard...'
     $clip = Get-Clipboard | Out-String
     $plainKeyPassword = $clip -replace '[\r\n]+$', ''
-    Set-Clipboard -Value ''
+    # PS 5.1 的 Set-Clipboard 拒絕空字串（ ArgumentNullException ），改放單一空白。
+    Set-Clipboard -Value ' '
 }
 if ([string]::IsNullOrEmpty($plainKeyPassword)) {
     throw 'No signing password: copy it to the clipboard first, or pass -KeyPassword.'
