@@ -153,6 +153,12 @@ pub fn run() {
             ensure_main_window(app)?;
             setup_tray(app)?;
             let app_settings = settings::get_settings(app.handle().clone()).settings;
+            // 稽核 run-1 P0:持久化的還原路徑僅授讀(load_session);寫入
+            // 一律要求本 launch 對話框核准
+            crate::fs_guard::seed_restore(
+                app_settings.last_session_path.as_deref(),
+                app_settings.session_dir.as_deref(),
+            );
             let autostart_launch = has_autostart_arg(std::env::args_os());
             if !should_start_hidden(autostart_launch, app_settings.start_minimized_on_autostart) {
                 show_dashboard(app.handle());

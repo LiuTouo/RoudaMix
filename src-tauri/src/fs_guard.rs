@@ -31,6 +31,11 @@ enum Access {
 struct Guard {
     // key = 對話框回傳的原始路徑字串(engine 收到同一字串,精確比對即可)
     approved: Mutex<HashMap<String, (Instant, Access)>>,
+    // 啟動還原用:settings.lastSessionPath(精確)與 sessionDir(前經)
+    // —— 這些是使用者先前經對話框選過並持久化的路徑,重啟後没有新對話框手勢,
+    // 但仍屬使用者意國。僅授讀(load_session);寫一律要求新對話框核准。
+    seeded_path: Mutex<Option<String>>,
+    seeded_dir: Mutex<Option<String>>,
 }
 
 fn normalize_key(p: &str) -> String {
@@ -60,6 +65,27 @@ impl Guard {
             Some((t, a)) => t.elapsed() < APPROVAL_TTL && *a == access,
             None => false,
         }
+    }
+
+    /// load_session 專用:對話框核准 or 啟動種將(lastSessionPath 精確 /
+    /// sessionDir 前經)任一命中即放行。
+    fn check_load(&self, path: &str) -> bool {
+        if self.check(path, Access::Read) {
+            return true;
+        }
+        let key = normalize_key(path);
+        if let Some(p) = self.seeded_path.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+            if *p == key {
+                return true;
+            }
+        }
+        if let Some(d) = self.seeded_dir.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+            let dk = d.trim_end_matches('/');
+            if !dk.is_empty() && key.starts_with(&format!("{}/", dk)) {
+                return true;
+            }
+        }
+        false
     }
 }
 
@@ -110,9 +136,21 @@ pub fn pick_session_folder(app: AppHandle) -> Option<String> {
     Some(s)
 }
 
-/// list_sessions 白名單:本 launch 經對話框核准的資料夾。
+/// list_sessions 白名單：本 launch 經對話框核准的資料夾。
 pub fn folder_approved(dir: &str) -> bool {
     GUARD.check(dir, Access::Read)
+}
+
+/// 啟動時由 lib.rs 播種:持久化的還原路徑/資料夾僅授 load_session 讀取。
+/// shortcut: 攻陷 webview 可寫入 settings 再重啟播種讀路徑,殘餘面為
+/// 「load_session 讀取並回報 missing 診斷」;寫入路徑不受此影響。
+pub fn seed_restore(last_session_path: Option<&str>, session_dir: Option<&str>) {
+    *GUARD.seeded_path.lock().unwrap_or_else(|e| e.into_inner()) =
+        last_session_path.filter(|p| !p.is_empty() && p.len() <= MAX_PATH_LEN)
+            .map(normalize_key);
+    *GUARD.seeded_dir.lock().unwrap_or_else(|e| e.into_inner()) =
+        session_dir.filter(|p| !p.is_empty() && p.len() <= MAX_PATH_LEN)
+            .map(normalize_key);
 }
 
 /// engine_command 送出前的路徑核准閘。回 Err(訊息) = 拒絕送出。
@@ -122,7 +160,11 @@ pub fn authorize(kind: &str, payload: &Value) -> Result<(), String> {
         match payload.get("path") {
             None | Some(Value::Null) => Ok(()),
             Some(Value::String(p)) => {
-                if GUARD.check(p, access) {
+                let ok = match access {
+                    Access::Write => GUARD.check(p, access),
+                    Access::Read => GUARD.check_load(p),
+                };
+                if ok {
                     Ok(())
                 } else {
                     Err(format!(
@@ -163,6 +205,17 @@ mod tests {
         GUARD.approve(r, Access::Read);
         let r2 = "c:\\sessions\\B.RMSESSION";
         assert!(authorize("load_session", &json!({"path": r2})).is_ok());
+        // 啟動播種:lastSessionPath 精確 + sessionDir 前綴僅授讀
+        let last = "C:\\Users\\me\\last.rmsession".to_string();
+        seed_restore(Some(&last), Some("C:\\Sessions"));
+        let in_dir = "c:/SESSIONS/deep/nested/x.rmSession".to_string();
+        assert!(authorize("load_session", &json!({"path": in_dir})).is_ok());
+        // 播種讀路徑不可跨用為寫
+        assert!(authorize("save_session", &json!({"path": last})).is_err());
+        // 前綴外路徑仍拒絕
+        let outside = "C:/Other/y.rmsession";
+        assert!(authorize("load_session", &json!({"path": outside})).is_err());
+        seed_restore(None, None);
         // 其他 kind 不受影響
         assert!(authorize("track_add", &json!({"name": "x"})).is_ok());
         // 超長路徑直接拒絕
