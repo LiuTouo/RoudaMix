@@ -51,7 +51,7 @@
   };
   const sortedPlugins = (track: Track) => {
     if (sortBy === "chain") return track.plugins;
-    return [...track.plugins].sort((a, b) => {
+    return track.plugins.toSorted((a, b) => {
       if (sortBy === "latency")
         return (b.effectiveLatencySamples ?? -1) - (a.effectiveLatencySamples ?? -1);
       return (loadView[loadKey(b.instanceId, 0)]?.ewma ?? -1) -
