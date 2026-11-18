@@ -15,9 +15,11 @@ namespace {
 int bypass_commands = 0;
 LRESULT CALLBACK command_target(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (msg == rmx::WM_APP_HOSTCMD) {
-        const auto* command = reinterpret_cast<rmx::EditorHostCmd*>(lp);
-        if (command->kind == rmx::kHostBypass) ++bypass_commands;
-        delete command;
+        // 稽核 run-1:LPARAM = ticket,查表取指令(不再裸指標)
+        rmx::EditorHostCmd command;
+        if (rmx::hostcmd_take(static_cast<std::uint64_t>(lp), command) &&
+            command.kind == rmx::kHostBypass)
+            ++bypass_commands;
         return 0;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);

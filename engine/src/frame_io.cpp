@@ -1,6 +1,7 @@
 #include "frame_io.hpp"
 
 #include <algorithm>
+#include <cstdio>
 
 #include "protocol.hpp"
 
@@ -29,6 +30,8 @@ struct AsyncIo {
 // read_exact 的 bounded 版:每個讀取區段最多等 timeout_ms,逾時 CancelIoEx。
 // 認證 prelude 用 —— 未認證 client 卡住不能無限佔住唯一 pipe 槽。
 bool read_exact_bounded(HANDLE h, void* buf, size_t n, DWORD timeout_ms);
+// deadline 版:整段讀取共享總時限(防 dribble 拉長握手)。
+bool read_exact_deadline(HANDLE h, void* buf, size_t n, ULONGLONG deadline_ms);
 
 bool read_exact(HANDLE h, void* buf, size_t n) {
     return read_exact_bounded(h, buf, n, INFINITE);
@@ -45,7 +48,9 @@ bool secret_matches(const uint8_t* a, size_t a_len, const uint8_t* b, size_t b_l
 bool auth_client(HANDLE h, const std::vector<uint8_t>& secret, DWORD timeout_ms) {
     if (secret.empty()) return false;
     std::vector<uint8_t> provided(secret.size());
-    if (!read_exact_bounded(h, provided.data(), provided.size(), timeout_ms)) return false;
+    // 總時限版讀取:32B 秘密整體必須在 timeout_ms 內到齊(防 dribble 佔槽)
+    const ULONGLONG deadline = GetTickCount64() + timeout_ms;
+    if (!read_exact_deadline(h, provided.data(), provided.size(), deadline)) return false;
     const bool ok = secret_matches(provided.data(), provided.size(), secret.data(),
                                    secret.size());
     // ack 一定回(1 = ok,0 = 不符);寫不出 = 呼叫端也會因讀失敗而斷
@@ -108,6 +113,34 @@ bool read_exact_bounded(HANDLE h, void* buf, size_t n, DWORD timeout_ms) {
     return true;
 }
 
+// deadline 版:整段讀取共享一個總時限(每 chunk 的等待 = 剩餘時間)。
+// 防認證 prelude 被 1-byte dribble 拖長:per-chunk 逾時下 32 bytes 可拉到
+// ~32x timeout_ms,佔住唯一 pipe 槽(稽核 run-1 hardening)。
+bool read_exact_deadline(HANDLE h, void* buf, size_t n, ULONGLONG deadline_ms) {
+    auto* p = static_cast<uint8_t*>(buf);
+    while (n > 0) {
+        const ULONGLONG now = GetTickCount64();
+        if (now >= deadline_ms) return false;
+        const DWORD remaining = static_cast<DWORD>(deadline_ms - now);
+        AsyncIo io;
+        if (!io.valid()) return false;
+        DWORD got = 0;
+        if (!ReadFile(h, p, static_cast<DWORD>(n), &got, &io.ov)) {
+            if (GetLastError() != ERROR_IO_PENDING) return false;
+            if (WaitForSingleObject(io.ov.hEvent, remaining) != WAIT_OBJECT_0) {
+                CancelIoEx(h, &io.ov);
+                GetOverlappedResult(h, &io.ov, &got, TRUE);
+                return false;
+            }
+            if (!GetOverlappedResult(h, &io.ov, &got, FALSE)) return false;
+        }
+        if (got == 0) return false;
+        p += got;
+        n -= got;
+    }
+    return true;
+}
+
 std::optional<std::vector<uint8_t>> read_frame_bounded(HANDLE h, DWORD timeout_ms) {
     uint8_t len_buf[4];
     if (!read_exact_bounded(h, len_buf, sizeof(len_buf), timeout_ms)) return std::nullopt;
@@ -125,7 +158,12 @@ std::optional<std::vector<uint8_t>> read_frame(HANDLE h) {
 
 bool write_frame(HANDLE h, const nlohmann::json& j) {
     std::string s = j.dump();
-    if (s.size() > kMaxFrameBytes) return false;
+    if (s.size() > kMaxFrameBytes) {
+        // 超限回覆明確記錄(稽核 run-1:靜默丟框會讓 client 乾等 30s 逾時)
+        std::fprintf(stderr, "[engine] write_frame: frame %zu bytes exceeds 1 MiB cap, dropped\n",
+                     s.size());
+        return false;
+    }
     std::vector<uint8_t> frame(4 + s.size());
     uint32_t len = static_cast<uint32_t>(s.size());
     frame[0] = len & 0xFF;

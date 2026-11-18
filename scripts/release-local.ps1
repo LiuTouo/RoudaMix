@@ -159,10 +159,11 @@ if ($KeyPassword) {
 }
 if ([string]::IsNullOrEmpty($plainKeyPassword)) {
     # 本機主控台會吃掉遮罩輸入（實測：masked length=0, plain=3），改讀剪貼簿；
-    # 僅去除結尾換行（複製時常見），不動其他字元。
+    # 僅去除結尾換行（複製時常見），不動其他字元。讀完立即清空剪貼簿減少殘留。
     Write-Host 'KeyPassword not provided/empty; reading password from clipboard...'
     $clip = Get-Clipboard | Out-String
     $plainKeyPassword = $clip -replace '[\r\n]+$', ''
+    Set-Clipboard -Value ''
 }
 if ([string]::IsNullOrEmpty($plainKeyPassword)) {
     throw 'No signing password: copy it to the clipboard first, or pass -KeyPassword.'

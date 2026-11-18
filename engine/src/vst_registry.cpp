@@ -266,6 +266,14 @@ bool load(const std::filesystem::path& file, Registry& out, std::string& error) 
         error = "cannot inspect VST registry: " + ec.message();
         return false;
     }
+    // 稽核 run-1:與 sibling parser(session 4MiB)同款的上限 —— 註冊快取在
+    // app data,同 user 可寫;超上限/過深直接視為損壞(fail closed 回空清單)。
+    constexpr std::uintmax_t kMaxRegistryBytes = 8ull * 1024 * 1024;
+    constexpr int kMaxRegistryDepth = 64;
+    if (const auto size = std::filesystem::file_size(file, ec); !ec && size > kMaxRegistryBytes) {
+        error = "VST registry exceeds 8 MiB cap";
+        return false;
+    }
 
     std::ifstream input(file, std::ios::binary);
     if (!input) {
@@ -274,7 +282,12 @@ bool load(const std::filesystem::path& file, Registry& out, std::string& error) 
     }
     std::ostringstream buffer;
     buffer << input.rdbuf();
-    const auto json = nlohmann::json::parse(buffer.str(), nullptr, false);
+    const auto json = nlohmann::json::parse(
+        buffer.str(),
+        [kMaxRegistryDepth](int depth, nlohmann::json::parse_event_t, nlohmann::json&) {
+            return depth <= kMaxRegistryDepth;
+        },
+        false);
     if (json.is_discarded() || !json.is_object() ||
         !json.contains("schemaVersion") || !json["schemaVersion"].is_number_unsigned() ||
         json["schemaVersion"].get<std::uint32_t>() != kSchemaVersion ||

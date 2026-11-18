@@ -25,6 +25,16 @@ node_modules/
 /.pi/
 /ui/.impeccable/
 
+# 本機密鑰與憑證不得入庫（deny patterns；預防性）
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.*
+secrets.*
+
 # 本機代理設定與索引(不入 Git)
 /AGENTS.md
 /.codegraph/

@@ -44,7 +44,7 @@ TypeScript command interface 由該表衍生，不得直接修改其 generated �
 ## 3. 版本
 
 - 每個 client→server frame 帶 `protocolVersion`(本版 = `2`)。v1 已淘汰:多軌 track graph 取代單鏈 rack(`set_source`/`inputMono`/`status.rack` 全數移除),舊 client 會收到 `unsupported_version`。
-- Server 拒絕 `protocolVersion` 高於自身的連線(回 `error` reply `kind="unsupported_version"` 後斷線)。
+- Server 拒絕 `protocolVersion` 高於自身的連線（回 `error` reply `kind="unsupported_version"`；連線保留，後續命令仍可派送）。
 - 相同 major 內**只加欄位、不改語意**;未知欄位雙方必須忽略。
 
 ## 4. 訊息種類

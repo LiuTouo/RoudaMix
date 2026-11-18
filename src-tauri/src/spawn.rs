@@ -71,8 +71,12 @@ fn kill_on_close_job() -> Option<isize> {
 
 fn candidates() -> Vec<PathBuf> {
     let mut v = Vec::new();
-    if let Ok(p) = std::env::var("ROUDAMIX_ENGINE_EXE") {
-        v.push(PathBuf::from(p));
+    // dev 覆寫僅限 debug build:release 版接受 env 覆寫 = 同 user 自傷面
+    // (稽核 run-1 hardening)。debug 下 cargo 與手動驗證仍可用。
+    if cfg!(debug_assertions) {
+        if let Ok(p) = std::env::var("ROUDAMIX_ENGINE_EXE") {
+            v.push(PathBuf::from(p));
+        }
     }
     // dev:workspace 內 engine build 輸出
     v.push(
@@ -106,6 +110,8 @@ pub fn spawn_supervised(app: &AppHandle, ipc: &crate::protocol::IpcChannel) -> s
         // (跨 principal 讀他人進程 env 需 PROCESS_VM_READ;同 user 不在威脅模型)。
         .env("ROUDAMIX_IPC_PIPE", &ipc.pipe_name)
         .env("ROUDAMIX_IPC_SECRET", ipc.secret_hex())
+        // 稽核 run-1 hardening:editor owner HWND 釘 bridge pid 用
+        .env("ROUDAMIX_BRIDGE_PID", std::process::id().to_string())
         .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
         .spawn()?;
     // 進 job(app 退出 = engine 結束)。engine 已在別的 job(沙箱/測試環境)會失敗

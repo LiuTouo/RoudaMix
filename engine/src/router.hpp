@@ -36,6 +36,8 @@ public:
     void recover_from_structured_exception(std::uint64_t generation,
                                            std::uint64_t id,
                                            const std::string& message);
+    // 同款:handle_host_command 的 engine_mutex_ 收回(main thread only)。
+    void recover_host_command();
     void send_protocol_error(std::uint64_t generation, std::uint64_t id,
                              const std::string& code, const std::string& message);
 

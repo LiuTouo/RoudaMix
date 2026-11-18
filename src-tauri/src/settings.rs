@@ -477,6 +477,10 @@ pub fn get_settings(app: AppHandle) -> SettingsReply {
 #[tauri::command]
 pub fn set_settings(app: AppHandle, patch: Value) -> Result<SettingsReply, String> {
     let _io = SETTINGS_IO.lock().unwrap_or_else(|e| e.into_inner());
+    // 稽核 run-1 hardening:patch 無上限會讓 settings.json 無限成長(同 user DoS)
+    if serde_json::to_vec(&patch).map(|b| b.len()).unwrap_or(usize::MAX) > 64 * 1024 {
+        return Err("settings patch 超過 64 KiB 上限".into());
+    }
     let p = path(&app).ok_or("no app data dir")?;
     // 檔案層 warning(.bak 回復/損壞)只此一份;欄位層以 patch 合併後的 normalize 為準
     let (mut raw, mut warnings) = read_doc(&p);
@@ -498,8 +502,23 @@ pub fn set_settings(app: AppHandle, patch: Value) -> Result<SettingsReply, Strin
 }
 
 /// 列出資料夾內 .rmsession(檔名,排序)。副檔名不分大小寫;只列 regular file。
+/// 稽核 run-1:僅接受本 launch 對話框核准的資料夾,或設定檔持久化的
+/// sessionDir(啟動還原 folder 模式要用);拿掉任意目錄存在性 oracle。
 #[tauri::command]
-pub fn list_sessions(dir: String) -> Result<Vec<String>, String> {
+pub fn list_sessions(app: AppHandle, dir: String) -> Result<Vec<String>, String> {
+    let allowed = crate::fs_guard::folder_approved(&dir) || {
+        let (_, s, _) = load_raw(&app);
+        match &s.session_dir {
+            Some(configured) => {
+                let norm = |x: &str| x.replace('\\', "/").to_lowercase();
+                norm(configured) == norm(&dir)
+            }
+            None => false,
+        }
+    };
+    if !allowed {
+        return Err(format!("資料夾未核准:{dir}"));
+    }
     let md = fs::metadata(&dir).map_err(|e| format!("資料夾無法存取({dir}):{e}"))?;
     if !md.is_dir() {
         return Err(format!("不是資料夾:{dir}"));

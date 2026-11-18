@@ -533,11 +533,18 @@ bool AsioDevice::open_control_panel(std::string& err) {
         const std::size_t slash = driver_dll_path_.find_last_of("\\/");
         if (slash != std::string::npos) {
             const std::wstring dir = utf8_to_wide(driver_dll_path_.substr(0, slash + 1));
+            // 稽核 run-1:同目錄多個 *cpl*.exe 時取字典序最小(結果確定性,
+            // 不再是 FindFirstFile 的磁碟序偶然);等面板關閉有 30 分鐘上限,
+            // 掛死的 vendor 面板不再無限封鎖 router shutdown join。
             WIN32_FIND_DATAW fd{};
             HANDLE found = FindFirstFileW((dir + L"*cpl*.exe").c_str(), &fd);
             if (found != INVALID_HANDLE_VALUE) {
-                const std::wstring exe = dir + fd.cFileName;
+                std::wstring best = fd.cFileName;
+                while (FindNextFileW(found, &fd)) {
+                    if (wcscmp(fd.cFileName, best.c_str()) < 0) best = fd.cFileName;
+                }
                 FindClose(found);
+                const std::wstring exe = dir + best;
                 STARTUPINFOW si{};
                 si.cb = sizeof(si);
                 PROCESS_INFORMATION pi{};
@@ -546,7 +553,7 @@ bool AsioDevice::open_control_panel(std::string& err) {
                 if (CreateProcessW(exe.c_str(), nullptr, nullptr, nullptr, FALSE, 0, nullptr,
                                    nullptr, &si, &pi)) {
                     CloseHandle(pi.hThread);
-                    WaitForSingleObject(pi.hProcess, INFINITE);
+                    WaitForSingleObject(pi.hProcess, 30u * 60u * 1000u);
                     CloseHandle(pi.hProcess);
                     return true;
                 }

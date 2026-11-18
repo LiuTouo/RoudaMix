@@ -26,8 +26,16 @@ struct EditorHostCmd {
     std::wstring path;
 };
 
-// LPARAM = EditorHostCmd*(handler 處理後 delete);WM_APP+1/2 已被 Task/QUIT 用掉
+// 稽核 run-1:LPARAM = ticket(查表取指令)。不再傳裸指標 —— 跨行程亂發
+// WM_APP_HOSTCMD 只會撞到空格/過期 ticket,不可能餵出任意指標。
+// WM_APP+1/2 已被 Task/QUIT 用掉
 constexpr UINT WM_APP_HOSTCMD = WM_APP + 3;
+
+// 入隊並 POST;Post 失敗回 0 並白動出隊。容量上限 64(超出丢最舊)。
+std::uint64_t hostcmd_post(HWND target, int kind, std::uint32_t instance_id,
+                           std::wstring path = {});
+// main window 消費端:ticket 對得上才取出(取後即擦除)。
+bool hostcmd_take(std::uint64_t ticket, EditorHostCmd& out);
 
 class EditorHost {
 public:
@@ -38,6 +46,9 @@ public:
 
     void set_engine(AudioEngine* engine) noexcept;   // main() 接線一次
     void set_command_target(HWND post_to) noexcept;  // EditorHostCmd 投遞目標
+    // 稽核 run-1:set_editor_owner 的 HWND 只接受 bridge process 的視窗
+    // (spawn env ROUDAMIX_BRIDGE_PID 傳入;0 = 不設限,測試用)。
+    void set_bridge_pid(std::uint32_t pid) noexcept;
     // 僅縮放自繪 caption/tabs/控制項(75–150%)，保留插件 view 的原生尺寸。
     void set_ui_scale(int percent) noexcept;
     // 測試專用:視窗照常建立與幾何驗證,但不顯示、不搶前景 —— ctest 跑批

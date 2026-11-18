@@ -113,6 +113,12 @@ void Router::recover_from_structured_exception(std::uint64_t generation,
     send_protocol_error(generation, id, "internal", message);
 }
 
+void Router::recover_host_command() {
+    // host_cmd_seh 同款收回:handle_host_command 取 engine_mutex_ 後 plugin
+    // native code 崩潰(SEH 越過解構),main thread 收回鎖讓 engine 續跑。
+    engine_mutex_.unlock();
+}
+
 void Router::idle_reap() {
     std::lock_guard<std::mutex> lock(engine_mutex_);
     engine_.reap_retired_graphs(false);
@@ -432,7 +438,27 @@ void Router::scan_job_thread(std::uint64_t job_id,
     nlohmann::json committed_failed;
     if (outcome == 0) {
         vst_registry::normalize(candidate);
-        if (!vst_registry::save_atomic(vst_registry_path_, candidate, job_error)) outcome = 1;
+        // 稽核 run-1:檔案寫入與記憶體 swap 同鎖序列化(與 approve_module 的
+        // save 競態會丢核准/交錯寫檔);掃描期間 approve 的 verified 併回
+        // candidate,掃描 commit 不再盖掉使用者核准。
+        {
+            std::lock_guard<std::mutex> lock(scan_mutex_);
+            for (const auto& old : vst_registry_.entries) {
+                if (old.verified.empty()) continue;
+                for (auto& fresh : candidate.entries) {
+                    if (vst_registry::path_key(old.path) ==
+                            vst_registry::path_key(fresh.path) &&
+                        old.fingerprint == fresh.fingerprint) {
+                        for (const auto& v : old.verified)
+                            if (std::find(fresh.verified.begin(), fresh.verified.end(), v) ==
+                                fresh.verified.end())
+                                fresh.verified.push_back(v);
+                    }
+                }
+            }
+            if (!vst_registry::save_atomic(vst_registry_path_, candidate, job_error))
+                outcome = 1;
+        }
     }
     {
         std::lock_guard<std::mutex> lock(scan_mutex_);
@@ -553,6 +579,9 @@ Router::Outcome Router::handle_start(const StartRequest& request) {
 }
 
 Router::Outcome Router::handle_stop(const EmptyRequest&) {
+    // 稽核 run-1:面板 modal 期間 stop 會踩 driver 內部狀態(同 Router::stop
+    // 的 panel join 防護);open_control_panel thread 結束才碰 driver。
+    if (panel_thread_.joinable()) panel_thread_.join();
     engine_.stop();
     return success(session::status_json(engine_, revision_), Effect::kStatus);
 }

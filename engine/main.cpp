@@ -2,7 +2,9 @@
 // Engine command 語意、臨界區、revision/event/reply envelope 全由 Router 擁有。
 #include <windows.h>
 
+#include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cstdio>
 #include <mutex>
 #include <optional>
@@ -71,9 +73,17 @@ std::string to_ascii(const std::wstring& wide) {
 }
 
 void load_ipc_config() {
-    if (auto name = env_wide(L"ROUDAMIX_IPC_PIPE"))
-        g_pipe_name = std::move(*name);
+    auto name = env_wide(L"ROUDAMIX_IPC_PIPE");
     auto secret = env_wide(L"ROUDAMIX_IPC_SECRET");
+    if (name && !secret) {
+        // 稽核 run-1:自訂 pipe 名但無秘密 = 無認證引擎掛在呼叫者選的名稱上;
+        // 拒絕啟動。兩者皆缺 = documented dev/probe legacy 模式,維持不變。
+        std::fprintf(stderr,
+                     "[engine] ROUDAMIX_IPC_PIPE set without ROUDAMIX_IPC_SECRET, "
+                     "refusing to start\n");
+        std::exit(1);
+    }
+    if (name) g_pipe_name = std::move(*name);
     if (!secret) return;
     auto decoded = rmx::hex_decode(to_ascii(*secret));
     if (!decoded || decoded->size() < 16) {
@@ -123,6 +133,26 @@ bool dispatch_seh(std::uint64_t generation, const Command& command) {
     return result.shutdown;
 }
 
+// 稽核 run-1:editor 視窗指令(preset 讀寫會跑 plugin native code)比照
+// dispatch 補 SEH 防護,plugin 崩潰不再滅整顆 engine。
+void host_cmd_seh_raw(const rmx::EditorHostCmd* command, DWORD* code) {
+    __try {
+        g_router.handle_host_command(*command);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        *code = GetExceptionCode();
+    }
+}
+
+void host_cmd_seh(const rmx::EditorHostCmd& command) {
+    DWORD code = 0;
+    host_cmd_seh_raw(&command, &code);
+    if (code != 0) {
+        std::fprintf(stderr, "[engine] SEH exception in host command %d: %lX\n",
+                     command.kind, code);
+        g_router.recover_host_command();
+    }
+}
+
 LRESULT CALLBACK main_wnd_proc(HWND window, UINT message, WPARAM word_param,
                                LPARAM long_param) noexcept {
     if (message == WM_APP_TASK) {
@@ -139,10 +169,11 @@ LRESULT CALLBACK main_wnd_proc(HWND window, UINT message, WPARAM word_param,
         return 0;
     }
     if (message == rmx::WM_APP_HOSTCMD) {
-        auto* command = reinterpret_cast<rmx::EditorHostCmd*>(long_param);
-        if (command != nullptr) {
-            g_router.handle_host_command(*command);
-            delete command;
+        // 稽核 run-1:LPARAM 是 ticket(查表取指令),不再裸解指標 —— 跨行程
+        // 亂發 WM_APP_HOSTCMD 只會撞到空格/過期 ticket,不可能再餵出任意指標。
+        rmx::EditorHostCmd command;
+        if (rmx::hostcmd_take(static_cast<std::uint64_t>(long_param), command)) {
+            host_cmd_seh(command);
         }
         return 0;
     }
@@ -199,7 +230,9 @@ void serve_client(HANDLE pipe, std::uint64_t generation) {
             break;
         }
         try {
-            Frame parsed = rmx::parse_frame(json, false);
+            // strict=true:command 幀必帶 protocolVersion(bridge 恆帶;稽核
+            // run-1:引擎端不再依賴 client 自律,非 2 版直接 ParseError)
+            Frame parsed = rmx::parse_frame(json, true);
             if (auto* command = std::get_if<Command>(&parsed)) {
                 auto* task = new Task{generation, std::move(*command)};
                 if (!PostMessageW(g_main_hwnd, WM_APP_TASK, 0,
@@ -303,6 +336,14 @@ int main() {
         std::fprintf(stderr, "[engine] CoInitializeEx failed\n");
 
     load_ipc_config();
+
+    // 稽核 run-1:set_editor_owner 只收 bridge process 的 HWND
+    if (auto pid = env_wide(L"ROUDAMIX_BRIDGE_PID")) {
+        const auto ascii = to_ascii(*pid);
+        if (!ascii.empty() && std::all_of(ascii.begin(), ascii.end(), ::isdigit))
+            rmx::EditorHost::instance().set_bridge_pid(
+                static_cast<std::uint32_t>(std::stoul(ascii)));
+    }
 
     g_router.load_registry();
 

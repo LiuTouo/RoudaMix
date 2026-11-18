@@ -41,11 +41,53 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <unordered_map>
 #include <cstdio>
 #include <thread>
 #include <utility>
 
 namespace rmx {
+
+// ---- EditorHostCmd ticket 佇列(稽核 run-1:取代 LPARAM 裸指標)---------
+namespace {
+std::mutex g_hostcmd_mu;
+std::unordered_map<std::uint64_t, EditorHostCmd> g_hostcmd_q;
+std::uint64_t g_hostcmd_next = 1;
+constexpr std::size_t kHostcmdQueueCap = 64;
+std::atomic<DWORD> g_bridge_pid{0};
+}  // namespace
+
+std::uint64_t hostcmd_post(HWND target, int kind, std::uint32_t instance_id,
+                           std::wstring path) {
+    if (target == nullptr) return 0;
+    std::uint64_t ticket = 0;
+    {
+        std::lock_guard<std::mutex> lock(g_hostcmd_mu);
+        if (g_hostcmd_q.size() >= kHostcmdQueueCap) g_hostcmd_q.erase(g_hostcmd_q.begin());
+        ticket = g_hostcmd_next++;
+        g_hostcmd_q.emplace(ticket,
+                            EditorHostCmd{kind, instance_id, std::move(path)});
+    }
+    if (!PostMessageW(target, WM_APP_HOSTCMD, 0, static_cast<LPARAM>(ticket))) {
+        std::lock_guard<std::mutex> lock(g_hostcmd_mu);
+        g_hostcmd_q.erase(ticket);
+        return 0;
+    }
+    return ticket;
+}
+
+bool hostcmd_take(std::uint64_t ticket, EditorHostCmd& out) {
+    std::lock_guard<std::mutex> lock(g_hostcmd_mu);
+    const auto it = g_hostcmd_q.find(ticket);
+    if (it == g_hostcmd_q.end()) return false;
+    out = std::move(it->second);
+    g_hostcmd_q.erase(it);
+    return true;
+}
+
+void EditorHost::set_bridge_pid(std::uint32_t pid) noexcept {
+    g_bridge_pid.store(pid, std::memory_order_release);
+}
 
 namespace {
 
@@ -310,6 +352,15 @@ bool pick_preset_file(HWND owner, std::wstring& out) noexcept {
 }
 
 bool pick_preset_save(HWND owner, const std::wstring& default_name, std::wstring& out) noexcept {
+    // 稽核 run-1:預設檔名來自 plugin 控制的 slot name,先淨化(擋路徑分隔/
+    // 控制字元/長度),不把 plugin 字串原樣放進使用者可見的路徑欄。
+    std::wstring safe_name;
+    for (wchar_t c : default_name) {
+        if (safe_name.size() >= 64) break;
+        if (c >= 32 && c != L'/' && c != L'\\' && c != L':' && c != L'*' &&
+            c != L'?' && c != L'"' && c != L'<' && c != L'>' && c != L'|')
+            safe_name.push_back(c);
+    }
     IFileSaveDialog* dlg = nullptr;
     if (CoCreateInstance(CLSID_FileSaveDialog, nullptr, CLSCTX_INPROC_SERVER,
                          IID_IFileSaveDialog, reinterpret_cast<void**>(&dlg)) != S_OK)
@@ -318,7 +369,7 @@ bool pick_preset_save(HWND owner, const std::wstring& default_name, std::wstring
     const COMDLG_FILTERSPEC specs[] = {{L"VST3 Preset", L"*.vstpreset"}};
     dlg->SetFileTypes(1, specs);
     dlg->SetDefaultExtension(L"vstpreset");
-    if (!default_name.empty()) dlg->SetFileName(default_name.c_str());
+    if (!safe_name.empty()) dlg->SetFileName(safe_name.c_str());
     dlg->SetTitle(L"儲存 VST3 Preset");
     if (dlg->Show(owner) == S_OK) {
         IShellItem* item = nullptr;
@@ -338,8 +389,7 @@ bool pick_preset_save(HWND owner, const std::wstring& default_name, std::wstring
 
 void post_host_cmd(HWND target, int kind, std::uint32_t id, std::wstring path = {}) {
     if (target == nullptr) return;
-    auto* cmd = new EditorHostCmd{kind, id, std::move(path)};
-    if (!PostMessageW(target, WM_APP_HOSTCMD, 0, reinterpret_cast<LPARAM>(cmd))) delete cmd;
+    (void)rmx::hostcmd_post(target, kind, id, std::move(path));
 }
 
 }  // namespace
@@ -907,9 +957,19 @@ void EditorHost::set_owner(HWND owner) noexcept {
         impl_->ui_pid = 0;
         return;
     }
-    impl_->ui_wnd = owner;
     DWORD pid = 0;
     GetWindowThreadProcessId(owner, &pid);
+    // 稽核 run-1:owner 視窗必屬 bridge process(spawn env 傳入的 pid);
+    // 他 process 的 HWND 一律拒收(測試環境 set_bridge_pid(0) = 不設限)。
+    const DWORD expected = g_bridge_pid.load(std::memory_order_acquire);
+    if (expected != 0 && pid != expected) {
+        std::fprintf(stderr, "[engine] editor owner rejected: hwnd pid %lu != bridge %lu\n",
+                     static_cast<unsigned long>(pid), static_cast<unsigned long>(expected));
+        impl_->ui_wnd = nullptr;
+        impl_->ui_pid = 0;
+        return;
+    }
+    impl_->ui_wnd = owner;
     impl_->ui_pid = pid;
     ensure_ui_move_hook(pid);
     // 立即建立跟隨平移基準（之後 LOCATIONCHANGE 以 delta 累加平移編輯器）

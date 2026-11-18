@@ -8,7 +8,7 @@ export function latestFromApi(data: unknown): LatestRelease | null {
   if (!release || typeof release.tag_name !== 'string' || !release.tag_name.replace(/^v/, '').trim() || !Array.isArray(release.assets)) return null;
   const pick = (suffix: string) => {
     const asset = release.assets!.find(asset => asset && asset.state === 'uploaded' && typeof asset.name === 'string'
-      && typeof asset.browser_download_url === 'string' && /^https:\/\/[^\s/]+\//.test(asset.browser_download_url) && asset.name.endsWith(suffix));
+      && typeof asset.browser_download_url === 'string' && /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/releases\/download\//.test(asset.browser_download_url) && asset.name.endsWith(suffix));
     return asset ? asset.browser_download_url as string : null;
   };
   const setupUrl = pick('-windows-x64-setup.exe');
