@@ -25,7 +25,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost"
     }
   },
   "bundle": {
@@ -41,6 +41,9 @@
     "resources": {
       "../engine/build/Release/roudamix-engine.exe": "roudamix-engine.exe",
       "../engine/build/Release/roudamix-worker.exe": "roudamix-worker.exe"
+    },
+    "windows": {
+      "allowDowngrades": false
     }
   },
   "plugins": {

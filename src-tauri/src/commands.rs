@@ -18,6 +18,11 @@ pub async fn engine_command(
     kind: String,
     payload: Value,
 ) -> Result<Value, CommandError> {
+    // P0(fs_guard):檔案讀寫命令的路徑必須來自本 launch 的原生對話框核准,
+    // 拒絕時不送 engine。沿用既有 bad_command code(UI 無需新分支)。
+    if let Err(msg) = crate::fs_guard::authorize(&kind, &payload) {
+        return Err(CommandError::new("bad_command", msg));
+    }
     b.send(&kind, payload).await
 }
 

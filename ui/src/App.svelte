@@ -2,7 +2,6 @@
   import { onMount } from "svelte";
   import { fade, fly } from "svelte/transition";
   import { cubicIn, cubicOut } from "svelte/easing";
-  import { open, save } from "@tauri-apps/plugin-dialog";
   import {
     disable as disableAutostart,
     enable as enableAutostart,
@@ -82,6 +81,9 @@
     onSingleInstance,
     quitApp,
     respawnEngine,
+    pickSessionOpen,
+    pickSessionSave,
+    pickSessionFolder,
     type AppSettings,
     type SettingsReply,
   } from "./lib/ipc";
@@ -921,11 +923,7 @@
     let path = currentSessionPath;
     if (!path) {
       try {
-        path = await save({
-          title: "儲存 Session",
-          defaultPath: "session.rmsession",
-          filters: [{ name: "RoudaMix Session", extensions: ["rmsession"] }],
-        });
+        path = await pickSessionSave();
       } catch {
         return false;
       }
@@ -1591,11 +1589,7 @@
 
   async function saveSession() {
     try {
-      const path = await save({
-        title: "儲存 Session",
-        defaultPath: "session.rmsession",
-        filters: [{ name: "RoudaMix Session", extensions: ["rmsession"] }],
-      });
+      const path = await pickSessionSave();
       if (!path) return;
       const r = await engineCommand("save_session", {
         path,
@@ -1679,12 +1673,7 @@
       }
     }
     try {
-      const path = await open({
-        title: "載入 Session",
-        multiple: false,
-        directory: false,
-        filters: [{ name: "RoudaMix Session", extensions: ["rmsession"] }],
-      });
+      const path = await pickSessionOpen();
       if (!path) return;
       const result = await restoreSession("manual-restore", path);
       if (result.status === "superseded") return;
@@ -1972,11 +1961,7 @@
 
   async function pickSessionDir() {
     try {
-      const d = await open({
-        title: "選擇 Session 資料夾",
-        directory: true,
-        multiple: false,
-      });
+      const d = await pickSessionFolder();
       if (!d) return;
       if (!appSettings)
         appSettings = {
@@ -1986,7 +1971,7 @@
           lastSessionPath: null,
           startMinimizedOnAutostart: false,
         };
-      appSettings.sessionDir = d as string;
+      appSettings.sessionDir = d;
       appSettings.startupFile = null; // 換資料夾 = 舊選擇作廢
       await persistSettings();
       await refreshFolderFiles();
@@ -2147,6 +2132,7 @@
     <button
       class="winbtn"
       aria-label="最小化視窗"
+      data-tooltip="最小化視窗"
       onclick={() => void getCurrentWindow().minimize().catch(() => {})}
     >
       <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M0 5h10" stroke="currentColor" /></svg>
@@ -2154,6 +2140,7 @@
     <button
       class="winbtn"
       aria-label="最大化或還原視窗"
+      data-tooltip="最大化或還原視窗"
       onclick={() => void getCurrentWindow().toggleMaximize().catch(() => {})}
     >
       <svg viewBox="0 0 10 10" aria-hidden="true"><rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor" /></svg>
@@ -2161,6 +2148,7 @@
     <button
       class="winbtn close"
       aria-label="關閉視窗"
+      data-tooltip="關閉視窗"
       onclick={() => void getCurrentWindow().close().catch(() => {})}
     >
       <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M0 0l10 10M10 0L0 10" stroke="currentColor" /></svg>

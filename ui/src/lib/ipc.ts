@@ -93,3 +93,11 @@ export const quitApp = () => invoke<void>("quit_app");
 
 /** P1-L:連線失敗/spawn 失敗時手動重試(冪等) */
 export const respawnEngine = () => invoke<void>("respawn_engine");
+
+// ---------- P0 修復(稽核 run-1 fs_guard):Session 對話框改由 Rust 端開,
+// 回傳路徑即記入本 launch 核准表;engine_command 的 save/load session 路徑
+// 必須出自這裡(攻陷的 webview 拿不到對話框手勢就帶不出核准路徑)。
+export const pickSessionOpen = () => invoke<string | null>("pick_session_open");
+export const pickSessionSave = () => invoke<string | null>("pick_session_save");
+/** 資料夾模式:選 Session 資料夾(list_sessions 僅收核准/設定內資料夾)。 */
+export const pickSessionFolder = () => invoke<string | null>("pick_session_folder");

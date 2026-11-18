@@ -4,6 +4,7 @@
 mod bridge;
 mod command_contract;
 mod commands;
+mod fs_guard;
 mod portable;
 pub mod protocol;
 mod settings;
@@ -167,6 +168,9 @@ pub fn run() {
             commands::respawn_engine,
             commands::set_loudness_owner,
             commands::updater_state,
+            fs_guard::pick_session_open,
+            fs_guard::pick_session_save,
+            fs_guard::pick_session_folder,
             settings::get_settings,
             settings::set_settings,
             settings::list_sessions,

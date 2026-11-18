@@ -31,6 +31,18 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// inbound),失敗即停(半開 pipe 由讀 loop 斷線處理)。
 const PING_INTERVAL: Duration = Duration::from_secs(60);
 
+/// 稽核 run-1 hardening:engine→webview 事件白名喋(= 契約面事件 kind 全集;
+/// snapshot 另走 engine-snapshot 事件)。
+const ALLOWED_EVENT_KINDS: &[&str] = &[
+    "status",
+    "devices_changed",
+    "scan_progress",
+    "scan_done",
+    "scan_failed",
+    "scan_cancelled",
+    "session_progress",
+];
+
 /// serve 返回時中止 ping task(RAII:讀 loop 任一 return 路徑都會 drop)。
 struct PingerGuard(tokio::task::JoinHandle<()>);
 impl Drop for PingerGuard {
@@ -78,7 +90,7 @@ pub struct CommandError {
 }
 
 impl CommandError {
-    fn new(code: &str, message: impl Into<String>) -> Self {
+    pub(crate) fn new(code: &str, message: impl Into<String>) -> Self {
         Self {
             code: code.into(),
             message: message.into(),
@@ -422,6 +434,11 @@ async fn serve(app: &AppHandle, b: &Bridge, mut pipe: NamedPipeClient) {
             Ok(Frame::Event(e)) => {
                 if e.kind == "snapshot" {
                     b.on_snapshot(app, &e.payload);
+                } else if !ALLOWED_EVENT_KINDS.contains(&e.kind.as_str()) {
+                    // 稽核 run-1 hardening:bridge 只轉發契約內事件 kind;
+                    // 未知 kind 不進 webview(UI 本來就忽略)
+                    eprintln!("[bridge] dropped unknown engine event kind: {}", e.kind);
+                    continue;
                 }
                 let _ = app.emit(
                     "engine-event",

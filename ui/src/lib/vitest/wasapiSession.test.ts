@@ -42,7 +42,10 @@ beforeEach(() => {
   const settings = { startupMode: "blank", lastWorkingDevice: "wasapi", lastWorkingBuffer: null,
     checkUpdatesOnStartup: false, startMinimizedOnAutostart: false };
   invoke.mockReset().mockImplementation(async (name) => name === "connect_status"
-    ? { connected: true, epoch: 1, engineVersion: "test" } : { settings, warnings: [] });
+    ? { connected: true, epoch: 1, engineVersion: "test" }
+    : name === "pick_session_open" || name === "pick_session_save" || name === "pick_session_folder"
+      ? "test.rmsession"
+      : { settings, warnings: [] });
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} unobserve() {} });
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
   HTMLDialogElement.prototype.showModal = function () { this.open = true; };
