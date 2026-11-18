@@ -727,24 +727,19 @@ struct EditorHost::Impl {
         if (!GetWindowRect(wnd, &wr)) return;
         LONG x = wr.left + dx;
         LONG y = wr.top + dy;
-        // 夾限只在「編輯器整個落到虛擬桌面之外」才介入。不可夾在「編輯器所在
-        // 螢幕」工作區內:主視窗跨螢幕時,編輯器必須暫時越過所在螢幕邊界才
-        // 走得過去,夾在舊螢幕內 = 被釘在邊緣永遠過不去(「跨螢幕留在原地」
-        // 之因)。全程在虛擬桌面內(含局部越界、跨到別螢幕)一律照 delta 走;
-        // 極端 offset 把整個編輯器推出桌面外時,拉回 UI 主視窗所在螢幕的工作
-        // 區(與 place_at_default 同基準),保證找得回來。主視窗縮小化中
-        // (rect -32000)不拉回:跟著出屏、還原時 delta 帶回原相對位置,
+        // 夾限:「平移後的目標矩形」永遠完整落在單一螢幕的工作區內 ——
+        // MonitorFromRect 取與目標交集最大的螢幕(完全無交集時回退最近
+        // 螢幕),再夾進該螢幕工作區。跨螢幕:編輯器先沿舊螢幕邊緣滑行
+        // (完整可見),過半跨入新螢幕的瞬間 MonitorFromRect 換邊、整窗跳入
+        // → 不會卡在螢幕邊角,也過得了螢幕(舊做法以「當前所在螢幕」取
+        // 夾限基準才會被釘死在邊緣;這裡以目標矩形取,過半即換邊)。
+        // 使用者手動拖曳編輯器不受影響(只攔跟隨位移)。主視窗縮小化中
+        // (rect -32000)不夾限:跟著出屏、還原時 delta 帶回原相對位置,
         // owned 視窗語意。
         const LONG w = wr.right - wr.left, h = wr.bottom - wr.top;
-        RECT vr{GetSystemMetrics(SM_XVIRTUALSCREEN), GetSystemMetrics(SM_YVIRTUALSCREEN),
-                0, 0};
-        vr.right = vr.left + GetSystemMetrics(SM_CXVIRTUALSCREEN);
-        vr.bottom = vr.top + GetSystemMetrics(SM_CYVIRTUALSCREEN);
-        const RECT moved{x, y, x + w, y + h};
-        RECT inter{};
-        IntersectRect(&inter, &moved, &vr);
-        if (IsRectEmpty(&inter) && !IsIconic(ui_wnd)) {
-            const HMONITOR monitor = MonitorFromWindow(ui_wnd, MONITOR_DEFAULTTONEAREST);
+        if (!IsIconic(ui_wnd)) {
+            const RECT moved{x, y, x + w, y + h};
+            const HMONITOR monitor = MonitorFromRect(&moved, MONITOR_DEFAULTTONEAREST);
             MONITORINFO mi{};
             mi.cbSize = sizeof(mi);
             if (monitor != nullptr && GetMonitorInfoW(monitor, &mi)) {

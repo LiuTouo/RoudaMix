@@ -5,6 +5,8 @@ mod bridge;
 mod command_contract;
 mod commands;
 mod fs_guard;
+#[cfg(target_os = "windows")]
+mod loudness_follow;
 mod portable;
 pub mod protocol;
 mod settings;
@@ -149,6 +151,17 @@ pub fn run() {
                 .build(),
         )
         .manage(bridge::Bridge::new())
+        // 主視窗拖曳 → 響度視窗同量跟隨並夾限在螢幕工作區內(僅 Windows)
+        .on_window_event(|window, event| {
+            #[cfg(target_os = "windows")]
+            if window.label() == "main" {
+                if let tauri::WindowEvent::Moved(pos) = event {
+                    loudness_follow::on_main_moved(window, pos.x, pos.y);
+                }
+            }
+            #[cfg(not(target_os = "windows"))]
+            let _ = (window, event);
+        })
         .setup(|app| {
             ensure_main_window(app)?;
             setup_tray(app)?;
