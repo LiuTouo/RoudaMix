@@ -1600,27 +1600,9 @@
 
   // ---------- session 存/載 ----------
 
+  /** 同名儲存:已有目前檔案就直接覆寫,沒有才開存檔對話框(同關窗流程) */
   async function saveSession() {
-    try {
-      const d = saveDialogDefaults();
-      const path = await pickSessionSave(d.dir, d.file);
-      if (!path) return;
-      const r = await engineCommand("save_session", {
-        path,
-        deviceKey: selected || null,
-        sampleRate: status?.running ? Math.round(status.sampleRate) : null,
-        bufferSize: status?.running ? status.bufferSize : bufSize,
-      });
-      confirmRevisionBaseline(r.revision); // 存成功才清 dirty
-      currentSessionPath = path;
-      rememberLastSession(path);
-      notice = "";
-      restoreError = ""; // 手動救回 = 啟動失敗警示該滅
-    } catch (e) {
-      rejectRevisionBaseline();
-      showNotice(e);
-      addNotice("error", "Session 儲存失敗", errorText(e));
-    }
+    await saveSessionForClose();
   }
 
   /** P1-L:起始區「最近 Session」入口 —— 直接載上次路徑(與 loadSession 同款 dirty 流程);

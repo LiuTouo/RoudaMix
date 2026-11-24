@@ -2408,6 +2408,75 @@ void AudioEngine::sync_controller_params(std::uint32_t instance_id) {
     for (const auto& [id, v] : s->param_values) s->plugin->set_param_normalized(id, v);
 }
 
+std::vector<std::pair<std::uint32_t, Vst3RuntimeState>> AudioEngine::capture_runtime_states() {
+    std::vector<std::pair<std::uint32_t, Vst3RuntimeState>> out;
+    // getState 與 RT process 不得併發:整批在同一次 quiescent 窗口內擷取;
+    // 個別 plugin 拒絕 = 略過(不因一個 plugin 失敗就整場沒狀態)
+    (void)with_quiescent_plugin_graph([&]() -> std::optional<Failure> {
+        for (const auto& track : tracks_) {
+            for (const auto& slot : track.chain) {
+                if (slot.plugin == nullptr || slot.availability != RackSlot::Availability::kOk)
+                    continue;
+                Vst3RuntimeState state;
+                std::string state_err;
+                if (!slot.plugin->capture_runtime_state(state, state_err)) continue;
+                out.emplace_back(slot.instance_id, std::move(state));
+            }
+        }
+        return std::nullopt;
+    }, false);
+    return out;
+}
+
+std::optional<Failure> AudioEngine::apply_runtime_state(std::uint32_t instance_id,
+                                                        const Vst3RuntimeState& state) {
+    RackSlot* s = find_slot_mut(instance_id);
+    if (s == nullptr)
+        return failure(Err::kPluginNotFound, "unknown instanceId " + std::to_string(instance_id));
+    if (s->plugin == nullptr) return std::nullopt;  // placeholder:無 DSP 可套
+    const auto replay = [s] {
+        for (const auto& [id, value] : s->param_values) {
+            s->ring->push({id, value});
+            s->plugin->set_param_normalized(id, value);
+            if (s->monitor_shadow) {
+                s->monitor_ring->push({id, value});
+                s->monitor_shadow->set_param_normalized(id, value);
+            }
+        }
+    };
+    const auto pre_roll = [this, s](Vst3Plugin& plugin) -> std::optional<Failure> {
+        if (!stream_running()) return std::nullopt;
+        std::string err;
+        if (!pre_roll_shadow(plugin, s->param_values,
+                             rt_sample_rate_.load(std::memory_order_relaxed), stream_block(), err))
+            return failure(Err::kPluginStateFailed, std::move(err));
+        return std::nullopt;
+    };
+    return with_quiescent_plugin_graph([&]() -> std::optional<Failure> {
+        std::string err;
+        Vst3RuntimeState original;
+        if (!s->plugin->capture_runtime_state(original, err))
+            return failure(Err::kPluginStateFailed, std::move(err));
+        if (!s->plugin->restore_runtime_state(state, err)) {
+            std::string rollback_err;
+            (void)s->plugin->restore_runtime_state(original, rollback_err);
+            return failure(Err::kPluginStateFailed, std::move(err));
+        }
+        // 部分 plugin(Clear 的 Eco 等)只在 view attach 後才把內部狀態套進 DSP
+        s->plugin->kick_editor();
+        replay();  // state 內的參數值不是權威:host 表重放
+        if (auto fail = pre_roll(*s->plugin)) return fail;
+        if (s->monitor_shadow) {
+            if (!s->monitor_shadow->restore_runtime_state(state, err))
+                return failure(Err::kPluginStateFailed, std::move(err));
+            if (auto fail = pre_roll(*s->monitor_shadow)) return fail;
+        }
+        refresh_latency(*s);
+        s->primary_state = RackSlot::RuntimeState::kActive;
+        return std::nullopt;
+    }, true);
+}
+
 bool AudioEngine::ensure_system_outputs() {
     if (!rmx::ensure_system_outputs(tracks_, next_track_id_)) return false;
     swap_graph();

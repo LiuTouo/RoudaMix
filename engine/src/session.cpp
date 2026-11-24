@@ -19,7 +19,7 @@ constexpr int kSessionVersion = 4;
 
 // #14 資源預算(CWE-400/770):外部 session 檔在動 live 狀態「前」的整檔/結構
 // 總量上限。超限 = 拒載(結構超限則略過超量項),live 狀態不動。
-constexpr std::size_t kMaxSessionBytes = 4u * 1024 * 1024;  // 整檔 byte cap
+constexpr std::size_t kMaxSessionBytes = 64u * 1024 * 1024;  // 整檔 byte cap
 constexpr int kMaxJsonDepth = 64;  // nlohmann 無深度上限,深巢狀 = 遞迴爆棧
 // 每 plugin preflight 20s(sandbox.cpp);session 載入整體再加聚合上限,
 // 防大量獨立 module 把 engine dispatch 卡住數小時。
@@ -124,7 +124,88 @@ std::filesystem::path default_path() {
     return base / "default.rmsession";
 }
 
-nlohmann::json serialize(const AudioEngine& engine) {
+// plugin runtime state(base64;component/controller chunk 原樣位元組,不用 JSON 數列)
+namespace {
+constexpr char kBase64Chars[] =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+std::string base64_encode(const std::vector<std::uint8_t>& in) {
+    std::string out;
+    out.reserve((in.size() + 2) / 3 * 4);
+    std::size_t i = 0;
+    for (; i + 2 < in.size(); i += 3) {
+        const std::uint32_t v = (in[i] << 16) | (in[i + 1] << 8) | in[i + 2];
+        out.push_back(kBase64Chars[(v >> 18) & 0x3F]);
+        out.push_back(kBase64Chars[(v >> 12) & 0x3F]);
+        out.push_back(kBase64Chars[(v >> 6) & 0x3F]);
+        out.push_back(kBase64Chars[v & 0x3F]);
+    }
+    if (i + 1 == in.size()) {
+        const std::uint32_t v = in[i] << 16;
+        out.push_back(kBase64Chars[(v >> 18) & 0x3F]);
+        out.push_back(kBase64Chars[(v >> 12) & 0x3F]);
+        out += "==";
+    } else if (i + 2 == in.size()) {
+        const std::uint32_t v = (in[i] << 16) | (in[i + 1] << 8);
+        out.push_back(kBase64Chars[(v >> 18) & 0x3F]);
+        out.push_back(kBase64Chars[(v >> 12) & 0x3F]);
+        out.push_back(kBase64Chars[(v >> 6) & 0x3F]);
+        out.push_back('=');
+    }
+    return out;
+}
+
+std::optional<std::vector<std::uint8_t>> base64_decode(const std::string& text) {
+    std::vector<std::uint8_t> out;
+    out.reserve(text.size() / 4 * 3);
+    std::uint32_t acc = 0;
+    int bits = 0;
+    for (const char c : text) {
+        if (c == '=') break;
+        std::uint32_t v = 0;
+        if (c >= 'A' && c <= 'Z') v = static_cast<std::uint32_t>(c - 'A');
+        else if (c >= 'a' && c <= 'z') v = static_cast<std::uint32_t>(c - 'a' + 26);
+        else if (c >= '0' && c <= '9') v = static_cast<std::uint32_t>(c - '0' + 52);
+        else if (c == '+') v = 62;
+        else if (c == '/') v = 63;
+        else return std::nullopt;  // 非 base64 字元 = 壞檔
+        acc = (acc << 6) | v;
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            out.push_back(static_cast<std::uint8_t>((acc >> bits) & 0xFF));
+        }
+    }
+    return out;
+}
+
+nlohmann::json state_to_json(const Vst3RuntimeState& state) {
+    nlohmann::json j = nlohmann::json::object();
+    if (!state.component.empty()) j["component"] = base64_encode(state.component);
+    if (!state.controller.empty()) j["controller"] = base64_encode(state.controller);
+    return j;
+}
+
+// 壞 chunk/空 component = 丟棄(該 plugin 退回只有參數的原行為),不整體失敗
+std::optional<Vst3RuntimeState> state_from_json(const nlohmann::json& j) {
+    if (!j.is_object() || !j.contains("component") || !j["component"].is_string())
+        return std::nullopt;
+    const auto comp = base64_decode(j["component"].get<std::string>());
+    if (!comp || comp->empty()) return std::nullopt;
+    Vst3RuntimeState state;
+    state.component = *comp;
+    if (j.contains("controller") && j["controller"].is_string()) {
+        const auto ctrl = base64_decode(j["controller"].get<std::string>());
+        if (ctrl) state.controller = *ctrl;
+    }
+    return state;
+}
+}  // namespace
+
+nlohmann::json serialize(const AudioEngine& engine,
+                         const std::vector<std::pair<std::uint32_t, Vst3RuntimeState>>& states) {
+    std::map<std::uint32_t, const Vst3RuntimeState*> state_by_instance;
+    for (const auto& [id, state] : states) state_by_instance[id] = &state;
     nlohmann::json tracks = nlohmann::json::array();
     for (const auto& t : engine.tracks()) {
         nlohmann::json plugins = nlohmann::json::array();
@@ -146,6 +227,12 @@ nlohmann::json serialize(const AudioEngine& engine) {
                 {"availability", availability_str(s.availability)},
                 {"loadError", s.load_error.empty() ? nlohmann::json(nullptr)
                                                    : nlohmann::json(s.load_error)},
+                // 編輯器/內部狀態(component+controller chunk);placeholder 無
+                {"state", [&]() -> nlohmann::json {
+                     const auto it = state_by_instance.find(s.instance_id);
+                     return it == state_by_instance.end() ? nlohmann::json(nullptr)
+                                                          : state_to_json(*it->second);
+                 }()},
             });
         }
         const char* role = system_role_str(t.system_role);
@@ -197,9 +284,10 @@ nlohmann::json serialize(const AudioEngine& engine) {
 //    rename 失敗 = 把 .bak 搬回正式檔復原,仍失敗 = err(原檔可能遺失,.bak 還在)。
 // 3. 成功:.tmp 已隨 rename 消失;保留一份 .bak(上一版,手動恢復用)。
 // 效果:任何時刻中斷,正式檔要嘛完整舊版、要嘛完整新版,不會有截斷的半檔。
-std::optional<Failure> save(const AudioEngine& engine, const std::filesystem::path& file,
+std::optional<Failure> save(AudioEngine& engine, const std::filesystem::path& file,
                             const nlohmann::json& overrides) {
-    nlohmann::json j = serialize(engine);
+    // 先擷取 runtime state(quiescent 窗口),再進純序列化
+    nlohmann::json j = serialize(engine, engine.capture_runtime_states());
     if (overrides.is_object()) {
         if (overrides.contains("deviceKey") && overrides["deviceKey"].is_string())
             j["deviceKey"] = overrides["deviceKey"];
@@ -282,7 +370,7 @@ std::optional<Failure> load(AudioEngine& engine, const std::filesystem::path& fi
         if (text.size() > kMaxSessionBytes) {
             std::fclose(f);
             return failure(Err::kSessionIo,
-                           "session file too large (limit is 4 MiB): " + file.string());
+                           "session file too large (limit is 64 MiB): " + file.string());
         }
     }
     std::fclose(f);
@@ -480,6 +568,10 @@ std::optional<Failure> load(AudioEngine& engine, const std::filesystem::path& fi
                         sp.contains("loadError") && sp["loadError"].is_string()
                             ? sp["loadError"].get<std::string>()
                             : std::string();
+                    // 編輯器/內部狀態(component+controller chunk,base64);壞 chunk =
+                    // 丟棄(退回只有參數值的原行為),不整體失敗
+                    const auto stored_state =
+                        sp.contains("state") ? state_from_json(sp["state"]) : std::nullopt;
 
                     // missing 診斷記錄器(trackId 用檔案內舊 id,對使用者有意義)
                     const auto old_tid =
@@ -576,6 +668,10 @@ std::optional<Failure> load(AudioEngine& engine, const std::filesystem::path& fi
                             (void)engine.set_monitor_bypass(instance_id, true);
                         for (const auto& [pid, v] : params)
                             (void)engine.set_param(instance_id, pid, v);
+                        // state 套在同一個 quiescent 窗口,內部重放 host 參數值
+                        // (state 內的參數不可信);失敗 = 只有參數值
+                        if (stored_state)
+                            (void)engine.apply_runtime_state(instance_id, *stored_state);
                         // set_param 只餵 RT;controller 也推,開 plugin GUI 才會顯示場景值
                         engine.sync_controller_params(instance_id);
                     } else {

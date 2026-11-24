@@ -182,6 +182,13 @@ public:
     // 把 host 權威值推給 controller(editor GUI 顯示同步);session 載入後呼,
     // set_param 只餵 RT ring、GUI 不知道。由 Router 臨界區序列化。
     void sync_controller_params(std::uint32_t instance_id);
+    // session 存檔:一次過 quiescent 擷取全鏈已載入 plugin 的 runtime state
+    // (component/controller chunk = 編輯器內部狀態)。失敗項略過(不整場沒狀態)。
+    std::vector<std::pair<std::uint32_t, Vst3RuntimeState>> capture_runtime_states();
+    // session 載入:套用單一 plugin 的 runtime state,再重放 host 權威參數
+    // (state 內參數值不可信)+ 重算延遲。失敗 = 原 state 還原。
+    std::optional<Failure> apply_runtime_state(std::uint32_t instance_id,
+                                               const Vst3RuntimeState& state);
     // 退休圖定時回收(grace 500ms + reader 歸零才刪)。Router 的 idle_reap/
     // main 迴圈 WM_TIMER 與測試直叫同一入口:移除最後一個 plugin 實例後,
     // shared_ptr 隨退休圖釋放 → module FreeLibrary → 檔案解鎖。

@@ -215,9 +215,12 @@ SessionFile.deviceKey/sampleRate/bufferSize = 最近一次成功 start 的設定
 SessionTrack { trackId: u32, kind: str, systemRole: "monitor"|"stream"|null, latencyPolicy: "fullPdc"|"lowLatency", name: str, color: u32, source: TrackSource, dests: [u32(舊 id)], output: TrackOutput, gain: f32, mute: bool, plugins: [SessionSlot] }
                (載入時 trackId 全部重發;dests 以舊→新 map 重接;app 來源存程序名,載入對不到 = 該軌靜音不失敗;
                 舊 v2 檔無 systemRole = 載入後 engine 確定性指派/補建,不可只靠名稱)
-SessionSlot  { pluginPath: str, classId: str, name: str, bypassed: bool, monitorBypassed: bool, params: [{ paramId: u32, normalized: f32 }], availability: "ok"|"missing"|"loadFailed"|"deferred", loadError: str? }
+SessionSlot  { pluginPath: str, classId: str, name: str, bypassed: bool, monitorBypassed: bool, params: [{ paramId: u32, normalized: f32 }], availability: "ok"|"missing"|"loadFailed"|"deferred", loadError: str?, state: { component: base64, controller: base64? }? }
                (availability 缺 = "ok";!= "ok" 載入時原樣重建 placeholder、不重新試爆;
                 bypassed: true + availability "ok" 載入時直接降為 deferred(延遲載入);
+                state = plugin runtime state(VST3 getState 原樣位元組,base64);component 權威,
+                controller 只帶編輯器佈景;缺/壞 chunk = 該 plugin 只有參數值;載入後 host 參數
+                表重放,state 內參數值不作權威;
                 載入詳細清單回在 load_session result.missing)
 MissingPlugin{ trackId: u32(檔案內舊 id), trackName: str, index: u32(鏈位), name: str, pluginPath: str, classId: str, code: str, message: str }
                (code: plugin_missing / plugin_load_failed / sandbox_unavailable /

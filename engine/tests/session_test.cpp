@@ -749,14 +749,14 @@ int main() {
     // 13. #14 資源預算(CWE-400/770):外部檔在動 live 狀態「前」有整檔/結構
     //     總量上限;超限 = 拒載且狀態不動(不 terminate、不放大記憶體)
     {
-        // 13a. 整檔 byte cap:~5.2MiB 檔(超過上限)拒載,原軌不動
+        // 13a. 整檔 byte cap:~69MiB 檔(超過 64MiB 上限)拒載,原軌不動
         {
             const auto big = tmp / "big.rmsession";
             std::FILE* bf = nullptr;
             _wfopen_s(&bf, big.c_str(), L"wb");
             CHECK(bf != nullptr);
             const std::string chunk(4096, ' ');
-            for (int i = 0; i < 1300; ++i)
+            for (int i = 0; i < 17000; ++i)
                 std::fwrite(chunk.data(), 1, chunk.size(), bf);
             std::fclose(bf);
             const auto before = e.tracks().size();

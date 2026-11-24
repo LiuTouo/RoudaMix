@@ -459,6 +459,49 @@ static void router_duplicate_track(const std::string& module) {
     std::filesystem::remove_all(folder);
 }
 
+// session 存檔帶 plugin runtime state:存檔內 state 非 null,載回後非參數內部
+// 狀態(opaque tail)與延遲一致
+static void session_plugin_state(const std::string& module) {
+    const auto folder = std::filesystem::temp_directory_path() / "rmx-session-plugin-state";
+    std::filesystem::create_directories(folder);
+    const auto file = folder / "state.rmsession";
+    rmx::AudioEngine engine;
+    std::uint32_t track{}, output{}, instance{};
+    CHECK(!engine.track_add(rmx::TrackKind::kAudio, "State", 0, track));
+    CHECK(!engine.track_add(rmx::TrackKind::kOutput, "Monitor", 0, output));
+    CHECK(!engine.track_set_dests(track, {output}));
+    CHECK(!engine.add_plugin(track, module, "", instance));
+    CHECK(!engine.set_param(instance, 100, 128.0 / 192000.0));
+    rmx::PluginSnapshot before;
+    CHECK(!engine.capture_plugin(instance, before));
+    CHECK(!rmx::session::save(engine, file));
+    {
+        const auto j = nlohmann::json::parse(std::ifstream(file));
+        const auto& saved = j["tracks"][0]["plugins"][0]["state"];
+        CHECK(saved.is_object() && saved["component"].is_string());
+    }
+    rmx::AudioEngine loaded;
+    nlohmann::json applied;
+    CHECK(!rmx::session::load(loaded, file, applied));
+    const rmx::RackSlot* slot = nullptr;
+    for (const auto& t : loaded.tracks())
+        for (const auto& s : t.chain)
+            if (s.plugin) slot = &s;
+    CHECK(slot != nullptr);
+    rmx::PluginSnapshot after;
+    CHECK(!loaded.capture_plugin(slot->instance_id, after));
+    CHECK(after.state.component.size() == before.state.component.size());
+    CHECK(before.state.component.size() >= 12);
+    std::uint32_t before_opaque{}, after_opaque{};
+    // component chunk 尾欄 = fixture 的 opaque 非參數狀態(不暴露成參數)
+    std::memcpy(&before_opaque, before.state.component.data() + before.state.component.size() - 4, 4);
+    std::memcpy(&after_opaque, after.state.component.data() + after.state.component.size() - 4, 4);
+    CHECK(before_opaque != 0 && before_opaque == after_opaque);
+    // 未起裝置(plugin 未 initialize):延遲不可驗,只看 host 參數值是否權威
+    CHECK(std::abs(slot->plugin->param_value(100) - 128.0 / 192000.0) < 1e-8);
+    std::filesystem::remove_all(folder);
+}
+
 int main(int argc, char** argv) {
     CHECK(argc == 2);
     SetEnvironmentVariableW(L"ROUDAMIX_VST_REGISTRY", nullptr);
@@ -466,6 +509,7 @@ int main(int argc, char** argv) {
     sidechain_audio(module);
     sidechain_rollback(module);
     engine_copy(module);
+    session_plugin_state(module);
     router_copy(module);
     router_duplicate_track(module);
     std::puts("plugin_copy_test PASSED");

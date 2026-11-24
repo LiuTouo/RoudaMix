@@ -20,11 +20,14 @@ namespace rmx::session {
 std::filesystem::path default_path();
 
 // engine 現況 → session JSON 物件(deviceKey/sampleRate = 最近一次成功 start 的值)
-nlohmann::json serialize(const AudioEngine& engine);
+// states = 各 plugin 的 runtime state(instance id → component/controller chunk);
+// 缺 = 該 plugin 不存編輯器狀態(只剩參數值)
+nlohmann::json serialize(const AudioEngine& engine,
+                         const std::vector<std::pair<std::uint32_t, Vst3RuntimeState>>& states = {});
 
 // serialize + 寫檔;overrides.deviceKey/sampleRate/bufferSize(UI 帶目前選的裝置)
-// 存在時蓋寫;失敗回 Failure(session_io)
-std::optional<Failure> save(const AudioEngine& engine, const std::filesystem::path& file,
+// 存在時蓋寫;失敗回 Failure(session_io)。非 const:存檔前要 quiescent 擷取 plugin state
+std::optional<Failure> save(AudioEngine& engine, const std::filesystem::path& file,
                             const nlohmann::json& overrides = nlohmann::json::object());
 
 // 讀檔 + 重建:清空全部軌 → 逐軌 track_add → source/output/gain/mute → plugins →
