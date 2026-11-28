@@ -151,11 +151,28 @@ pub fn folder_approved(dir: &str) -> bool {
     GUARD.check(dir, Access::Read)
 }
 
-/// UI 送 save_session 前檢查既有路徑是否仍具寫核准(對話框命中且未過期)。
-/// false = seed 還原路徑或核准已過期,UI 應改開 Save As 對話框而非直接覆寫。
+/// UI 送 save_session 前確認目前檔案可寫;false = UI 應改開 Save As 對話框。
+/// 對話框核准(或先前存過)照舊直接放行。啟動還原/最近清單的檔案只有讀核准,
+/// 但「使用者按下儲存」本身就是對目前檔案的明確手勢 → 就地升為寫核准,
+/// 限既有 .rmsession(還原路徑來自 settings,不讓它變成任意寫入目標)。
 #[tauri::command]
 pub fn session_write_approved(path: String) -> bool {
-    GUARD.check(&path, Access::Write)
+    if GUARD.check(&path, Access::Write) {
+        return true;
+    }
+    if !is_existing_session_file(&path) {
+        return false;
+    }
+    if !GUARD.check(&path, Access::Read) && !GUARD.seed_matches(&path) {
+        return false;
+    }
+    GUARD.approve(&path, Access::Write);
+    true
+}
+
+fn is_existing_session_file(path: &str) -> bool {
+    let p = Path::new(path);
+    p.is_file() && p.extension().is_some_and(|e| e.eq_ignore_ascii_case("rmsession"))
 }
 
 /// 啟動時由 lib.rs 播種:持久化的還原路徑/資料夾僅授 load_session 讀取。
@@ -256,5 +273,27 @@ mod tests {
         // 超長路徑直接拒絕
         let long = "C:\\".to_string() + &"a".repeat(2000);
         assert!(authorize("load_session", &json!({"path": long})).is_err());
+        // 還原的既有 .rmsession:按儲存即升寫核准(Ctrl+S 不該再開對話框)
+        let dir = std::env::temp_dir().join(format!("rmx-fsguard-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cur = dir.join("cur.rmsession");
+        std::fs::write(&cur, b"x").unwrap();
+        let cur_s = cur.to_string_lossy().into_owned();
+        let other = dir.join("other.rmsession");
+        std::fs::write(&other, b"x").unwrap();
+        let other_s = other.to_string_lossy().into_owned();
+        seed_restore(Some(&cur_s), None);
+        assert!(session_write_approved(cur_s.clone()));
+        assert!(authorize("save_session", &json!({"path": cur_s})).is_ok());
+        // 未經對話框也未還原的檔案仍拒絕升寫
+        assert!(!session_write_approved(other_s));
+        // 非 .rmsession 的還原路徑不升寫
+        let txt = dir.join("notes.txt");
+        std::fs::write(&txt, b"x").unwrap();
+        let txt_s = txt.to_string_lossy().into_owned();
+        seed_restore(Some(&txt_s), None);
+        assert!(!session_write_approved(txt_s));
+        seed_restore(None, None);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
