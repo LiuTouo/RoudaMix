@@ -219,6 +219,7 @@ std::shared_ptr<AppCapture> AppCapture::create(std::uint32_t pid, std::uint32_t 
     cap->src_rate_ = mix->nSamplesPerSec;
     cap->channels_ = mix->nChannels < 1 ? 1 : mix->nChannels;
     cap->sample_format_ = is_float ? 0 : 1;
+    cap->reader_.prepare(cap->src_rate_, cap->dst_rate_);
 
     // 事件驅動 shared capture(MS ApplicationLoopback 樣式;LOOPBACK flag 不可少)
     HRESULT ihr = client->Initialize(AUDCLNT_SHAREMODE_SHARED,

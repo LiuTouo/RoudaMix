@@ -106,6 +106,7 @@ std::shared_ptr<MicCapture> MicCapture::create(const std::string& device_id,
     cap->src_rate_ = src_rate;
     cap->dst_rate_ = dst_rate;
     cap->channels_ = channels;
+    cap->reader_.prepare(src_rate, dst_rate);
     cap->audio_client_ = client;
     cap->capture_client_ = capture;
     cap->event_ = ev;

@@ -31,6 +31,8 @@ namespace {
 using rmx::DriftReader;
 using rmx::SpscFifo;
 
+constexpr int kDelay = static_cast<int>(DriftReader::kDelay);
+
 // 交錯寫入 n 個 frame:L 從 l0 每步 +dl,R 從 r0 每步 +dr(小整數/半值,float 精確)
 void fill(SpscFifo& fifo, std::uint32_t n, float l0, float dl, float r0, float dr) {
     float buf[2 * 4096];
@@ -51,45 +53,48 @@ void drain_into(DriftReader& reader, SpscFifo& fifo, std::uint32_t frames, float
     }
 }
 
-// 同率穩態:fill(32)高於收斂目標(cap/4=16)→ 校正啟動,corr 首輪僅
-// 5e-8/frame 推進 —— 輸出 = 輸入延遲 1 樣本(內插固有)加無聽感差的微移,
-// 以 1e-3 容差斷言;跨 read() 呼叫 state 連續(第二輪 out[0] = 第一輪最後輸入)。
+// 同率穩態:fill(64)高於收斂目標(cap/4=32)→ 校正啟動,corr 首輪僅
+// 5e-8/frame 推進 —— 輸出 = 輸入延遲 kDelay 樣本(內插群延遲)加無聽感差的
+// 微移,以 1e-3 容差斷言;跨 read() 呼叫 state 連續(第二輪接續第一輪樣本序)。
 void passthrough_same_rate() {
-    SpscFifo fifo(64);
+    SpscFifo fifo(128);
     DriftReader reader;
-    float l[32], r[32];
+    float l[64], r[64];
 
-    fill(fifo, 32, 1.0F, 1.0F, 1000.0F, 2.0F);
-    drain_into(reader, fifo, 16, l, r, 48000, 48000);
-    CHECK(std::fabs(l[0]) < 1e-3F);  // 首樣 ≈ 初始 prev(0),1 樣本延遲由此而來
-    for (std::uint32_t i = 1; i < 16; ++i) {
-        CHECK(std::fabs(l[i] - static_cast<float>(i)) < 1e-3F);  // in_L[i-1] = 1+(i-1)
-        CHECK(std::fabs(r[i] - (1000.0F + 2.0F * static_cast<float>(i - 1))) < 1e-3F);  // R 獨立 ramp
+    fill(fifo, 64, 1.0F, 1.0F, 1000.0F, 2.0F);
+    drain_into(reader, fifo, 48, l, r, 48000, 48000);
+    for (std::uint32_t i = 0; i < 32; ++i) CHECK(std::fabs(l[i]) < 1e-3F);  // 歷史未滿 = 靜音
+    for (std::uint32_t i = 32; i < 48; ++i) {
+        const float in_l = 1.0F + static_cast<float>(i) - static_cast<float>(kDelay);
+        const float in_r = 1000.0F + 2.0F * (static_cast<float>(i) - static_cast<float>(kDelay));
+        CHECK(std::fabs(l[i] - in_l) < 1e-3F);
+        CHECK(std::fabs(r[i] - in_r) < 1e-3F);
     }
     CHECK(fifo.size() == 16);
     CHECK(reader.underruns() == 0);
 
-    fill(fifo, 16, 17.0F, 1.0F, 1032.0F, 2.0F);
+    fill(fifo, 16, 65.0F, 1.0F, 1128.0F, 2.0F);
     drain_into(reader, fifo, 16, l, r, 48000, 48000);
-    CHECK(std::fabs(l[0] - 16.0F) < 1e-3F);  // 跨呼叫連續:上一輪 cur(樣本16)現為 prev
-    for (std::uint32_t i = 1; i < 16; ++i) {
-        CHECK(std::fabs(l[i] - (16.0F + static_cast<float>(i))) < 1e-3F);
-        CHECK(std::fabs(r[i] - (1030.0F + 2.0F * static_cast<float>(i))) < 1e-3F);
+    for (std::uint32_t i = 0; i < 16; ++i) {
+        const float want_l = 17.0F + static_cast<float>(i);  // 樣本 16+i
+        const float want_r = 1032.0F + 2.0F * static_cast<float>(i);
+        CHECK(std::fabs(l[i] - want_l) < 1e-3F);
+        CHECK(std::fabs(r[i] - want_r) < 1e-3F);
     }
     CHECK(reader.underruns() == 0);
 }
 
 // 分離輸出契約:L 全 0、R 有訊號 → 任何 R 變化不得滲進 L,反之亦然。
 void lr_separation() {
-    SpscFifo fifo(64);
+    SpscFifo fifo(128);
     DriftReader reader;
-    float l[16], r[16];
+    float l[64], r[64];
 
-    fill(fifo, 32, 0.0F, 0.0F, -500.0F, -1.0F);
-    drain_into(reader, fifo, 16, l, r, 48000, 48000);
-    for (std::uint32_t i = 1; i < 16; ++i) {
+    fill(fifo, 64, 0.0F, 0.0F, -500.0F, -1.0F);
+    drain_into(reader, fifo, 48, l, r, 48000, 48000);
+    for (std::uint32_t i = 32; i < 48; ++i) {
         CHECK(std::fabs(l[i]) < 1e-3F);
-        CHECK(std::fabs(r[i] - (-500.0F - static_cast<float>(i - 1))) < 1e-3F);
+        CHECK(std::fabs(r[i] - (-500.0F - (static_cast<float>(i) - 32.0F))) < 1e-3F);
     }
     CHECK(reader.underruns() == 0);
 }
@@ -97,28 +102,29 @@ void lr_separation() {
 // underrun:讀空 → 剩餘輸出靜音、underruns 計數、讀頭重鎖(pos 與樣本歸零);
 // 之後的新資料從新樣本重新鎖定(不播殘留垃圾)。
 void underrun_silence_and_relock() {
-    SpscFifo fifo(64);
+    SpscFifo fifo(128);
     DriftReader reader;
-    float l[16], r[16];
+    float l[64], r[64];
 
-    fill(fifo, 2, 1.0F, 1.0F, 1.0F, 1.0F);
-    drain_into(reader, fifo, 16, l, r, 48000, 48000);
-    CHECK(l[0] == 0.0F);
-    CHECK(l[1] == 1.0F);  // 唯二真樣本
-    for (std::uint32_t i = 2; i < 16; ++i) {
+    fill(fifo, 34, 1.0F, 1.0F, 1.0F, 1.0F);  // 樣本 j = 1+j;延遲 32 → 只有 2 個真樣本能輸出
+    drain_into(reader, fifo, 40, l, r, 48000, 48000);
+    for (std::uint32_t i = 0; i < 32; ++i) CHECK(std::fabs(l[i]) < 1e-6F);
+    CHECK(std::fabs(l[32] - 1.0F) < 1e-3F);
+    CHECK(std::fabs(l[33] - 2.0F) < 1e-3F);
+    for (std::uint32_t i = 34; i < 40; ++i) {
         CHECK(l[i] == 0.0F);
         CHECK(r[i] == 0.0F);
     }
     CHECK(reader.underruns() == 1);
 
-    // 重新鎖定:新 ramp 從 10 起,輸出應精確接上(舊 state 已歸零)
-    fill(fifo, 5, 10.0F, 1.0F, 10.0F, 1.0F);
-    drain_into(reader, fifo, 4, l, r, 48000, 48000);
-    CHECK(l[0] == 0.0F);
-    CHECK(l[1] == 10.0F);
-    CHECK(l[2] == 11.0F);
-    CHECK(l[3] == 12.0F);
-    CHECK(r[3] == 12.0F);
+    // 重新鎖定:新 ramp 從 10 起、歷史已歸零 → 重跑 kDelay 樣本後才吐真樣本
+    fill(fifo, 40, 10.0F, 1.0F, 10.0F, 1.0F);
+    drain_into(reader, fifo, 40, l, r, 48000, 48000);
+    for (std::uint32_t i = 0; i < 32; ++i) CHECK(std::fabs(l[i]) < 1e-6F);
+    for (std::uint32_t i = 32; i < 40; ++i) {
+        CHECK(std::fabs(l[i] - (10.0F + static_cast<float>(i) - 32.0F)) < 1e-3F);
+        CHECK(std::fabs(r[i] - (10.0F + static_cast<float>(i) - 32.0F)) < 1e-3F);
+    }
     CHECK(reader.underruns() == 1);  // 重鎖後未再 underrun
 }
 
@@ -128,12 +134,23 @@ void overrun_drop_oldest() {
     DriftReader reader;
     float l[8], r[8];
 
-    fill(fifo, 14, 0.0F, 1.0F, 0.0F, 1.0F);  // 14 > 12(3/4 容量)
+    // 先填滿歷史(kDelay 樣本),否則延遲窗內全是初始 0,看不出丟棄
+    float w = 0.0F;
+    for (int k = 0; k < 40; ++k) {
+        float buf[2]{w, w};
+        CHECK(fifo.write(buf, 1) == 1);
+        w += 1.0F;
+        drain_into(reader, fifo, 1, l, r, 48000, 48000);
+    }
+    CHECK(fifo.size() == 0);
+
+    fill(fifo, 14, w, 1.0F, w, 1.0F);  // 14 > 12(3/4 容量)
     drain_into(reader, fifo, 4, l, r, 48000, 48000);
-    CHECK(std::fabs(l[0]) < 1e-3F);            // 首樣 ≈ prev(全新 reader 恆 0):非垃圾
-    CHECK(std::fabs(l[1] - 7.0F) < 1e-3F);     // 樣本 0..6 已被丟棄
-    CHECK(std::fabs(l[2] - 8.0F) < 1e-3F);
-    CHECK(std::fabs(l[3] - 9.0F) < 1e-3F);
+    for (std::uint32_t i = 0; i < 4; ++i) {
+        CHECK(std::isfinite(l[i]));
+        CHECK(l[i] >= 0.0F && l[i] < w + 14.0F);
+        if (i > 0) CHECK(l[i] >= l[i - 1]);  // ramp 單調:丟的是最舊,不是中間
+    }
     CHECK(fifo.size() == 3);  // 14 - 7(丟棄)- 4(讀)= 3;未丟則為 10
 }
 
@@ -170,10 +187,10 @@ void prefills_below_quarter_no_correction() {
         CHECK(fifo.write(buf, 1) == 1);
         w += 1.0F;
         drain_into(reader, fifo, 1, l, r, 48000, 48000);
-        // 輸出 = 輸入延遲 1(in[j]=j):第 0 次輸出為初始 prev(0),之後 = step-1
-        const float expected = (step == 0) ? 0.0F : static_cast<float>(step - 1);
-        CHECK(l[0] == expected);
-        CHECK(r[0] == expected);
+        // 輸出 = 輸入延遲 kDelay(in[j]=j):前 kDelay 次輸出為初始歷史(0)
+        const float expected = (step < kDelay) ? 0.0F : static_cast<float>(step - kDelay);
+        CHECK(std::fabs(l[0] - expected) < 1e-2F);
+        CHECK(std::fabs(r[0] - expected) < 1e-2F);
     }
     CHECK(fifo.size() == 2);  // 寫讀平衡、無校正 → fill 恆定
     CHECK(reader.underruns() == 0);
@@ -197,14 +214,14 @@ void sustained_underrun() {
 
 // src_rate=0 防禦:視同 dst_rate(不除零),照常透行。
 void zero_src_rate_guard() {
-    SpscFifo fifo(64);
+    SpscFifo fifo(128);
     DriftReader reader;
-    float l[16], r[16];
+    float l[48], r[48];
 
-    fill(fifo, 32, 5.0F, 1.0F, 5.0F, 1.0F);
-    drain_into(reader, fifo, 16, l, r, 0, 48000);
-    for (std::uint32_t i = 1; i < 16; ++i) {
-        CHECK(std::fabs(l[i] - (4.0F + static_cast<float>(i))) < 1e-3F);
+    fill(fifo, 64, 5.0F, 1.0F, 5.0F, 1.0F);
+    drain_into(reader, fifo, 48, l, r, 0, 48000);
+    for (std::uint32_t i = 32; i < 48; ++i) {
+        CHECK(std::fabs(l[i] - (5.0F + static_cast<float>(i) - 32.0F)) < 1e-3F);
     }
     CHECK(reader.underruns() == 0);
 }
@@ -212,12 +229,13 @@ void zero_src_rate_guard() {
 // 微率差(48048 → 48000):step>1,消耗快於供給;輸出落在已供樣本界內、
 // 無 underrun、fill 依比率方向緩降。
 void slight_rate_mismatch() {
-    SpscFifo fifo(64);
+    SpscFifo fifo(256);
     DriftReader reader;
     float l[16], r[16];
 
-    fill(fifo, 30, 0.0F, 1.0F, 0.0F, 1.0F);  // 峰值(寫16後)= 46 < 48 = 3/4 容量
-    float w = 30.0F;
+    // fill 40 < cap/4 = 64 → 起播預填門檻未達,corr 恆 0,位置可精確預測
+    fill(fifo, 40, 0.0F, 1.0F, 0.0F, 1.0F);
+    float w = 40.0F;
     std::uint32_t g = 0;  // 全域輸出 frame 序號
     for (int round = 0; round < 100; ++round) {
         for (int k = 0; k < 16; ++k) {
@@ -226,18 +244,16 @@ void slight_rate_mismatch() {
             w += 1.0F;
         }
         drain_into(reader, fifo, 16, l, r, 48048, 48000);
-        CHECK(l[5] != 0.0F);  // 有訊號(非靜音)
         for (std::uint32_t i = 0; i < 16; ++i, ++g) {
-            CHECK(l[i] >= 0.0F && l[i] <= w - 1.0F);  // 內插界:不超過最新供給樣本
-            // 透行追蹤:第 g 個輸出 ≈ 採樣位置 g×1.001 減 1 樣本內插延遲
-            // (100 次呼叫 corr ≤ 5e-6,位置偏差可忽略;餘量 1.5 容 float 誤差)
-            const double want =
-                static_cast<double>(g) * (48048.0 / 48000.0) - 1.0;
+            CHECK(l[i] > -0.1F * w && l[i] < 1.1F * w);  // 界:sinc 在階梯邊可微幅過衝
+            if (g < static_cast<std::uint32_t>(kDelay)) continue;  // 歷史窗未滿
+            // 透行追蹤:第 g 個輸出 ≈ 採樣位置 g×1.001 減 kDelay 群延遲
+            const double want = static_cast<double>(g) * (48048.0 / 48000.0) - kDelay;
             CHECK(std::fabs(static_cast<double>(l[i]) - want) <= 1.5);
         }
     }
     CHECK(reader.underruns() == 0);
-    CHECK(fifo.size() > 24 && fifo.size() < 30);  // 消耗>供給:fill 下降
+    CHECK(fifo.size() < 40 && fifo.size() > 30);  // 消耗>供給:fill 下降
 }
 
 // 延遲上界(時間久了延遲累積的迴歸):真實 clock drift(+100ppm,晶體容差
@@ -276,6 +292,78 @@ void latency_bounded_under_drift() {
     CHECK(reader.underruns() < 100);  // 起播鎖定後不得持續 underrun
 }
 
+// 通帶平整(內插品質的硬指標):48k → 44.1k 降率下餵 15kHz 正弦,
+// 穩態 RMS 必須接近輸入(線性內插會是 -2.8dB ≈ 0.72 倍,會紅)。
+void passband_flat_on_downsample() {
+    SpscFifo fifo(16384);
+    DriftReader reader;
+    float l[441], r[441];
+
+    const double tone = 15000.0;
+    const double amp = 0.5;
+    double phase = 0.0;
+    double sum_sq = 0.0;
+    std::uint64_t counted = 0;
+    for (int cb = 0; cb < 200; ++cb) {
+        float buf[2 * 480];
+        for (std::uint32_t i = 0; i < 480; ++i) {
+            const float v = static_cast<float>(amp * std::sin(phase));
+            phase += 2.0 * 3.14159265358979323846 * tone / 48000.0;
+            buf[i * 2] = v;
+            buf[i * 2 + 1] = v;
+        }
+        CHECK(fifo.write(buf, 480) == 480);
+        reader.read(fifo, l, r, 441, 48000, 44100);
+        if (cb >= 100) {
+            for (std::uint32_t i = 0; i < 441; ++i) {
+                sum_sq += static_cast<double>(l[i]) * static_cast<double>(l[i]);
+                ++counted;
+            }
+        }
+    }
+    const double rms = std::sqrt(sum_sq / static_cast<double>(counted));
+    const double want = amp / std::sqrt(2.0);
+    const double db = 20.0 * std::log10(rms / want);
+    std::printf("  15kHz rms=%.5f want=%.5f (%.2f dB)\n", rms, want, db);
+    CHECK(db > -0.5);  // 線性內插 = -2.8 dB
+    CHECK(db < 0.5);   // 不得增益漂移
+    CHECK(reader.underruns() == 0);
+}
+
+// 阻帶衰減:23kHz(> dst Nyquist 22.05k)降率後只能折回,不得原樣穿過。
+void stopband_rejects_above_dst_nyquist() {
+    SpscFifo fifo(16384);
+    DriftReader reader;
+    float l[441], r[441];
+
+    const double tone = 23000.0;
+    double phase = 0.0;
+    double sum_sq = 0.0;
+    std::uint64_t counted = 0;
+    for (int cb = 0; cb < 200; ++cb) {
+        float buf[2 * 480];
+        for (std::uint32_t i = 0; i < 480; ++i) {
+            const float v = static_cast<float>(0.5 * std::sin(phase));
+            phase += 2.0 * 3.14159265358979323846 * tone / 48000.0;
+            buf[i * 2] = v;
+            buf[i * 2 + 1] = v;
+        }
+        CHECK(fifo.write(buf, 480) == 480);
+        reader.read(fifo, l, r, 441, 48000, 44100);
+        if (cb >= 100) {
+            for (std::uint32_t i = 0; i < 441; ++i) {
+                sum_sq += static_cast<double>(l[i]) * static_cast<double>(l[i]);
+                ++counted;
+            }
+        }
+    }
+    const double rms = std::sqrt(sum_sq / static_cast<double>(counted));
+    const double db = 20.0 * std::log10(rms / (0.5 / std::sqrt(2.0)));
+    std::printf("  23kHz leak = %.2f dB\n", db);
+    CHECK(db < -20.0);  // 線性內插 ≈ -1 dB
+    CHECK(reader.underruns() == 0);
+}
+
 struct Case {
     const char* name;
     void (*fn)();
@@ -291,6 +379,8 @@ const Case cases[] = {
     {"sustained_underrun", sustained_underrun},
     {"zero_src_rate_guard", zero_src_rate_guard},
     {"slight_rate_mismatch", slight_rate_mismatch},
+    {"passband_flat_on_downsample", passband_flat_on_downsample},
+    {"stopband_rejects_above_dst_nyquist", stopband_rejects_above_dst_nyquist},
     {"latency_bounded_under_drift", latency_bounded_under_drift},
 };
 

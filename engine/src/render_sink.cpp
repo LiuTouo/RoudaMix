@@ -109,6 +109,7 @@ std::shared_ptr<RenderSink> RenderSink::create(const std::string& device_id,
     sink->dst_rate_ = dst_rate;
     sink->buffer_frames_ = buffer_frames;
     sink->channels_ = channels;
+    sink->reader_.prepare(src_rate, dst_rate);
     sink->audio_client_ = client;
     sink->render_client_ = render;
     sink->event_ = ev;
